@@ -587,6 +587,123 @@
             color: var(--text-primary);
         }
         
+        /* Progress bar */
+        .progress-container {
+            margin: 20px 0;
+        }
+        
+        .progress-bar {
+            height: 8px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: var(--gradient-primary);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        
+        .progress-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-top: 8px;
+        }
+        
+        /* Screener results table */
+        .screener-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        
+        .screener-table th {
+            text-align: left;
+            padding: 10px 6px;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-weight: 500;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+        }
+        
+        .screener-table td {
+            padding: 10px 6px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .screener-table tr:hover {
+            background: var(--bg-hover);
+        }
+        
+        .screener-table .rank-cell {
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+        
+        .screener-table .ticker-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+        
+        .screener-table .number-cell {
+            font-family: 'JetBrains Mono', monospace;
+            text-align: right;
+        }
+        
+        /* Generate button style */
+        .btn-generate {
+            background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+            color: white;
+        }
+        
+        .btn-generate:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+        
+        /* Modal large */
+        .modal.large {
+            max-width: 700px;
+        }
+        
+        .modal-body.scrollable {
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        
+        /* Stats summary */
+        .stats-summary {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        
+        .stats-summary .stat-card {
+            padding: 12px 8px;
+        }
+        
+        .stats-summary .stat-value {
+            font-size: 18px;
+        }
+        
+        /* Confirm dialog */
+        .confirm-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        
+        .confirm-buttons .btn {
+            flex: 1;
+        }
+        
         .btn-remove {
             width: 32px;
             height: 32px;
@@ -778,6 +895,23 @@
         </div>
     </div>
     
+    <!-- Modal génération de panel -->
+    <div id="generate-modal-overlay" class="modal-overlay" onclick="closeGenerateModal(event)">
+        <div class="modal large" onclick="event.stopPropagation()">
+            <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);">
+                <span class="modal-title" id="generate-modal-title">🎯 Générer les 50 Tickers</span>
+                <button class="modal-close" onclick="closeGenerateModal()">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body scrollable" id="generate-modal-body">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+    </div>
+    
     <!-- Main content -->
     <main class="main-content">
         
@@ -852,6 +986,20 @@
         
         <!-- PAGE: Panel -->
         <div id="page-panel" class="page">
+            <!-- Génération automatique -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🎯 Génération Automatique</span>
+                </div>
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+                    Génère un panel de 50 actions US basé sur des critères quantitatifs rigoureux :
+                    MarketCap ≥ 1B$, ADV ≥ 5M$
+                </p>
+                <button class="btn btn-generate btn-block" onclick="confirmGeneratePanel()">
+                    ⚡ Générer les 50 Tickers
+                </button>
+            </div>
+            
             <div class="card">
                 <div class="card-header">
                     <span class="card-title">➕ Ajouter une action</span>
@@ -1064,8 +1212,286 @@
         
         // Fermer avec Escape
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeModal();
+            if (e.key === 'Escape') {
+                closeModal();
+                closeGenerateModal();
+            }
         });
+        
+        // =================================================================
+        // GÉNÉRATION DE PANEL
+        // =================================================================
+        
+        let generatedTickers = [];  // Stocke les tickers générés
+        
+        function openGenerateModal() {
+            document.getElementById('generate-modal-overlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeGenerateModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('generate-modal-overlay').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        
+        function confirmGeneratePanel() {
+            // Afficher le modal de confirmation
+            const body = document.getElementById('generate-modal-body');
+            body.innerHTML = `
+                <div style="text-align: center; padding: 20px;">
+                    <h3 style="margin-bottom: 16px;">⚠️ Confirmation</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 8px;">
+                        Cette opération va :
+                    </p>
+                    <ul style="text-align: left; color: var(--text-secondary); margin: 16px 0; padding-left: 20px;">
+                        <li>Analyser l'ensemble de l'univers d'actions US</li>
+                        <li>Filtrer par MarketCap ≥ 1B$ et ADV ≥ 5M$</li>
+                        <li>Calculer le score = log(MarketCap) × log(ADV)</li>
+                        <li>Sélectionner les 50 meilleurs</li>
+                    </ul>
+                    <p style="color: var(--accent-orange); font-size: 13px;">
+                        ⏱️ Cette opération peut prendre plusieurs minutes
+                    </p>
+                    <div class="confirm-buttons">
+                        <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
+                        <button class="btn btn-generate" onclick="startGeneratePanel()">🚀 Lancer</button>
+                    </div>
+                </div>
+            `;
+            openGenerateModal();
+        }
+        
+        async function startGeneratePanel() {
+            const body = document.getElementById('generate-modal-body');
+            
+            // Afficher la progress bar
+            body.innerHTML = `
+                <div style="text-align: center; padding: 20px;">
+                    <h3 style="margin-bottom: 20px;">🔍 Analyse en cours...</h3>
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="generate-progress" style="width: 0%"></div>
+                        </div>
+                        <p class="progress-text" id="generate-status">Initialisation...</p>
+                    </div>
+                    <p style="color: var(--text-muted); font-size: 12px; margin-top: 20px;">
+                        Ne fermez pas cette fenêtre pendant l'analyse
+                    </p>
+                </div>
+            `;
+            
+            // Simuler une progression (l'API ne retourne pas de progression en temps réel)
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                if (progress < 90) {
+                    progress += Math.random() * 5;
+                    document.getElementById('generate-progress').style.width = progress + '%';
+                }
+            }, 1000);
+            
+            try {
+                const data = await api('/screener/generate', { method: 'POST' });
+                
+                clearInterval(progressInterval);
+                
+                if (data && data.success) {
+                    generatedTickers = data.tickers;
+                    displayGeneratedResults(data);
+                } else {
+                    body.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <h3 style="color: var(--accent-red); margin-bottom: 16px;">❌ Erreur</h3>
+                            <p style="color: var(--text-secondary);">${data?.error || 'Erreur inconnue'}</p>
+                            <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                body.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <h3 style="color: var(--accent-red); margin-bottom: 16px;">❌ Erreur</h3>
+                        <p style="color: var(--text-secondary);">Erreur de connexion au serveur</p>
+                        <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
+                    </div>
+                `;
+            }
+        }
+        
+        function displayGeneratedResults(data) {
+            const body = document.getElementById('generate-modal-body');
+            const tickers = data.tickers;
+            const stats = data.stats;
+            
+            let html = `
+                <div class="stats-summary">
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.total_tickers_us?.toLocaleString() || '-'}</div>
+                        <div class="stat-label">Tickers US</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.above_market_cap || '-'}</div>
+                        <div class="stat-label">Cap ≥ 1B$</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.above_adv || '-'}</div>
+                        <div class="stat-label">ADV ≥ 5M$</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" style="color: var(--accent-green);">${stats.selected || '-'}</div>
+                        <div class="stat-label">Sélectionnés</div>
+                    </div>
+                </div>
+                
+                <div class="search-container">
+                    <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" class="search-input" id="search-generated" placeholder="Rechercher..." oninput="filterGeneratedTickers()">
+                </div>
+                
+                <div style="max-height: 300px; overflow-y: auto;">
+                    <table class="screener-table" id="generated-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Ticker</th>
+                                <th>MarketCap</th>
+                                <th>ADV</th>
+                                <th>Score</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tickers.map(t => `
+                                <tr onclick="openTickerDetail('${t.ticker}')" style="cursor: pointer;">
+                                    <td class="rank-cell">${t.rank}</td>
+                                    <td class="ticker-cell">
+                                        <a href="${getTradingViewUrl(t.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${t.ticker}</a>
+                                    </td>
+                                    <td class="number-cell">${t.market_cap_display}</td>
+                                    <td class="number-cell">${t.adv_display}</td>
+                                    <td class="number-cell">${t.score}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="confirm-buttons">
+                    <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
+                    <button class="btn btn-primary" onclick="applyGeneratedPanel()">
+                        ✅ Appliquer au Panel
+                    </button>
+                </div>
+            `;
+            
+            body.innerHTML = html;
+            document.getElementById('generate-progress')?.remove();
+        }
+        
+        function filterGeneratedTickers() {
+            const query = document.getElementById('search-generated').value.toUpperCase();
+            const rows = document.querySelectorAll('#generated-table tbody tr');
+            
+            rows.forEach(row => {
+                const ticker = row.querySelector('.ticker-cell')?.textContent || '';
+                row.style.display = ticker.includes(query) ? '' : 'none';
+            });
+        }
+        
+        function openTickerDetail(ticker) {
+            const t = generatedTickers.find(x => x.ticker === ticker);
+            if (!t) return;
+            
+            // Afficher les détails du ticker généré
+            document.getElementById('modal-title').innerHTML = `
+                <a href="${getTradingViewUrl(ticker)}" target="_blank" rel="noopener" style="color: white; text-decoration: none;">
+                    ${ticker} ↗
+                </a>
+            `;
+            
+            document.getElementById('modal-body').innerHTML = `
+                <div class="detail-summary">
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">#${t.rank}</div>
+                        <div class="detail-stat-label">Rang</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">${t.score}</div>
+                        <div class="detail-stat-label">Score</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">${t.market_cap_display}</div>
+                        <div class="detail-stat-label">MarketCap</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">${t.adv_display}</div>
+                        <div class="detail-stat-label">ADV</div>
+                    </div>
+                </div>
+                
+                <h4 style="margin: 16px 0 12px; color: var(--text-secondary);">📊 Données de marché</h4>
+                <table class="details-table">
+                    <tr>
+                        <td>Prix moyen (6 mois)</td>
+                        <td style="text-align: right;">$${t.price}</td>
+                    </tr>
+                    <tr>
+                        <td>Volume moyen journalier</td>
+                        <td style="text-align: right;">${t.avg_volume_display}</td>
+                    </tr>
+                    <tr>
+                        <td>ADV (Average Daily $ Volume)</td>
+                        <td style="text-align: right;">$${t.adv_display}</td>
+                    </tr>
+                    <tr>
+                        <td>Capitalisation boursière</td>
+                        <td style="text-align: right;">$${t.market_cap_display}</td>
+                    </tr>
+                </table>
+                
+                <p style="margin-top: 16px; font-size: 12px; color: var(--text-muted); text-align: center;">
+                    Score = log(MarketCap) × log(ADV) = ${t.score}
+                </p>
+            `;
+            
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+        
+        async function applyGeneratedPanel() {
+            if (generatedTickers.length === 0) {
+                showToast('Aucun ticker à appliquer', 'error');
+                return;
+            }
+            
+            const body = document.getElementById('generate-modal-body');
+            body.innerHTML = `
+                <div style="text-align: center; padding: 40px;">
+                    <span class="spinner" style="width: 40px; height: 40px; border-width: 3px;"></span>
+                    <p style="margin-top: 16px; color: var(--text-secondary);">Application au panel...</p>
+                </div>
+            `;
+            
+            const data = await api('/screener/apply', {
+                method: 'POST',
+                body: JSON.stringify({ tickers: generatedTickers })
+            });
+            
+            if (data && data.success) {
+                showToast(`✅ ${data.count} tickers ajoutés au panel !`);
+                closeGenerateModal();
+                loadPanel();
+            } else {
+                body.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <h3 style="color: var(--accent-red); margin-bottom: 16px;">❌ Erreur</h3>
+                        <p style="color: var(--text-secondary);">${data?.error || 'Erreur inconnue'}</p>
+                        <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
+                    </div>
+                `;
+            }
+        }
         
         // =================================================================
         // TOGGLE & SEARCH

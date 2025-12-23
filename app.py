@@ -16,6 +16,7 @@ from config import get_config
 from models import db, init_db, Settings, PanelAction, RecommendationHistory, RecommendationDetail
 from momentum_service import MomentumService
 from email_service import EmailService
+from screener_service import ScreenerService
 
 
 # =============================================================================
@@ -46,6 +47,7 @@ app = create_app()
 # Services (initialisés après app)
 momentum_service = None
 email_service = None
+screener_service = None
 
 
 def get_momentum_service():
@@ -68,6 +70,16 @@ def get_email_service():
             to_email=app.config.get('EMAIL_TO')
         )
     return email_service
+
+
+def get_screener_service():
+    """Récupère ou crée le service de screening"""
+    global screener_service
+    if screener_service is None:
+        api_key = app.config.get('TIINGO_API_KEY')
+        if api_key:
+            screener_service = ScreenerService(api_key)
+    return screener_service
 
 
 # =============================================================================
@@ -386,6 +398,81 @@ def email_status():
     return jsonify({
         'configured': email_svc.is_configured(),
         'to_email': app.config.get('EMAIL_TO', '')
+    })
+
+
+# =============================================================================
+# ROUTES - API SCREENER
+# =============================================================================
+
+@app.route('/api/screener/generate', methods=['POST'])
+def generate_panel():
+    """
+    Génère automatiquement un panel de 50 tickers basé sur les critères:
+    - MarketCap >= 1B$
+    - ADV >= 5M$
+    - Score = log(MarketCap) × log(ADV)
+    """
+    screener = get_screener_service()
+    if not screener:
+        return jsonify({'error': 'API Tiingo non configurée'}), 500
+    
+    # Lancer le screening (peut prendre du temps)
+    result = screener.screen_universe()
+    
+    if not result['success']:
+        return jsonify({
+            'success': False,
+            'error': result['error'],
+            'stats': result.get('stats', {})
+        }), 500
+    
+    return jsonify({
+        'success': True,
+        'tickers': result['tickers'],
+        'stats': result['stats']
+    })
+
+
+@app.route('/api/screener/apply', methods=['POST'])
+def apply_generated_panel():
+    """
+    Applique les tickers générés au panel actuel.
+    Remplace tout le panel existant par les nouveaux tickers.
+    """
+    data = request.get_json()
+    tickers = data.get('tickers', [])
+    
+    if not tickers:
+        return jsonify({'error': 'Aucun ticker fourni'}), 400
+    
+    # Désactiver tous les tickers actuels
+    PanelAction.query.update({PanelAction.is_active: False})
+    
+    # Ajouter ou réactiver les nouveaux tickers
+    added = 0
+    for ticker_data in tickers:
+        ticker = ticker_data.get('ticker', '').upper().strip()
+        if not ticker:
+            continue
+        
+        existing = PanelAction.query.filter_by(ticker=ticker).first()
+        if existing:
+            existing.is_active = True
+        else:
+            action = PanelAction(
+                ticker=ticker,
+                name=None  # On pourrait stocker le nom si disponible
+            )
+            db.session.add(action)
+        added += 1
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'{added} tickers ajoutés au panel',
+        'count': added
     })
 
 
