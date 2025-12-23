@@ -384,6 +384,209 @@
             opacity: 1;
         }
         
+        /* Stock item cliquable */
+        .stock-item.clickable {
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .stock-item.clickable:hover {
+            background: var(--bg-hover);
+            margin: 0 -16px;
+            padding-left: 16px;
+            padding-right: 16px;
+        }
+        
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 300;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow: hidden;
+            transform: translateY(20px);
+            transition: transform 0.3s ease;
+        }
+        
+        .modal-overlay.active .modal {
+            transform: translateY(0);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--gradient-primary);
+        }
+        
+        .modal-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: white;
+        }
+        
+        .modal-close {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        
+        .modal-close:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            max-height: calc(80vh - 80px);
+        }
+        
+        /* Tableau des détails mensuels */
+        .details-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .details-table th {
+            text-align: left;
+            padding: 10px 8px;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-weight: 500;
+            position: sticky;
+            top: 0;
+        }
+        
+        .details-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .details-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .details-table .positive {
+            color: var(--accent-green);
+        }
+        
+        .details-table .negative {
+            color: var(--accent-red);
+        }
+        
+        /* Résumé dans le modal */
+        .detail-summary {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .detail-stat {
+            background: var(--bg-secondary);
+            padding: 12px;
+            border-radius: var(--radius-sm);
+            text-align: center;
+        }
+        
+        .detail-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        
+        .detail-stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        /* Barre de recherche */
+        .search-container {
+            position: relative;
+            margin-bottom: 16px;
+        }
+        
+        .search-input {
+            width: 100%;
+            padding: 12px 14px 12px 40px;
+            font-size: 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: inherit;
+        }
+        
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+        }
+        
+        /* Toggle pour voir tous les tickers */
+        .toggle-all {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px;
+            background: var(--bg-hover);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 12px;
+            transition: all 0.2s;
+        }
+        
+        .toggle-all:hover {
+            background: var(--border-color);
+            color: var(--text-primary);
+        }
+        
         .btn-remove {
             width: 32px;
             height: 32px;
@@ -558,6 +761,23 @@
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
     
+    <!-- Modal détails ticker -->
+    <div id="modal-overlay" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <span class="modal-title" id="modal-title">Détails</span>
+                <button class="modal-close" onclick="closeModal()">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+    </div>
+    
     <!-- Main content -->
     <main class="main-content">
         
@@ -606,6 +826,26 @@
                     <div class="empty-state">
                         <p>--</p>
                     </div>
+                </div>
+                <div class="toggle-all" id="toggle-all" onclick="toggleAllStocks()" style="display: none;">
+                    <span id="toggle-text">📊 Voir toutes les actions</span>
+                </div>
+            </div>
+            
+            <!-- Toutes les actions (masqué par défaut) -->
+            <div class="card" id="all-stocks-card" style="display: none;">
+                <div class="card-header">
+                    <span class="card-title">📋 Toutes les Actions</span>
+                    <span class="status-badge success" id="all-count">0</span>
+                </div>
+                <div class="search-container">
+                    <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" class="search-input" id="search-ticker" placeholder="Rechercher un ticker..." oninput="filterStocks()">
+                </div>
+                <div id="all-stocks-list">
+                    <!-- Liste complète -->
                 </div>
             </div>
         </div>
@@ -723,11 +963,166 @@
     
     <script>
         // =================================================================
+        // DONNÉES GLOBALES
+        // =================================================================
+        
+        let currentRecommendations = [];  // Stocke toutes les recommandations
+        let showAllStocks = false;        // Toggle pour voir toutes les actions
+        
+        // =================================================================
         // TRADINGVIEW LINK
         // =================================================================
         
         function getTradingViewUrl(ticker) {
             return `https://www.tradingview.com/symbols/${ticker}/`;
+        }
+        
+        // =================================================================
+        // MODAL
+        // =================================================================
+        
+        function openModal(ticker) {
+            const rec = currentRecommendations.find(r => r.ticker === ticker);
+            if (!rec) return;
+            
+            document.getElementById('modal-title').innerHTML = `
+                <a href="${getTradingViewUrl(ticker)}" target="_blank" rel="noopener" style="color: white; text-decoration: none;">
+                    ${ticker} ↗
+                </a>
+            `;
+            
+            const details = rec.details_mensuels || [];
+            const momentumClass = rec.momentum >= 0 ? 'positive' : 'negative';
+            
+            let html = `
+                <div class="detail-summary">
+                    <div class="detail-stat">
+                        <div class="detail-stat-value ${momentumClass}">${rec.momentum >= 0 ? '+' : ''}${rec.momentum.toFixed(2)}%</div>
+                        <div class="detail-stat-label">Momentum 12-1</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">#${rec.rank}</div>
+                        <div class="detail-stat-label">Classement</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value" style="color: ${rec.signal === 'Investir' ? 'var(--accent-green)' : 'var(--accent-red)'}">${rec.signal}</div>
+                        <div class="detail-stat-label">Signal</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">${rec.allocation}%</div>
+                        <div class="detail-stat-label">Allocation</div>
+                    </div>
+                </div>
+            `;
+            
+            if (details.length > 0) {
+                html += `
+                    <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📈 Performance mensuelle</h4>
+                    <table class="details-table">
+                        <thead>
+                            <tr>
+                                <th>Mois</th>
+                                <th>Prix</th>
+                                <th>Mensuel</th>
+                                <th>Cumulé</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                details.forEach(d => {
+                    const mensuelClass = d.rendement_mensuel >= 0 ? 'positive' : 'negative';
+                    const cumuleClass = d.rendement_cumule >= 0 ? 'positive' : 'negative';
+                    html += `
+                        <tr>
+                            <td>${d.mois}</td>
+                            <td>$${d.prix}</td>
+                            <td class="${mensuelClass}">${d.rendement_mensuel >= 0 ? '+' : ''}${d.rendement_mensuel}%</td>
+                            <td class="${cumuleClass}">${d.rendement_cumule >= 0 ? '+' : ''}${d.rendement_cumule}%</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                html += `<p style="color: var(--text-muted); text-align: center; padding: 20px;">Détails mensuels non disponibles pour cet historique</p>`;
+            }
+            
+            document.getElementById('modal-body').innerHTML = html;
+            document.getElementById('modal-overlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('modal-overlay').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        
+        // Fermer avec Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+        
+        // =================================================================
+        // TOGGLE & SEARCH
+        // =================================================================
+        
+        function toggleAllStocks() {
+            showAllStocks = !showAllStocks;
+            const card = document.getElementById('all-stocks-card');
+            const toggleText = document.getElementById('toggle-text');
+            
+            if (showAllStocks) {
+                card.style.display = 'block';
+                toggleText.textContent = '🔼 Masquer toutes les actions';
+                renderAllStocks();
+            } else {
+                card.style.display = 'none';
+                toggleText.textContent = '📊 Voir toutes les actions';
+            }
+        }
+        
+        function filterStocks() {
+            const query = document.getElementById('search-ticker').value.toUpperCase();
+            renderAllStocks(query);
+        }
+        
+        function renderAllStocks(filter = '') {
+            const list = document.getElementById('all-stocks-list');
+            let filtered = currentRecommendations;
+            
+            if (filter) {
+                filtered = currentRecommendations.filter(r => r.ticker.includes(filter));
+            }
+            
+            document.getElementById('all-count').textContent = filtered.length;
+            
+            if (filtered.length === 0) {
+                list.innerHTML = '<div class="empty-state"><p>Aucun ticker trouvé</p></div>';
+                return;
+            }
+            
+            list.innerHTML = filtered.map(r => `
+                <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
+                    <div class="stock-rank ${r.signal === 'Investir' ? 'top' : ''}">${r.rank}</div>
+                    <div class="stock-info">
+                        <div class="stock-ticker">
+                            <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                        </div>
+                        <div class="stock-signal ${r.signal === 'Investir' ? 'buy' : 'sell'}">${r.signal === 'Investir' ? '▲ Investir' : '▼ Sortir'}</div>
+                    </div>
+                    <div class="stock-momentum">
+                        <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
+                            ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                        </div>
+                        ${r.allocation > 0 ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
+                    </div>
+                </div>
+            `).join('');
         }
         
         // =================================================================
@@ -840,6 +1235,9 @@
             const invest = recs.filter(r => r.signal === 'Investir');
             const sell = recs.filter(r => r.signal === 'Sortir');
             
+            // Stocker pour la recherche et les détails
+            currentRecommendations = recs;
+            
             // Update stats
             document.getElementById('stat-top').textContent = invest.length;
             document.getElementById('stat-allocation').textContent = invest.length > 0 ? 
@@ -849,14 +1247,19 @@
             const dateStr = data.calculation_date || data.date_calcul;
             document.getElementById('last-update').textContent = 'Dernière MAJ: ' + dateStr;
             
-            // Render invest list
+            // Afficher le toggle si on a des données
+            if (recs.length > 0) {
+                document.getElementById('toggle-all').style.display = 'flex';
+            }
+            
+            // Render invest list (cliquable pour voir les détails)
             if (invest.length > 0) {
                 investList.innerHTML = invest.map((r, i) => `
-                    <div class="stock-item">
+                    <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
                         <div class="stock-rank top">${i + 1}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
-                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link">${r.ticker}</a>
+                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
                             <div class="stock-signal buy">▲ Investir</div>
                         </div>
@@ -872,14 +1275,14 @@
                 investList.innerHTML = '<div class="empty-state"><p>Aucune action sélectionnée</p></div>';
             }
             
-            // Render sell list (top 10)
+            // Render sell list (top 5 visibles, cliquables)
             if (sell.length > 0) {
-                sellList.innerHTML = sell.slice(0, 10).map((r, i) => `
-                    <div class="stock-item">
+                sellList.innerHTML = sell.slice(0, 5).map((r, i) => `
+                    <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
                         <div class="stock-rank">${invest.length + i + 1}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
-                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link">${r.ticker}</a>
+                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
                             <div class="stock-signal sell">▼ Sortir</div>
                         </div>
@@ -890,8 +1293,18 @@
                         </div>
                     </div>
                 `).join('');
+                
+                // Afficher combien d'autres sont cachés
+                if (sell.length > 5) {
+                    sellList.innerHTML += `<p style="text-align: center; color: var(--text-muted); font-size: 12px; padding: 8px;">+ ${sell.length - 5} autres actions</p>`;
+                }
             } else {
                 sellList.innerHTML = '<div class="empty-state"><p>--</p></div>';
+            }
+            
+            // Si le toggle est ouvert, mettre à jour la liste
+            if (showAllStocks) {
+                renderAllStocks();
             }
         }
         

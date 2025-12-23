@@ -107,10 +107,12 @@ class MomentumService:
             df_prix: DataFrame avec les prix mensuels (doit contenir 'adjClose')
         
         Returns:
-            float: Rendement momentum en pourcentage, ou None si données insuffisantes
+            tuple: (momentum, details_mensuels) ou (None, None) si données insuffisantes
+                - momentum: float, rendement en pourcentage
+                - details_mensuels: list of dict avec prix et rendement par mois
         """
         if df_prix is None or len(df_prix) < 13:
-            return None
+            return None, None
         
         # Trier par date croissante
         df_prix = df_prix.sort_index()
@@ -122,11 +124,35 @@ class MomentumService:
         prix_fin = df_prix['adjClose'].iloc[-2]
         
         # Calcul du rendement en pourcentage
-        if prix_debut > 0:
-            momentum = ((prix_fin - prix_debut) / prix_debut) * 100
-            return momentum
-        else:
-            return None
+        if prix_debut <= 0:
+            return None, None
+        
+        momentum = ((prix_fin - prix_debut) / prix_debut) * 100
+        
+        # Calculer les détails mensuels (du mois -13 au mois -2)
+        details_mensuels = []
+        for i in range(-13, -1):
+            date = df_prix.index[i]
+            prix = df_prix['adjClose'].iloc[i]
+            
+            # Rendement par rapport au mois précédent
+            if i > -13:
+                prix_precedent = df_prix['adjClose'].iloc[i - 1]
+                rendement_mensuel = ((prix - prix_precedent) / prix_precedent) * 100 if prix_precedent > 0 else 0
+            else:
+                rendement_mensuel = 0  # Premier mois = référence
+            
+            # Rendement cumulé depuis le début
+            rendement_cumule = ((prix - prix_debut) / prix_debut) * 100
+            
+            details_mensuels.append({
+                'mois': date.strftime('%Y-%m'),
+                'prix': round(prix, 2),
+                'rendement_mensuel': round(rendement_mensuel, 2),
+                'rendement_cumule': round(rendement_cumule, 2)
+            })
+        
+        return momentum, details_mensuels
     
     def analyser_panel(self, panel_tickers, date_calcul=None):
         """
@@ -164,13 +190,14 @@ class MomentumService:
                 erreurs.append({'ticker': ticker, 'erreur': erreur})
                 continue
             
-            # Calcul du momentum
-            momentum = self.calculer_momentum_12_1(df_prix)
+            # Calcul du momentum avec détails mensuels
+            momentum, details_mensuels = self.calculer_momentum_12_1(df_prix)
             
             if momentum is not None:
                 resultats.append({
                     'ticker': ticker,
-                    'momentum': momentum
+                    'momentum': momentum,
+                    'details_mensuels': details_mensuels
                 })
             else:
                 erreurs.append({'ticker': ticker, 'erreur': 'Données insuffisantes pour le calcul'})
@@ -237,7 +264,8 @@ class MomentumService:
                 'momentum': round(r['momentum'], 2),
                 'signal': signal,
                 'allocation': allocation,
-                'rank': r['rank']
+                'rank': r['rank'],
+                'details_mensuels': r.get('details_mensuels', [])
             })
         
         return {
