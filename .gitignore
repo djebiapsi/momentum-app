@@ -1,0 +1,42 @@
+# =============================================================================
+# Fichiers à ignorer par Git
+# =============================================================================
+
+# Environnement Python
+venv/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Variables d'environnement (SECRETS !)
+.env
+.env.local
+.env.production
+
+# Base de données locale
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Cache
+.cache/
+*.cache
+

@@ -1,0 +1,40 @@
+# =============================================================================
+# Configuration Render.com
+# =============================================================================
+# Ce fichier configure le déploiement automatique sur Render.
+# Documentation: https://render.com/docs/blueprint-spec
+
+services:
+  # Service Web (Application Flask)
+  - type: web
+    name: momentum-strategy
+    env: python
+    region: frankfurt  # Proche de la France
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: TIINGO_API_KEY
+        sync: false  # À définir manuellement dans le dashboard Render
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_TO
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: momentum-db
+          property: connectionString
+
+databases:
+  # Base de données PostgreSQL
+  - name: momentum-db
+    databaseName: momentum
+    plan: free
+    region: frankfurt
+

@@ -1,0 +1,23 @@
+# =============================================================================
+# Variables d'environnement - EXEMPLE
+# =============================================================================
+# Renommez ce fichier en .env et remplissez avec vos vraies valeurs
+# NE JAMAIS commiter le fichier .env dans Git !
+
+# Clé API Tiingo (https://www.tiingo.com/)
+TIINGO_API_KEY=votre_cle_api_tiingo
+
+# Configuration Email avec Resend (https://resend.com)
+RESEND_API_KEY=re_xxxxxxxxxxxx
+EMAIL_FROM=onboarding@resend.dev
+EMAIL_TO=votre@email.com
+
+# Clé secrète Flask (générez-en une avec: python -c "import secrets; print(secrets.token_hex(32))")
+SECRET_KEY=votre_cle_secrete_generee
+
+# Base de données (laissez vide pour SQLite local, ou utilisez PostgreSQL)
+# DATABASE_URL=postgresql://user:password@host:port/database
+
+# Environnement (development ou production)
+FLASK_ENV=development
+

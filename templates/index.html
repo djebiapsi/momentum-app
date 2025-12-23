@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1e3a5f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Momentum">
+    
+    <title>📈 Momentum Strategy</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-primary: #0a1628;
+            --bg-secondary: #111d32;
+            --bg-card: #162033;
+            --bg-hover: #1e2d47;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-orange: #f59e0b;
+            --border-color: #1e3a5f;
+            --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.4);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        /* Navigation tabs */
+        .nav-tabs {
+            display: flex;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+            z-index: 100;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        
+        .nav-tab {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 12px 8px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+            background: none;
+        }
+        
+        .nav-tab.active {
+            color: var(--accent-blue);
+        }
+        
+        .nav-tab:hover {
+            color: var(--text-primary);
+        }
+        
+        .nav-tab svg {
+            width: 24px;
+            height: 24px;
+            margin-bottom: 4px;
+        }
+        
+        /* Main content */
+        .main-content {
+            padding: 20px 16px 100px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        /* Header */
+        .header {
+            background: var(--gradient-primary);
+            padding: 24px 20px;
+            border-radius: var(--radius-lg);
+            margin-bottom: 24px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        /* Page sections */
+        .page {
+            display: none;
+        }
+        
+        .page.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--border-color);
+        }
+        
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+        
+        .btn-sm {
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        
+        .btn-block {
+            width: 100%;
+        }
+        
+        /* Stock list */
+        .stock-item {
+            display: flex;
+            align-items: center;
+            padding: 14px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .stock-item:last-child {
+            border-bottom: none;
+        }
+        
+        .stock-rank {
+            width: 28px;
+            height: 28px;
+            background: var(--bg-hover);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-right: 12px;
+        }
+        
+        .stock-rank.top {
+            background: var(--gradient-primary);
+            color: white;
+        }
+        
+        .stock-info {
+            flex: 1;
+        }
+        
+        .stock-ticker {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        
+        .stock-signal {
+            font-size: 12px;
+            margin-top: 2px;
+        }
+        
+        .stock-signal.buy {
+            color: var(--accent-green);
+        }
+        
+        .stock-signal.sell {
+            color: var(--accent-red);
+        }
+        
+        .stock-momentum {
+            text-align: right;
+        }
+        
+        .momentum-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        
+        .momentum-value.positive {
+            color: var(--accent-green);
+        }
+        
+        .momentum-value.negative {
+            color: var(--accent-red);
+        }
+        
+        .allocation-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+        
+        /* Forms */
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 15px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .form-hint {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        /* Panel list */
+        .panel-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .panel-item:last-child {
+            border-bottom: none;
+        }
+        
+        .panel-ticker {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+        
+        .btn-remove {
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-red);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        
+        .btn-remove:hover {
+            background: var(--accent-red);
+            color: white;
+        }
+        
+        /* History list */
+        .history-item {
+            padding: 14px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .history-item:hover {
+            background: var(--bg-hover);
+        }
+        
+        .history-date {
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        
+        .history-summary {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        /* Status badges */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .status-badge.success {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+        }
+        
+        .status-badge.warning {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--accent-orange);
+        }
+        
+        .status-badge.error {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            padding: 12px 20px;
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            z-index: 200;
+            opacity: 0;
+            transition: all 0.3s ease;
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        
+        .toast.success {
+            border-color: var(--accent-green);
+        }
+        
+        .toast.error {
+            border-color: var(--accent-red);
+        }
+        
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-secondary);
+        }
+        
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        
+        /* Stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: var(--bg-secondary);
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Toast notification -->
+    <div id="toast" class="toast"></div>
+    
+    <!-- Main content -->
+    <main class="main-content">
+        
+        <!-- PAGE: Dashboard -->
+        <div id="page-dashboard" class="page active">
+            <div class="header">
+                <h1>📈 Momentum Strategy</h1>
+                <p id="last-update">Dernière MAJ: --</p>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-top">-</div>
+                    <div class="stat-label">Top Actions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-allocation">-</div>
+                    <div class="stat-label">Par Action</div>
+                </div>
+            </div>
+            
+            <button class="btn btn-primary btn-block" id="btn-refresh" onclick="calculateMomentum()">
+                🔄 Mettre à jour
+            </button>
+            
+            <button class="btn btn-secondary btn-block" style="margin-top: 10px;" onclick="calculateAndNotify()">
+                📧 Mettre à jour + Envoyer email
+            </button>
+            
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-header">
+                    <span class="card-title">🟢 Actions à Investir</span>
+                </div>
+                <div id="invest-list">
+                    <div class="empty-state">
+                        <p>Cliquez sur "Mettre à jour" pour calculer</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🔴 Actions à Sortir</span>
+                </div>
+                <div id="sell-list">
+                    <div class="empty-state">
+                        <p>--</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- PAGE: Panel -->
+        <div id="page-panel" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">➕ Ajouter une action</span>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" class="form-input" id="input-ticker" placeholder="Ex: AAPL" style="flex: 1;">
+                    <button class="btn btn-primary" onclick="addTicker()">Ajouter</button>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📋 Panel d'actions</span>
+                    <span class="status-badge success" id="panel-count">0 actions</span>
+                </div>
+                <div id="panel-list">
+                    <div class="empty-state">
+                        <p>Chargement...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- PAGE: History -->
+        <div id="page-history" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📅 Historique</span>
+                </div>
+                <div id="history-list">
+                    <div class="empty-state">
+                        <p>Aucun historique disponible</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- PAGE: Settings -->
+        <div id="page-settings" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">⚙️ Paramètres</span>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Nombre de Top Actions</label>
+                    <input type="number" class="form-input" id="input-nb-top" min="1" max="50" value="5">
+                    <p class="form-hint">Nombre d'actions à sélectionner pour investir</p>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Date de calcul</label>
+                    <input type="date" class="form-input" id="input-date-calcul">
+                    <p class="form-hint">Laissez vide pour utiliser la date du jour</p>
+                </div>
+                
+                <button class="btn btn-primary btn-block" onclick="saveSettings()">
+                    💾 Enregistrer
+                </button>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📧 Notifications Email</span>
+                </div>
+                
+                <div id="email-status">
+                    <p style="color: var(--text-secondary);">Chargement...</p>
+                </div>
+                
+                <button class="btn btn-secondary btn-block" style="margin-top: 16px;" onclick="sendTestEmail()">
+                    🧪 Envoyer un email de test
+                </button>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">ℹ️ À propos</span>
+                </div>
+                <p style="font-size: 13px; color: var(--text-secondary);">
+                    Stratégie Momentum 12-1<br>
+                    Mise à jour automatique le 1er de chaque mois à 8h00 UTC<br><br>
+                    <em>⚠️ Ceci n'est pas un conseil financier</em>
+                </p>
+            </div>
+        </div>
+        
+    </main>
+    
+    <!-- Navigation -->
+    <nav class="nav-tabs">
+        <button class="nav-tab active" onclick="showPage('dashboard')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+            Accueil
+        </button>
+        <button class="nav-tab" onclick="showPage('panel')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            Panel
+        </button>
+        <button class="nav-tab" onclick="showPage('history')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Historique
+        </button>
+        <button class="nav-tab" onclick="showPage('settings')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            Réglages
+        </button>
+    </nav>
+    
+    <script>
+        // =================================================================
+        // NAVIGATION
+        // =================================================================
+        
+        function showPage(pageName) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            // Show selected page
+            document.getElementById('page-' + pageName).classList.add('active');
+            // Update nav
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            
+            // Load data for specific pages
+            if (pageName === 'panel') loadPanel();
+            if (pageName === 'history') loadHistory();
+            if (pageName === 'settings') loadSettings();
+        }
+        
+        // =================================================================
+        // TOAST NOTIFICATIONS
+        // =================================================================
+        
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type + ' show';
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+        
+        // =================================================================
+        // API CALLS
+        // =================================================================
+        
+        async function api(endpoint, options = {}) {
+            try {
+                const response = await fetch('/api' + endpoint, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                showToast('Erreur de connexion', 'error');
+                return null;
+            }
+        }
+        
+        // =================================================================
+        // DASHBOARD
+        // =================================================================
+        
+        async function loadLatest() {
+            const data = await api('/history/latest');
+            if (data && data.details) {
+                displayRecommendations(data);
+            }
+        }
+        
+        async function calculateMomentum() {
+            const btn = document.getElementById('btn-refresh');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Calcul en cours...';
+            
+            const data = await api('/calculate', { method: 'POST' });
+            
+            btn.disabled = false;
+            btn.innerHTML = '🔄 Mettre à jour';
+            
+            if (data && data.success) {
+                displayRecommendations(data);
+                showToast('Recommandations mises à jour !');
+            } else {
+                showToast(data?.error || 'Erreur lors du calcul', 'error');
+            }
+        }
+        
+        async function calculateAndNotify() {
+            const btn = event.currentTarget;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Calcul et envoi...';
+            
+            const data = await api('/calculate-and-notify', { method: 'POST' });
+            
+            btn.disabled = false;
+            btn.innerHTML = '📧 Mettre à jour + Envoyer email';
+            
+            if (data && data.success) {
+                displayRecommendations(data);
+                if (data.email_sent) {
+                    showToast('Email envoyé avec succès !');
+                } else {
+                    showToast('Calcul OK mais email non envoyé: ' + data.email_message, 'warning');
+                }
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        function displayRecommendations(data) {
+            const investList = document.getElementById('invest-list');
+            const sellList = document.getElementById('sell-list');
+            
+            const recs = data.recommandations || data.details || [];
+            const invest = recs.filter(r => r.signal === 'Investir');
+            const sell = recs.filter(r => r.signal === 'Sortir');
+            
+            // Update stats
+            document.getElementById('stat-top').textContent = invest.length;
+            document.getElementById('stat-allocation').textContent = invest.length > 0 ? 
+                (100 / invest.length).toFixed(1) + '%' : '-';
+            
+            // Update date
+            const dateStr = data.calculation_date || data.date_calcul;
+            document.getElementById('last-update').textContent = 'Dernière MAJ: ' + dateStr;
+            
+            // Render invest list
+            if (invest.length > 0) {
+                investList.innerHTML = invest.map((r, i) => `
+                    <div class="stock-item">
+                        <div class="stock-rank top">${i + 1}</div>
+                        <div class="stock-info">
+                            <div class="stock-ticker">${r.ticker}</div>
+                            <div class="stock-signal buy">▲ Investir</div>
+                        </div>
+                        <div class="stock-momentum">
+                            <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
+                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                            </div>
+                            <div class="allocation-badge">${r.allocation}%</div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                investList.innerHTML = '<div class="empty-state"><p>Aucune action sélectionnée</p></div>';
+            }
+            
+            // Render sell list (top 10)
+            if (sell.length > 0) {
+                sellList.innerHTML = sell.slice(0, 10).map((r, i) => `
+                    <div class="stock-item">
+                        <div class="stock-rank">${invest.length + i + 1}</div>
+                        <div class="stock-info">
+                            <div class="stock-ticker">${r.ticker}</div>
+                            <div class="stock-signal sell">▼ Sortir</div>
+                        </div>
+                        <div class="stock-momentum">
+                            <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
+                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                sellList.innerHTML = '<div class="empty-state"><p>--</p></div>';
+            }
+        }
+        
+        // =================================================================
+        // PANEL
+        // =================================================================
+        
+        async function loadPanel() {
+            const data = await api('/panel');
+            if (data) {
+                document.getElementById('panel-count').textContent = data.count + ' actions';
+                
+                if (data.actions.length > 0) {
+                    document.getElementById('panel-list').innerHTML = data.actions.map(a => `
+                        <div class="panel-item">
+                            <span class="panel-ticker">${a.ticker}</span>
+                            <button class="btn-remove" onclick="removeTicker('${a.ticker}')">
+                                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+                    `).join('');
+                } else {
+                    document.getElementById('panel-list').innerHTML = '<div class="empty-state"><p>Aucune action dans le panel</p></div>';
+                }
+            }
+        }
+        
+        async function addTicker() {
+            const input = document.getElementById('input-ticker');
+            const ticker = input.value.trim().toUpperCase();
+            
+            if (!ticker) {
+                showToast('Entrez un symbole', 'error');
+                return;
+            }
+            
+            const data = await api('/panel', {
+                method: 'POST',
+                body: JSON.stringify({ ticker })
+            });
+            
+            if (data && data.success) {
+                input.value = '';
+                showToast(data.message);
+                loadPanel();
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        async function removeTicker(ticker) {
+            if (!confirm(`Retirer ${ticker} du panel ?`)) return;
+            
+            const data = await api('/panel/' + ticker, { method: 'DELETE' });
+            
+            if (data && data.success) {
+                showToast(data.message);
+                loadPanel();
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        // =================================================================
+        // HISTORY
+        // =================================================================
+        
+        async function loadHistory() {
+            const data = await api('/history');
+            if (data && data.history.length > 0) {
+                document.getElementById('history-list').innerHTML = data.history.map(h => {
+                    const topActions = h.details.filter(d => d.signal === 'Investir');
+                    return `
+                        <div class="history-item" onclick="showHistoryDetail(${h.id})">
+                            <div class="history-date">📅 ${h.calculation_date}</div>
+                            <div class="history-summary">
+                                Top ${h.nb_top}: ${topActions.map(a => a.ticker).join(', ')}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                document.getElementById('history-list').innerHTML = '<div class="empty-state"><p>Aucun historique disponible</p></div>';
+            }
+        }
+        
+        async function showHistoryDetail(id) {
+            const data = await api('/history/' + id);
+            if (data) {
+                displayRecommendations(data);
+                showPage('dashboard');
+                document.querySelector('.nav-tab').click(); // Activate dashboard tab
+            }
+        }
+        
+        // =================================================================
+        // SETTINGS
+        // =================================================================
+        
+        async function loadSettings() {
+            const data = await api('/settings');
+            if (data) {
+                document.getElementById('input-nb-top').value = data.nb_top;
+                document.getElementById('input-date-calcul').value = data.date_calcul || '';
+                
+                // Email status
+                const emailDiv = document.getElementById('email-status');
+                if (data.email_configured) {
+                    emailDiv.innerHTML = `
+                        <div class="status-badge success">✓ Configuré</div>
+                        <p style="margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+                            Emails envoyés à: ${data.email_to}
+                        </p>
+                    `;
+                } else {
+                    emailDiv.innerHTML = `
+                        <div class="status-badge warning">⚠ Non configuré</div>
+                        <p style="margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+                            Configurez RESEND_API_KEY et EMAIL_TO dans les variables d'environnement.
+                        </p>
+                    `;
+                }
+            }
+        }
+        
+        async function saveSettings() {
+            const nbTop = document.getElementById('input-nb-top').value;
+            const dateCalcul = document.getElementById('input-date-calcul').value;
+            
+            const data = await api('/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nb_top: parseInt(nbTop),
+                    date_calcul: dateCalcul
+                })
+            });
+            
+            if (data && data.success) {
+                showToast('Paramètres enregistrés');
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        async function sendTestEmail() {
+            const btn = event.currentTarget;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Envoi...';
+            
+            const data = await api('/email/test', { method: 'POST' });
+            
+            btn.disabled = false;
+            btn.innerHTML = '🧪 Envoyer un email de test';
+            
+            if (data && data.success) {
+                showToast(data.message);
+            } else {
+                showToast(data?.message || 'Erreur', 'error');
+            }
+        }
+        
+        // =================================================================
+        // INIT
+        // =================================================================
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            loadLatest();
+            
+            // Allow enter key on ticker input
+            document.getElementById('input-ticker').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') addTicker();
+            });
+        });
+        
+        // Register service worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js');
+        }
+    </script>
+</body>
+</html>
+

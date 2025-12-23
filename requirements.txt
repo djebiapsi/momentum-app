@@ -1,0 +1,35 @@
+# =============================================================================
+# Dépendances - Momentum Strategy App
+# =============================================================================
+# Installer avec: pip install -r requirements.txt
+
+# Framework web
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-SQLAlchemy==3.1.1
+
+# Base de données
+SQLAlchemy==2.0.23
+psycopg2-binary==2.9.9  # PostgreSQL pour Render
+
+# Requêtes HTTP (API Tiingo)
+requests==2.31.0
+
+# Manipulation de données
+pandas==2.1.4
+
+# Gestion des dates
+python-dateutil==2.8.2
+
+# Variables d'environnement
+python-dotenv==1.0.0
+
+# Planification de tâches
+APScheduler==3.10.4
+
+# Envoi d'emails
+resend==0.7.0
+
+# Serveur WSGI pour production
+gunicorn==21.2.0
+
