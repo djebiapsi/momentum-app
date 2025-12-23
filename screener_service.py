@@ -33,8 +33,8 @@ class ScreenerService:
         self.base_url = "https://api.tiingo.com"
         
         # Critères de filtrage
-        self.min_market_cap = 1_000_000_000  # 1 milliard $
-        self.min_adv = 5_000_000  # 5 millions $ de volume journalier
+        self.min_market_cap = 1000000000  # 1 milliard $
+        self.min_adv = 5000000  # 5 millions $ de volume journalier
         self.target_count = 50  # Nombre de tickers à sélectionner
         
         # Compteur d'appels API
