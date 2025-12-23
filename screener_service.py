@@ -1,22 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Service de Screening d'actions
-==============================
+Service de Screening d'actions (Optimisé)
+=========================================
 Génère automatiquement un panel de 50 tickers basé sur des critères quantitatifs :
 - MarketCap >= 1B$
-- ADV (Average Daily Volume) >= 5M$
+- ADV (Average Daily Dollar Volume) >= 5M$
 - Score = log(MarketCap) × log(ADV)
+
+OPTIMISATION: Utilise les endpoints bulk de Tiingo pour minimiser les appels API.
+- ~12 appels au lieu de ~550
 """
 
 import requests
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 class ScreenerService:
     """
     Service pour screener et sélectionner les meilleures actions US.
-    Utilise l'API Tiingo pour récupérer les données fondamentales.
+    Utilise les endpoints bulk de Tiingo pour minimiser les appels API.
     """
     
     def __init__(self, api_key):
@@ -33,134 +36,131 @@ class ScreenerService:
         self.min_market_cap = 1_000_000_000  # 1 milliard $
         self.min_adv = 5_000_000  # 5 millions $ de volume journalier
         self.target_count = 50  # Nombre de tickers à sélectionner
+        
+        # Compteur d'appels API
+        self.api_calls = 0
+    
+    def _api_call(self, url, params, timeout=60):
+        """
+        Effectue un appel API et compte les requêtes.
+        
+        Args:
+            url: URL de l'endpoint
+            params: Paramètres de la requête
+            timeout: Timeout en secondes
+        
+        Returns:
+            tuple: (data, error)
+        """
+        self.api_calls += 1
+        params['token'] = self.api_key
+        
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers={"Content-Type": "application/json"},
+                timeout=timeout
+            )
+            
+            if response.status_code == 200:
+                return response.json(), None
+            else:
+                return None, f"Erreur API (code {response.status_code})"
+                
+        except requests.exceptions.Timeout:
+            return None, "Timeout de la requête"
+        except Exception as e:
+            return None, str(e)
     
     def get_supported_tickers(self):
         """
         Récupère la liste des tickers US supportés par Tiingo.
+        1 appel API.
         
         Returns:
-            list: Liste des tickers avec leurs métadonnées
+            tuple: (list of tickers, error)
         """
         url = f"{self.base_url}/tiingo/daily"
+        data, error = self._api_call(url, {}, timeout=120)
         
-        try:
-            response = requests.get(
-                url,
-                params={"token": self.api_key},
-                headers={"Content-Type": "application/json"},
-                timeout=60
-            )
+        if error:
+            return None, error
+        
+        # Filtrer uniquement les actions US (NYSE, NASDAQ)
+        us_tickers = [
+            t['ticker'] for t in data 
+            if t.get('exchange') in ['NYSE', 'NASDAQ', 'NYSE ARCA', 'NYSE MKT', 'NASDAQ GLOBAL SELECT']
+            and t.get('assetType') == 'Stock'
+        ]
+        
+        return us_tickers, None
+    
+    def get_iex_bulk_data(self):
+        """
+        Récupère les données IEX (prix et volume) pour TOUS les tickers en 1 appel.
+        
+        Returns:
+            tuple: (dict {ticker: {price, volume, adv}}, error)
+        """
+        url = f"{self.base_url}/iex"
+        data, error = self._api_call(url, {}, timeout=120)
+        
+        if error:
+            return None, error
+        
+        result = {}
+        for item in data:
+            ticker = item.get('ticker')
+            if not ticker:
+                continue
             
-            if response.status_code == 200:
-                tickers = response.json()
-                # Filtrer uniquement les actions US (NYSE, NASDAQ)
-                us_tickers = [
-                    t for t in tickers 
-                    if t.get('exchange') in ['NYSE', 'NASDAQ', 'NYSE ARCA', 'NYSE MKT']
-                    and t.get('assetType') == 'Stock'
-                ]
-                return us_tickers, None
-            else:
-                return None, f"Erreur API: {response.status_code}"
-                
-        except Exception as e:
-            return None, str(e)
+            # Utiliser prevClose ou tngoLast comme prix
+            price = item.get('prevClose') or item.get('tngoLast') or item.get('last') or 0
+            volume = item.get('volume') or 0
+            
+            if price > 0 and volume > 0:
+                adv = price * volume
+                result[ticker] = {
+                    'price': round(price, 2),
+                    'volume': int(volume),
+                    'adv': adv
+                }
+        
+        return result, None
     
     def get_fundamentals_batch(self, tickers):
         """
         Récupère les données fondamentales pour une liste de tickers.
-        Utilise l'endpoint fundamentals de Tiingo.
+        Utilise l'endpoint bulk fundamentals de Tiingo.
         
         Args:
-            tickers: Liste de tickers (max ~100 par appel recommandé)
+            tickers: Liste de tickers (recommandé: max 100-200 par appel)
         
         Returns:
-            dict: {ticker: {marketCap, ...}, ...}
+            tuple: (dict {ticker: marketCap}, error)
         """
+        if not tickers:
+            return {}, None
+        
         url = f"{self.base_url}/tiingo/fundamentals/daily"
         
-        try:
-            response = requests.get(
-                url,
-                params={
-                    "token": self.api_key,
-                    "tickers": ",".join(tickers)
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=120
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                result = {}
-                for item in data:
-                    ticker = item.get('ticker')
-                    if ticker:
-                        result[ticker] = {
-                            'marketCap': item.get('marketCap', 0) or 0,
-                            'enterpriseVal': item.get('enterpriseVal', 0) or 0,
-                        }
-                return result, None
-            else:
-                return None, f"Erreur API fundamentals: {response.status_code}"
-                
-        except Exception as e:
-            return None, str(e)
-    
-    def get_price_and_volume(self, ticker, days=126):
-        """
-        Récupère les prix et volumes historiques pour calculer l'ADV.
+        # Joindre les tickers
+        tickers_str = ",".join(tickers)
         
-        Args:
-            ticker: Symbole de l'action
-            days: Nombre de jours (126 ≈ 6 mois de trading)
+        data, error = self._api_call(url, {"tickers": tickers_str}, timeout=180)
         
-        Returns:
-            dict: {price, avg_volume, adv}
-        """
-        url = f"{self.base_url}/tiingo/daily/{ticker}/prices"
+        if error:
+            return None, error
         
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
+        result = {}
+        for item in data:
+            ticker = item.get('ticker')
+            market_cap = item.get('marketCap')
+            if ticker and market_cap:
+                result[ticker] = market_cap
         
-        try:
-            response = requests.get(
-                url,
-                params={
-                    "token": self.api_key,
-                    "startDate": start_date.strftime("%Y-%m-%d"),
-                    "endDate": end_date.strftime("%Y-%m-%d"),
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if len(data) < 20:  # Pas assez de données
-                    return None
-                
-                # Prix moyen et volume moyen
-                prices = [d['adjClose'] for d in data if d.get('adjClose')]
-                volumes = [d['volume'] for d in data if d.get('volume')]
-                
-                if not prices or not volumes:
-                    return None
-                
-                avg_price = sum(prices) / len(prices)
-                avg_volume = sum(volumes) / len(volumes)
-                adv = avg_price * avg_volume  # Average Daily Dollar Volume
-                
-                return {
-                    'price': round(avg_price, 2),
-                    'avg_volume': int(avg_volume),
-                    'adv': adv
-                }
-            else:
-                return None
-                
-        except Exception:
-            return None
+        return result, None
     
     def calculate_score(self, market_cap, adv):
         """
@@ -183,12 +183,16 @@ class ScreenerService:
     def screen_universe(self, progress_callback=None):
         """
         Effectue le screening complet de l'univers US.
+        OPTIMISÉ: Utilise les endpoints bulk pour minimiser les appels API.
         
-        Cette méthode:
-        1. Récupère la liste des tickers US
-        2. Filtre par critères (MarketCap, ADV)
-        3. Calcule les scores
-        4. Retourne les 50 meilleurs
+        Étapes:
+        1. Récupère la liste des tickers US (1 appel)
+        2. Récupère les données IEX bulk - prix et volume (1 appel)
+        3. Récupère les fondamentaux par batch (5-10 appels)
+        4. Filtre et calcule les scores
+        5. Retourne les 50 meilleurs
+        
+        Total: ~7-12 appels API
         
         Args:
             progress_callback: Fonction appelée avec (current, total, message)
@@ -201,129 +205,151 @@ class ScreenerService:
                 'error': str or None
             }
         """
+        self.api_calls = 0  # Reset compteur
+        
         def report(current, total, msg):
             if progress_callback:
                 progress_callback(current, total, msg)
         
-        report(0, 100, "Récupération de la liste des tickers US...")
+        # =================================================================
+        # ÉTAPE 1: Liste des tickers US (1 appel)
+        # =================================================================
+        report(0, 100, "📋 Récupération de la liste des tickers US...")
         
-        # Étape 1: Récupérer la liste des tickers
         all_tickers, error = self.get_supported_tickers()
         
         if error:
-            return {
-                'success': False,
-                'tickers': [],
-                'stats': {},
-                'error': f"Erreur lors de la récupération des tickers: {error}"
-            }
+            return self._error_result(f"Erreur liste tickers: {error}")
         
         if not all_tickers:
-            return {
-                'success': False,
-                'tickers': [],
-                'stats': {},
-                'error': "Aucun ticker US trouvé"
-            }
+            return self._error_result("Aucun ticker US trouvé")
         
-        report(10, 100, f"Analyse de {len(all_tickers)} tickers US...")
+        report(10, 100, f"✅ {len(all_tickers)} tickers US trouvés (1 appel API)")
         
-        # Étape 2: Récupérer les fondamentaux par batch
-        ticker_symbols = [t['ticker'] for t in all_tickers]
+        # =================================================================
+        # ÉTAPE 2: Données IEX bulk - prix et volume (1 appel)
+        # =================================================================
+        report(15, 100, "📊 Récupération des prix et volumes (bulk IEX)...")
         
-        # Diviser en batches de 100
+        iex_data, error = self.get_iex_bulk_data()
+        
+        if error:
+            return self._error_result(f"Erreur IEX: {error}")
+        
+        report(25, 100, f"✅ Données IEX pour {len(iex_data)} tickers (1 appel API)")
+        
+        # Filtrer les tickers qui ont des données IEX
+        tickers_with_iex = [t for t in all_tickers if t in iex_data]
+        
+        # Premier filtre: ADV >= 5M$
+        tickers_above_adv = [
+            t for t in tickers_with_iex 
+            if iex_data[t]['adv'] >= self.min_adv
+        ]
+        
+        report(30, 100, f"📈 {len(tickers_above_adv)} tickers avec ADV >= 5M$")
+        
+        if len(tickers_above_adv) == 0:
+            return self._error_result("Aucun ticker ne respecte le critère ADV >= 5M$")
+        
+        # =================================================================
+        # ÉTAPE 3: Fondamentaux batch - MarketCap (5-10 appels)
+        # =================================================================
+        report(35, 100, "💰 Récupération des capitalisations (batch)...")
+        
+        # On limite aux tickers avec ADV suffisant pour économiser des appels
         batch_size = 100
-        all_fundamentals = {}
+        all_market_caps = {}
         
-        for i in range(0, len(ticker_symbols), batch_size):
-            batch = ticker_symbols[i:i + batch_size]
-            progress = 10 + int((i / len(ticker_symbols)) * 40)
-            report(progress, 100, f"Récupération des fondamentaux ({i}/{len(ticker_symbols)})...")
+        for i in range(0, len(tickers_above_adv), batch_size):
+            batch = tickers_above_adv[i:i + batch_size]
+            progress = 35 + int((i / len(tickers_above_adv)) * 30)
+            report(progress, 100, f"📥 Batch {i//batch_size + 1}/{(len(tickers_above_adv)//batch_size)+1}...")
             
-            fundamentals, err = self.get_fundamentals_batch(batch)
-            if fundamentals:
-                all_fundamentals.update(fundamentals)
+            market_caps, err = self.get_fundamentals_batch(batch)
+            if market_caps:
+                all_market_caps.update(market_caps)
         
-        report(50, 100, "Filtrage par capitalisation...")
+        report(70, 100, f"✅ MarketCap pour {len(all_market_caps)} tickers ({self.api_calls} appels API total)")
         
-        # Étape 3: Premier filtre par Market Cap
-        candidates = []
-        for ticker, data in all_fundamentals.items():
-            market_cap = data.get('marketCap', 0)
-            if market_cap >= self.min_market_cap:
-                candidates.append({
-                    'ticker': ticker,
-                    'market_cap': market_cap
-                })
-        
-        report(55, 100, f"{len(candidates)} tickers avec MarketCap >= 1B$")
-        
-        if len(candidates) == 0:
-            return {
-                'success': False,
-                'tickers': [],
-                'stats': {'total_analyzed': len(all_tickers)},
-                'error': "Aucun ticker ne respecte les critères de capitalisation"
-            }
-        
-        # Étape 4: Calculer l'ADV pour les candidats (limiter pour éviter trop d'appels)
-        # On prend les 500 plus grandes capitalisations pour limiter les appels API
-        candidates.sort(key=lambda x: x['market_cap'], reverse=True)
-        top_candidates = candidates[:500]
-        
-        report(60, 100, f"Calcul de l'ADV pour les {len(top_candidates)} plus grandes caps...")
+        # =================================================================
+        # ÉTAPE 4: Filtrage et scoring
+        # =================================================================
+        report(75, 100, "🎯 Calcul des scores...")
         
         scored_tickers = []
-        for i, candidate in enumerate(top_candidates):
-            ticker = candidate['ticker']
-            market_cap = candidate['market_cap']
-            
-            progress = 60 + int((i / len(top_candidates)) * 35)
-            if i % 50 == 0:
-                report(progress, 100, f"Analyse de {ticker} ({i+1}/{len(top_candidates)})...")
-            
-            # Récupérer prix et volume
-            pv_data = self.get_price_and_volume(ticker)
-            
-            if pv_data and pv_data['adv'] >= self.min_adv:
-                score = self.calculate_score(market_cap, pv_data['adv'])
-                scored_tickers.append({
-                    'ticker': ticker,
-                    'market_cap': market_cap,
-                    'market_cap_display': self._format_number(market_cap),
-                    'price': pv_data['price'],
-                    'avg_volume': pv_data['avg_volume'],
-                    'avg_volume_display': self._format_number(pv_data['avg_volume']),
-                    'adv': pv_data['adv'],
-                    'adv_display': self._format_number(pv_data['adv']),
-                    'score': round(score, 2)
-                })
         
-        report(95, 100, "Tri et sélection des 50 meilleurs...")
+        for ticker in tickers_above_adv:
+            market_cap = all_market_caps.get(ticker, 0)
+            
+            # Filtre MarketCap >= 1B$
+            if market_cap < self.min_market_cap:
+                continue
+            
+            iex = iex_data[ticker]
+            adv = iex['adv']
+            
+            # Calcul du score
+            score = self.calculate_score(market_cap, adv)
+            
+            scored_tickers.append({
+                'ticker': ticker,
+                'market_cap': market_cap,
+                'market_cap_display': self._format_number(market_cap),
+                'price': iex['price'],
+                'volume': iex['volume'],
+                'volume_display': self._format_number(iex['volume']),
+                'adv': adv,
+                'adv_display': self._format_number(adv),
+                'score': round(score, 2)
+            })
         
-        # Étape 5: Trier par score et prendre les 50 premiers
+        report(85, 100, f"📊 {len(scored_tickers)} tickers respectent tous les critères")
+        
+        if len(scored_tickers) == 0:
+            return self._error_result("Aucun ticker ne respecte tous les critères")
+        
+        # =================================================================
+        # ÉTAPE 5: Tri et sélection des 50 meilleurs
+        # =================================================================
+        report(90, 100, "🏆 Sélection des 50 meilleurs...")
+        
+        # Trier par score décroissant
         scored_tickers.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Prendre les 50 premiers
         top_50 = scored_tickers[:self.target_count]
         
         # Ajouter le rang
         for i, t in enumerate(top_50):
             t['rank'] = i + 1
         
-        report(100, 100, "Terminé !")
+        report(100, 100, f"✅ Terminé ! {self.api_calls} appels API utilisés")
         
         return {
             'success': True,
             'tickers': top_50,
             'stats': {
                 'total_tickers_us': len(all_tickers),
-                'above_market_cap': len(candidates),
-                'above_adv': len(scored_tickers),
+                'with_iex_data': len(tickers_with_iex),
+                'above_adv_threshold': len(tickers_above_adv),
+                'above_market_cap': len(scored_tickers),
                 'selected': len(top_50),
-                'min_score': top_50[-1]['score'] if top_50 else 0,
-                'max_score': top_50[0]['score'] if top_50 else 0,
+                'min_score': round(top_50[-1]['score'], 2) if top_50 else 0,
+                'max_score': round(top_50[0]['score'], 2) if top_50 else 0,
+                'api_calls_used': self.api_calls,
                 'generated_at': datetime.now().isoformat()
             },
             'error': None
+        }
+    
+    def _error_result(self, error_msg):
+        """Retourne un résultat d'erreur formaté."""
+        return {
+            'success': False,
+            'tickers': [],
+            'stats': {'api_calls_used': self.api_calls},
+            'error': error_msg
         }
     
     def _format_number(self, num):
@@ -338,4 +364,3 @@ class ScreenerService:
             return f"{num / 1_000:.1f}K"
         else:
             return str(int(num))
-

@@ -1331,17 +1331,22 @@
                         <div class="stat-label">Tickers US</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${stats.above_market_cap || '-'}</div>
-                        <div class="stat-label">Cap ≥ 1B$</div>
+                        <div class="stat-value">${stats.above_adv_threshold || stats.above_adv || '-'}</div>
+                        <div class="stat-label">ADV ≥ 5M$</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${stats.above_adv || '-'}</div>
-                        <div class="stat-label">ADV ≥ 5M$</div>
+                        <div class="stat-value">${stats.above_market_cap || '-'}</div>
+                        <div class="stat-label">Cap ≥ 1B$</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" style="color: var(--accent-green);">${stats.selected || '-'}</div>
                         <div class="stat-label">Sélectionnés</div>
                     </div>
+                </div>
+                
+                <div style="text-align: center; margin-bottom: 16px; padding: 8px; background: var(--bg-secondary); border-radius: var(--radius-sm);">
+                    <span style="color: var(--accent-blue);">⚡ ${stats.api_calls_used || '?'} appels API utilisés</span>
+                    <span style="color: var(--text-muted); margin-left: 8px; font-size: 12px;">(au lieu de ~550)</span>
                 </div>
                 
                 <div class="search-container">
