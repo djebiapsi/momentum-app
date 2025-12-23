@@ -11,7 +11,7 @@ services:
     env: python
     region: frankfurt  # Proche de la France
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1
     envVars:
       - key: FLASK_ENV
