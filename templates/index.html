@@ -359,6 +359,31 @@
             font-weight: 600;
         }
         
+        /* Liens TradingView */
+        .ticker-link {
+            color: inherit;
+            text-decoration: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .ticker-link:hover {
+            color: var(--accent-blue);
+        }
+        
+        .ticker-link::after {
+            content: '↗';
+            font-size: 10px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .ticker-link:hover::after {
+            opacity: 1;
+        }
+        
         .btn-remove {
             width: 32px;
             height: 32px;
@@ -698,6 +723,14 @@
     
     <script>
         // =================================================================
+        // TRADINGVIEW LINK
+        // =================================================================
+        
+        function getTradingViewUrl(ticker) {
+            return `https://www.tradingview.com/symbols/${ticker}/`;
+        }
+        
+        // =================================================================
         // NAVIGATION
         // =================================================================
         
@@ -822,7 +855,9 @@
                     <div class="stock-item">
                         <div class="stock-rank top">${i + 1}</div>
                         <div class="stock-info">
-                            <div class="stock-ticker">${r.ticker}</div>
+                            <div class="stock-ticker">
+                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link">${r.ticker}</a>
+                            </div>
                             <div class="stock-signal buy">▲ Investir</div>
                         </div>
                         <div class="stock-momentum">
@@ -843,7 +878,9 @@
                     <div class="stock-item">
                         <div class="stock-rank">${invest.length + i + 1}</div>
                         <div class="stock-info">
-                            <div class="stock-ticker">${r.ticker}</div>
+                            <div class="stock-ticker">
+                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link">${r.ticker}</a>
+                            </div>
                             <div class="stock-signal sell">▼ Sortir</div>
                         </div>
                         <div class="stock-momentum">
@@ -870,7 +907,9 @@
                 if (data.actions.length > 0) {
                     document.getElementById('panel-list').innerHTML = data.actions.map(a => `
                         <div class="panel-item">
-                            <span class="panel-ticker">${a.ticker}</span>
+                            <span class="panel-ticker">
+                                <a href="${getTradingViewUrl(a.ticker)}" target="_blank" rel="noopener" class="ticker-link">${a.ticker}</a>
+                            </span>
                             <button class="btn-remove" onclick="removeTicker('${a.ticker}')">
                                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>

@@ -470,17 +470,17 @@ scheduler.add_job(
     replace_existing=True
 )
 
+# Démarrer le scheduler (fonctionne avec gunicorn en production)
+scheduler.start()
+print("📅 Scheduler démarré - Mise à jour automatique le 1er de chaque mois à 8h00 UTC")
+
 
 # =============================================================================
 # POINT D'ENTRÉE
 # =============================================================================
 
 if __name__ == '__main__':
-    # Démarrer le scheduler
-    scheduler.start()
-    print("📅 Scheduler démarré - Mise à jour automatique le 1er de chaque mois à 8h00 UTC")
-    
-    # Lancer l'application
+    # Lancer l'application en mode développement
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=app.config.get('DEBUG', False))
 
