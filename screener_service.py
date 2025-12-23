@@ -73,28 +73,70 @@ class ScreenerService:
         except Exception as e:
             return None, str(e)
     
-    def get_supported_tickers(self):
+    def get_supported_tickers_csv(self):
         """
-        Récupère la liste des tickers US supportés par Tiingo.
-        1 appel API.
+        Télécharge la liste des tickers US supportés depuis le fichier CSV de Tiingo.
+        NE COMPTE PAS comme appel API (fichier statique).
         
         Returns:
             tuple: (list of tickers, error)
         """
-        url = f"{self.base_url}/tiingo/daily"
-        data, error = self._api_call(url, {}, timeout=120)
+        import io
+        import zipfile
         
-        if error:
-            return None, error
+        url = "https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip"
         
-        # Filtrer uniquement les actions US (NYSE, NASDAQ)
-        us_tickers = [
-            t['ticker'] for t in data 
-            if t.get('exchange') in ['NYSE', 'NASDAQ', 'NYSE ARCA', 'NYSE MKT', 'NASDAQ GLOBAL SELECT']
-            and t.get('assetType') == 'Stock'
-        ]
-        
-        return us_tickers, None
+        try:
+            response = requests.get(url, timeout=60)
+            
+            if response.status_code != 200:
+                return None, f"Erreur téléchargement CSV: {response.status_code}"
+            
+            # Décompresser le ZIP
+            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                # Lire le fichier CSV
+                csv_filename = z.namelist()[0]
+                with z.open(csv_filename) as f:
+                    content = f.read().decode('utf-8')
+            
+            # Parser le CSV
+            lines = content.strip().split('\n')
+            headers = lines[0].split(',')
+            
+            # Trouver les indices des colonnes
+            ticker_idx = headers.index('ticker') if 'ticker' in headers else 0
+            exchange_idx = headers.index('exchange') if 'exchange' in headers else None
+            asset_type_idx = headers.index('assetType') if 'assetType' in headers else None
+            
+            us_tickers = []
+            valid_exchanges = {'NYSE', 'NASDAQ', 'NYSE ARCA', 'NYSE MKT', 'NASDAQ GLOBAL SELECT', 'AMEX'}
+            
+            for line in lines[1:]:
+                cols = line.split(',')
+                if len(cols) <= ticker_idx:
+                    continue
+                
+                ticker = cols[ticker_idx].strip()
+                
+                # Filtrer par exchange si disponible
+                if exchange_idx and len(cols) > exchange_idx:
+                    exchange = cols[exchange_idx].strip()
+                    if exchange not in valid_exchanges:
+                        continue
+                
+                # Filtrer par asset type si disponible
+                if asset_type_idx and len(cols) > asset_type_idx:
+                    asset_type = cols[asset_type_idx].strip()
+                    if asset_type.upper() not in ['STOCK', 'ETF']:
+                        continue
+                
+                if ticker and len(ticker) <= 5 and ticker.isalpha():
+                    us_tickers.append(ticker)
+            
+            return us_tickers, None
+            
+        except Exception as e:
+            return None, str(e)
     
     def get_iex_bulk_data(self):
         """
@@ -212,50 +254,44 @@ class ScreenerService:
                 progress_callback(current, total, msg)
         
         # =================================================================
-        # ÉTAPE 1: Liste des tickers US (1 appel)
+        # ÉTAPE 1: Données IEX bulk - prix et volume (1 appel)
+        # On commence par IEX car ça nous donne tous les tickers actifs
         # =================================================================
-        report(0, 100, "📋 Récupération de la liste des tickers US...")
-        
-        all_tickers, error = self.get_supported_tickers()
-        
-        if error:
-            return self._error_result(f"Erreur liste tickers: {error}")
-        
-        if not all_tickers:
-            return self._error_result("Aucun ticker US trouvé")
-        
-        report(10, 100, f"✅ {len(all_tickers)} tickers US trouvés (1 appel API)")
-        
-        # =================================================================
-        # ÉTAPE 2: Données IEX bulk - prix et volume (1 appel)
-        # =================================================================
-        report(15, 100, "📊 Récupération des prix et volumes (bulk IEX)...")
+        report(0, 100, "📊 Récupération des données IEX (prix + volume)...")
         
         iex_data, error = self.get_iex_bulk_data()
         
         if error:
             return self._error_result(f"Erreur IEX: {error}")
         
-        report(25, 100, f"✅ Données IEX pour {len(iex_data)} tickers (1 appel API)")
+        if not iex_data:
+            return self._error_result("Aucune donnée IEX disponible")
         
-        # Filtrer les tickers qui ont des données IEX
-        tickers_with_iex = [t for t in all_tickers if t in iex_data]
+        # Les tickers viennent directement de l'IEX
+        all_tickers = list(iex_data.keys())
+        
+        report(15, 100, f"✅ {len(all_tickers)} tickers avec données IEX (1 appel API)")
+        
+        # =================================================================
+        # ÉTAPE 2: Filtrage par ADV (pas d'appel API)
+        # =================================================================
+        report(20, 100, "📈 Filtrage par ADV >= 5M$...")
         
         # Premier filtre: ADV >= 5M$
         tickers_above_adv = [
-            t for t in tickers_with_iex 
+            t for t in all_tickers 
             if iex_data[t]['adv'] >= self.min_adv
         ]
         
-        report(30, 100, f"📈 {len(tickers_above_adv)} tickers avec ADV >= 5M$")
+        report(25, 100, f"✅ {len(tickers_above_adv)} tickers avec ADV >= 5M$")
         
         if len(tickers_above_adv) == 0:
             return self._error_result("Aucun ticker ne respecte le critère ADV >= 5M$")
         
         # =================================================================
-        # ÉTAPE 3: Fondamentaux batch - MarketCap (5-10 appels)
+        # ÉTAPE 3: Fondamentaux batch - MarketCap (quelques appels)
         # =================================================================
-        report(35, 100, "💰 Récupération des capitalisations (batch)...")
+        report(30, 100, "💰 Récupération des capitalisations (batch)...")
         
         # On limite aux tickers avec ADV suffisant pour économiser des appels
         batch_size = 100
@@ -331,7 +367,6 @@ class ScreenerService:
             'tickers': top_50,
             'stats': {
                 'total_tickers_us': len(all_tickers),
-                'with_iex_data': len(tickers_with_iex),
                 'above_adv_threshold': len(tickers_above_adv),
                 'above_market_cap': len(scored_tickers),
                 'selected': len(top_50),
