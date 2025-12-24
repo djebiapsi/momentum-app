@@ -343,7 +343,7 @@ class ScreenerService:
         report(85, 100, f"📊 {len(scored_tickers)} tickers respectent tous les critères")
         
         if len(scored_tickers) == 0:
-            return self._error_result("Aucun ticker ne respecte tous les critères")
+            return self._error_result(f"Aucun ticker ne respecte tous les critères sur {len(tickers_above_adv)} tickers")
         
         # =================================================================
         # ÉTAPE 5: Tri et sélection des 50 meilleurs
