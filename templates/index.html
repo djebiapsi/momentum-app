@@ -1327,26 +1327,25 @@
             let html = `
                 <div class="stats-summary">
                     <div class="stat-card">
-                        <div class="stat-value">${stats.total_tickers_us?.toLocaleString() || '-'}</div>
-                        <div class="stat-label">Tickers US</div>
+                        <div class="stat-value">${(stats.total_tickers || stats.total_tickers_us)?.toLocaleString() || '-'}</div>
+                        <div class="stat-label">Tickers analysés</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${stats.above_adv_threshold || stats.above_adv || '-'}</div>
+                        <div class="stat-value">${stats.above_adv_threshold || '-'}</div>
                         <div class="stat-label">ADV ≥ 5M$</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${stats.above_market_cap || '-'}</div>
-                        <div class="stat-label">Cap ≥ 1B$</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" style="color: var(--accent-green);">${stats.selected || '-'}</div>
                         <div class="stat-label">Sélectionnés</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-value" style="color: var(--accent-blue);">${stats.api_calls_used || '1'}</div>
+                        <div class="stat-label">Appel API</div>
+                    </div>
                 </div>
                 
-                <div style="text-align: center; margin-bottom: 16px; padding: 8px; background: var(--bg-secondary); border-radius: var(--radius-sm);">
-                    <span style="color: var(--accent-blue);">⚡ ${stats.api_calls_used || '?'} appels API utilisés</span>
-                    <span style="color: var(--text-muted); margin-left: 8px; font-size: 12px;">(au lieu de ~550)</span>
+                <div style="text-align: center; margin-bottom: 16px; padding: 8px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-muted);">
+                    Score = log(ADV) • ADV max: ${stats.max_adv || '-'} • ADV min: ${stats.min_adv || '-'}
                 </div>
                 
                 <div class="search-container">
@@ -1362,9 +1361,9 @@
                             <tr>
                                 <th>#</th>
                                 <th>Ticker</th>
-                                <th>MarketCap</th>
+                                <th>Prix</th>
+                                <th>Volume</th>
                                 <th>ADV</th>
-                                <th>Score</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1374,9 +1373,9 @@
                                     <td class="ticker-cell">
                                         <a href="${getTradingViewUrl(t.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${t.ticker}</a>
                                     </td>
-                                    <td class="number-cell">${t.market_cap_display}</td>
+                                    <td class="number-cell">$${t.price}</td>
+                                    <td class="number-cell">${t.volume_display}</td>
                                     <td class="number-cell">${t.adv_display}</td>
-                                    <td class="number-cell">${t.score}</td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -1427,8 +1426,8 @@
                         <div class="detail-stat-label">Score</div>
                     </div>
                     <div class="detail-stat">
-                        <div class="detail-stat-value">${t.market_cap_display}</div>
-                        <div class="detail-stat-label">MarketCap</div>
+                        <div class="detail-stat-value">$${t.price}</div>
+                        <div class="detail-stat-label">Prix</div>
                     </div>
                     <div class="detail-stat">
                         <div class="detail-stat-value">${t.adv_display}</div>
@@ -1439,25 +1438,21 @@
                 <h4 style="margin: 16px 0 12px; color: var(--text-secondary);">📊 Données de marché</h4>
                 <table class="details-table">
                     <tr>
-                        <td>Prix moyen (6 mois)</td>
+                        <td>Prix actuel</td>
                         <td style="text-align: right;">$${t.price}</td>
                     </tr>
                     <tr>
-                        <td>Volume moyen journalier</td>
-                        <td style="text-align: right;">${t.avg_volume_display}</td>
+                        <td>Volume du jour</td>
+                        <td style="text-align: right;">${t.volume_display}</td>
                     </tr>
                     <tr>
                         <td>ADV (Average Daily $ Volume)</td>
-                        <td style="text-align: right;">$${t.adv_display}</td>
-                    </tr>
-                    <tr>
-                        <td>Capitalisation boursière</td>
-                        <td style="text-align: right;">$${t.market_cap_display}</td>
+                        <td style="text-align: right;">${t.adv_display}</td>
                     </tr>
                 </table>
                 
                 <p style="margin-top: 16px; font-size: 12px; color: var(--text-muted); text-align: center;">
-                    Score = log(MarketCap) × log(ADV) = ${t.score}
+                    Score = log(ADV) = ${t.score}
                 </p>
             `;
             
