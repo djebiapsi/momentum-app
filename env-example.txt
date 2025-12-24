@@ -15,6 +15,10 @@ EMAIL_TO=votre@email.com
 # Clé secrète Flask (générez-en une avec: python -c "import secrets; print(secrets.token_hex(32))")
 SECRET_KEY=votre_cle_secrete_generee
 
+# Code PIN admin pour accéder aux fonctions d'édition (chiffres uniquement)
+# Si non défini, le site est en accès complet (mode développement)
+ADMIN_PASSWORD=123456
+
 # Base de données (laissez vide pour SQLite local, ou utilisez PostgreSQL)
 # DATABASE_URL=postgresql://user:password@host:port/database
 

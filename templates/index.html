@@ -704,6 +704,78 @@
             flex: 1;
         }
         
+        /* Admin badge */
+        .admin-badge {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 9999px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .admin-badge:hover {
+            background: var(--bg-hover);
+        }
+        
+        .admin-badge.logged-in {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+        
+        .admin-badge.logged-out {
+            border-color: var(--accent-orange);
+            color: var(--accent-orange);
+        }
+        
+        /* Actions cachées en mode lecture */
+        .admin-only {
+            transition: opacity 0.3s;
+        }
+        
+        .admin-only.hidden {
+            opacity: 0.3;
+            pointer-events: none;
+        }
+        
+        .admin-only.hidden::after {
+            content: '🔒';
+            margin-left: 8px;
+        }
+        
+        /* Login modal */
+        .login-input {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .login-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        
+        .login-error {
+            color: var(--accent-red);
+            font-size: 13px;
+            text-align: center;
+            margin-bottom: 12px;
+        }
+        
         .btn-remove {
             width: 32px;
             height: 32px;
@@ -878,6 +950,34 @@
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
     
+    <!-- Badge Admin -->
+    <div id="admin-badge" class="admin-badge logged-out" onclick="toggleLoginModal()">
+        <span id="admin-icon">🔒</span>
+        <span id="admin-text">Connexion</span>
+    </div>
+    
+    <!-- Modal Login -->
+    <div id="login-modal-overlay" class="modal-overlay" onclick="closeLoginModal(event)">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 350px;">
+            <div class="modal-header">
+                <span class="modal-title">🔐 Connexion Admin</span>
+                <button class="modal-close" onclick="closeLoginModal()">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="text-align: center; color: var(--text-secondary); margin-bottom: 20px;">
+                    Entrez le code PIN pour accéder aux fonctions d'édition.
+                </p>
+                <div id="login-error" class="login-error" style="display: none;"></div>
+                <input type="password" class="login-input" id="admin-password" placeholder="Code PIN" inputmode="numeric" pattern="[0-9]*" autocomplete="off" onkeypress="if(event.key==='Enter')doLogin()">
+                <button class="btn btn-primary btn-block" onclick="doLogin()">Se connecter</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Modal détails ticker -->
     <div id="modal-overlay" class="modal-overlay" onclick="closeModal(event)">
         <div class="modal" onclick="event.stopPropagation()">
@@ -933,11 +1033,11 @@
                 </div>
             </div>
             
-            <button class="btn btn-primary btn-block" id="btn-refresh" onclick="calculateMomentum()">
+            <button class="btn btn-primary btn-block admin-only" id="btn-refresh" onclick="calculateMomentum()">
                 🔄 Mettre à jour
             </button>
             
-            <button class="btn btn-secondary btn-block" style="margin-top: 10px;" onclick="calculateAndNotify()">
+            <button class="btn btn-secondary btn-block admin-only" style="margin-top: 10px;" onclick="calculateAndNotify()">
                 📧 Mettre à jour + Envoyer email
             </button>
             
@@ -995,12 +1095,12 @@
                     Génère un panel de 50 actions US basé sur des critères quantitatifs rigoureux :
                     MarketCap ≥ 1B$, ADV ≥ 5M$
                 </p>
-                <button class="btn btn-generate btn-block" onclick="confirmGeneratePanel()">
+                <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
                     ⚡ Générer les 50 Tickers
                 </button>
             </div>
             
-            <div class="card">
+            <div class="card admin-only">
                 <div class="card-header">
                     <span class="card-title">➕ Ajouter une action</span>
                 </div>
@@ -1039,7 +1139,7 @@
         
         <!-- PAGE: Settings -->
         <div id="page-settings" class="page">
-            <div class="card">
+            <div class="card admin-only">
                 <div class="card-header">
                     <span class="card-title">⚙️ Paramètres</span>
                 </div>
@@ -1061,7 +1161,7 @@
                 </button>
             </div>
             
-            <div class="card">
+            <div class="card admin-only">
                 <div class="card-header">
                     <span class="card-title">📧 Notifications Email</span>
                 </div>
@@ -1116,6 +1216,123 @@
         
         let currentRecommendations = [];  // Stocke toutes les recommandations
         let showAllStocks = false;        // Toggle pour voir toutes les actions
+        let isAdmin = false;              // Mode admin actif
+        let adminToken = localStorage.getItem('adminToken') || '';  // Token stocké
+        
+        // =================================================================
+        // AUTHENTIFICATION
+        // =================================================================
+        
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/auth/check', {
+                    headers: adminToken ? { 'X-Admin-Token': adminToken } : {}
+                });
+                const data = await response.json();
+                
+                if (!data.auth_required) {
+                    // Pas de mot de passe configuré - accès complet
+                    isAdmin = true;
+                    document.getElementById('admin-badge').style.display = 'none';
+                } else {
+                    isAdmin = data.is_admin;
+                    updateAdminUI();
+                }
+            } catch (e) {
+                console.error('Auth check failed:', e);
+                isAdmin = false;
+                updateAdminUI();
+            }
+        }
+        
+        function updateAdminUI() {
+            const badge = document.getElementById('admin-badge');
+            const icon = document.getElementById('admin-icon');
+            const text = document.getElementById('admin-text');
+            
+            if (isAdmin) {
+                badge.className = 'admin-badge logged-in';
+                icon.textContent = '✅';
+                text.textContent = 'Admin';
+            } else {
+                badge.className = 'admin-badge logged-out';
+                icon.textContent = '🔒';
+                text.textContent = 'Connexion';
+            }
+            
+            // Afficher/masquer les éléments admin-only
+            document.querySelectorAll('.admin-only').forEach(el => {
+                if (isAdmin) {
+                    el.classList.remove('hidden');
+                } else {
+                    el.classList.add('hidden');
+                }
+            });
+        }
+        
+        function toggleLoginModal() {
+            if (isAdmin) {
+                // Déconnexion
+                if (confirm('Se déconnecter du mode admin ?')) {
+                    adminToken = '';
+                    localStorage.removeItem('adminToken');
+                    isAdmin = false;
+                    updateAdminUI();
+                    showToast('Déconnecté');
+                }
+            } else {
+                // Ouvrir le modal de connexion
+                openLoginModal();
+            }
+        }
+        
+        function openLoginModal() {
+            document.getElementById('login-modal-overlay').classList.add('active');
+            document.getElementById('admin-password').value = '';
+            document.getElementById('login-error').style.display = 'none';
+            document.getElementById('admin-password').focus();
+        }
+        
+        function closeLoginModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('login-modal-overlay').classList.remove('active');
+        }
+        
+        async function doLogin() {
+            const password = document.getElementById('admin-password').value;
+            const errorEl = document.getElementById('login-error');
+            
+            if (!password) {
+                errorEl.textContent = 'Entrez un mot de passe';
+                errorEl.style.display = 'block';
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    adminToken = data.token || password;
+                    localStorage.setItem('adminToken', adminToken);
+                    isAdmin = true;
+                    updateAdminUI();
+                    closeLoginModal();
+                    showToast('✅ Connecté en mode admin');
+                } else {
+                    errorEl.textContent = data.message || 'Mot de passe incorrect';
+                    errorEl.style.display = 'block';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Erreur de connexion';
+                errorEl.style.display = 'block';
+            }
+        }
         
         // =================================================================
         // TRADINGVIEW LINK
@@ -1587,14 +1804,31 @@
         
         async function api(endpoint, options = {}) {
             try {
+                // Ajouter le token admin si disponible
+                const headers = {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                };
+                
+                if (adminToken) {
+                    headers['X-Admin-Token'] = adminToken;
+                }
+                
                 const response = await fetch('/api' + endpoint, {
                     ...options,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...options.headers
-                    }
+                    headers
                 });
-                return await response.json();
+                
+                const data = await response.json();
+                
+                // Si erreur d'auth, proposer de se reconnecter
+                if (response.status === 401 && data.auth_required) {
+                    showToast('🔒 Connexion requise', 'error');
+                    openLoginModal();
+                    return null;
+                }
+                
+                return data;
             } catch (error) {
                 console.error('API Error:', error);
                 showToast('Erreur de connexion', 'error');
@@ -1898,7 +2132,11 @@
         // INIT
         // =================================================================
         
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Vérifier l'authentification d'abord
+            await checkAuth();
+            
+            // Charger les données
             loadLatest();
             
             // Allow enter key on ticker input

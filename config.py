@@ -28,6 +28,10 @@ class Config:
     # Clé secrète Flask pour les sessions
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     
+    # Mot de passe admin pour accéder aux fonctions d'écriture
+    # Si non défini, le mode admin est désactivé (lecture seule pour tous)
+    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')
+    
     # ==========================================================================
     # CONFIGURATION EMAIL (Resend)
     # ==========================================================================

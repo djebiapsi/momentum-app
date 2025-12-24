@@ -12,11 +12,37 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from functools import wraps
 from config import get_config
 from models import db, init_db, Settings, PanelAction, RecommendationHistory, RecommendationDetail
 from momentum_service import MomentumService
 from email_service import EmailService
 from screener_service import ScreenerService
+
+
+def require_admin(f):
+    """
+    Décorateur pour protéger les routes admin.
+    Vérifie le header X-Admin-Token ou refuse l'accès.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        admin_password = app.config.get('ADMIN_PASSWORD')
+        
+        # Si pas de mot de passe configuré, accès libre (mode dev)
+        if not admin_password:
+            return f(*args, **kwargs)
+        
+        # Vérifier le token
+        token = request.headers.get('X-Admin-Token', '')
+        if token != admin_password:
+            return jsonify({
+                'error': 'Accès refusé - Authentification requise',
+                'auth_required': True
+            }), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 # =============================================================================
@@ -114,6 +140,7 @@ def get_settings():
 
 
 @app.route('/api/settings', methods=['POST'])
+@require_admin
 def update_settings():
     """Met à jour les paramètres"""
     data = request.get_json()
@@ -153,6 +180,7 @@ def get_panel():
 
 
 @app.route('/api/panel', methods=['POST'])
+@require_admin
 def add_to_panel():
     """Ajoute une action au panel"""
     data = request.get_json()
@@ -195,6 +223,7 @@ def add_to_panel():
 
 
 @app.route('/api/panel/<ticker>', methods=['DELETE'])
+@require_admin
 def remove_from_panel(ticker):
     """Retire une action du panel"""
     ticker = ticker.upper()
@@ -214,6 +243,7 @@ def remove_from_panel(ticker):
 # =============================================================================
 
 @app.route('/api/calculate', methods=['POST'])
+@require_admin
 def calculate_momentum():
     """Lance le calcul du momentum et génère les recommandations"""
     
@@ -276,6 +306,7 @@ def calculate_momentum():
 
 
 @app.route('/api/calculate-and-notify', methods=['POST'])
+@require_admin
 def calculate_and_notify():
     """Lance le calcul et envoie une notification email"""
     
@@ -382,6 +413,7 @@ def get_latest():
 # =============================================================================
 
 @app.route('/api/email/test', methods=['POST'])
+@require_admin
 def send_test_email():
     """Envoie un email de test"""
     email_svc = get_email_service()
@@ -402,10 +434,71 @@ def email_status():
 
 
 # =============================================================================
+# ROUTES - API AUTH (Mode Admin)
+# =============================================================================
+
+@app.route('/api/auth/check', methods=['GET'])
+def check_auth():
+    """
+    Vérifie si le mot de passe admin est configuré et si l'utilisateur est authentifié.
+    Utilisé au chargement de la page pour savoir quel mode afficher.
+    """
+    admin_password = app.config.get('ADMIN_PASSWORD')
+    
+    # Si pas de mot de passe configuré, tout le monde a accès (mode dev)
+    if not admin_password:
+        return jsonify({
+            'auth_required': False,
+            'is_admin': True,
+            'message': 'Pas de mot de passe configuré - accès complet'
+        })
+    
+    # Vérifier le token dans le header
+    token = request.headers.get('X-Admin-Token', '')
+    is_admin = (token == admin_password)
+    
+    return jsonify({
+        'auth_required': True,
+        'is_admin': is_admin
+    })
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def admin_login():
+    """
+    Vérifie le mot de passe admin.
+    Retourne le token (= mot de passe) si correct, pour le stocker côté client.
+    """
+    admin_password = app.config.get('ADMIN_PASSWORD')
+    
+    if not admin_password:
+        return jsonify({
+            'success': True,
+            'message': 'Pas de mot de passe requis'
+        })
+    
+    data = request.get_json()
+    password = data.get('password', '')
+    
+    if password == admin_password:
+        return jsonify({
+            'success': True,
+            'token': password,  # Le client stockera ce token
+            'message': 'Connexion réussie'
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'message': 'Mot de passe incorrect'
+        }), 401
+
+
+# =============================================================================
 # ROUTES - API SCREENER
 # =============================================================================
 
 @app.route('/api/screener/generate', methods=['POST'])
+@require_admin
 def generate_panel():
     """
     Génère automatiquement un panel de 50 tickers basé sur les critères:
@@ -435,6 +528,7 @@ def generate_panel():
 
 
 @app.route('/api/screener/apply', methods=['POST'])
+@require_admin
 def apply_generated_panel():
     """
     Applique les tickers générés au panel actuel.
