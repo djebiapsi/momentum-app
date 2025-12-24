@@ -33,8 +33,8 @@ class ScreenerService:
         self.base_url = "https://api.tiingo.com"
         
         # Critères de filtrage
-        self.min_market_cap = 100000000  # 1 milliard $
-        self.min_adv = 500000  # 5 millions $ de volume journalier
+        self.min_market_cap = 1000000000  # 1 milliard $
+        self.min_adv = 5000000  # 5 millions $ de volume journalier
         self.target_count = 50  # Nombre de tickers à sélectionner
         
         # Compteur d'appels API
@@ -343,7 +343,7 @@ class ScreenerService:
         report(85, 100, f"📊 {len(scored_tickers)} tickers respectent tous les critères")
         
         if len(scored_tickers) == 0:
-            return self._error_result(f"Aucun ticker ne respecte tous les critères sur {len(tickers_above_adv)} tickers")
+            return self._error_result(f"Aucun ticker ne respecte tous les critères sur {tickers_above_adv[:10]} tickers")
         
         # =================================================================
         # ÉTAPE 5: Tri et sélection des 50 meilleurs
