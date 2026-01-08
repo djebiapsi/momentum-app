@@ -3,78 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#1e3a5f">
+    <meta name="theme-color" content="#09090b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Momentum">
     
-    <title>📈 Momentum Strategy</title>
+    <title>Momentum</title>
     
-        /* Strategy tabs */
-        .strategy-tabs {
-            display: flex;
-            background: var(--bg-secondary);
-            border-radius: var(--radius-md);
-            padding: 4px;
-            margin-bottom: 24px;
-            border: 1px solid var(--border-color);
-        }
-        
-        .strategy-tab {
-            flex: 1;
-            padding: 10px;
-            text-align: center;
-            font-size: 14px;
-            font-weight: 600;
-            border-radius: var(--radius-sm);
-            cursor: pointer;
-            transition: all 0.2s;
-            color: var(--text-muted);
-        }
-        
-        .strategy-tab.active {
-            background: var(--bg-card);
-            color: var(--text-primary);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        }
-        
-        .strategy-tab.long.active {
-            border-bottom: 2px solid var(--accent-blue);
-        }
-        
-        .strategy-tab.short.active {
-            border-bottom: 2px solid var(--accent-red);
-        }
-
-        /* PWA Manifest */
+    <!-- PWA Manifest -->
     <link rel="manifest" href="/static/manifest.json">
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
     <style>
         :root {
-            --bg-primary: #0a1628;
-            --bg-secondary: #111d32;
-            --bg-card: #162033;
-            --bg-hover: #1e2d47;
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --accent-blue: #3b82f6;
-            --accent-purple: #8b5cf6;
-            --accent-green: #22c55e;
-            --accent-red: #ef4444;
-            --accent-orange: #f59e0b;
-            --border-color: #1e3a5f;
-            --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-            --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.4);
-            --radius-sm: 8px;
-            --radius-md: 12px;
-            --radius-lg: 16px;
+            --bg-primary: #09090b;
+            --bg-secondary: #18181b;
+            --bg-card: #1c1c1f;
+            --bg-hover: #27272a;
+            --bg-elevated: #232326;
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --accent-long: #10b981;
+            --accent-long-dim: rgba(16, 185, 129, 0.12);
+            --accent-short: #f43f5e;
+            --accent-short-dim: rgba(244, 63, 94, 0.12);
+            --accent-blue: #6366f1;
+            --accent-neutral: #a1a1aa;
+            --border-color: #27272a;
+            --border-subtle: #1f1f23;
+            --gradient-long: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            --gradient-short: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 12px 40px rgba(0,0,0,0.5);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --radius-xl: 20px;
         }
         
         * {
@@ -84,11 +55,13 @@
         }
         
         body {
-            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             min-height: 100vh;
-            line-height: 1.6;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            letter-spacing: -0.01em;
         }
         
         /* Navigation tabs */
@@ -98,8 +71,10 @@
             bottom: 0;
             left: 0;
             right: 0;
-            background: var(--bg-secondary);
-            border-top: 1px solid var(--border-color);
+            background: rgba(9, 9, 11, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid var(--border-subtle);
             z-index: 100;
             padding-bottom: env(safe-area-inset-bottom);
         }
@@ -109,56 +84,74 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 12px 8px;
+            padding: 10px 8px 8px;
             color: var(--text-muted);
             text-decoration: none;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 500;
-            transition: all 0.2s;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            transition: color 0.2s ease;
             cursor: pointer;
             border: none;
             background: none;
         }
         
         .nav-tab.active {
-            color: var(--accent-blue);
-        }
-        
-        .nav-tab:hover {
             color: var(--text-primary);
         }
         
+        .nav-tab:hover {
+            color: var(--text-secondary);
+        }
+        
         .nav-tab svg {
-            width: 24px;
-            height: 24px;
+            width: 22px;
+            height: 22px;
             margin-bottom: 4px;
+            stroke-width: 1.5;
         }
         
         /* Main content */
         .main-content {
-            padding: 20px 16px 100px;
-            max-width: 600px;
+            padding: 16px 16px 100px;
+            max-width: 520px;
             margin: 0 auto;
         }
         
         /* Header */
         .header {
-            background: var(--gradient-primary);
-            padding: 24px 20px;
-            border-radius: var(--radius-lg);
+            padding: 28px 0 24px;
             margin-bottom: 24px;
-            text-align: center;
+            text-align: left;
+            border-bottom: 1px solid var(--border-subtle);
         }
         
+        .header.long { border-color: var(--accent-long); }
+        .header.short { border-color: var(--accent-short); }
+        
+        .header-label {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+        
+        .header-label.long { color: var(--accent-long); }
+        .header-label.short { color: var(--accent-short); }
+        
         .header h1 {
-            font-size: 22px;
+            font-size: 28px;
             font-weight: 700;
-            margin-bottom: 4px;
+            letter-spacing: -0.03em;
+            margin-bottom: 2px;
         }
         
         .header p {
-            font-size: 14px;
-            opacity: 0.9;
+            font-size: 13px;
+            color: var(--text-muted);
         }
         
         /* Page sections */
@@ -168,21 +161,21 @@
         
         .page.active {
             display: block;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.25s ease-out;
         }
         
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
+            from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
         }
         
         /* Cards */
         .card {
             background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-md);
-            padding: 16px;
-            margin-bottom: 16px;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin-bottom: 12px;
         }
         
         .card-header {
@@ -193,9 +186,10 @@
         }
         
         .card-title {
-            font-size: 16px;
+            font-size: 13px;
             font-weight: 600;
-            color: var(--text-primary);
+            color: var(--text-secondary);
+            letter-spacing: 0.01em;
         }
         
         /* Buttons */
@@ -204,30 +198,32 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            padding: 12px 20px;
-            font-size: 14px;
+            padding: 12px 18px;
+            font-size: 13px;
             font-weight: 600;
             border: none;
-            border-radius: var(--radius-sm);
+            border-radius: var(--radius-md);
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.15s ease;
             font-family: inherit;
+            letter-spacing: -0.01em;
         }
         
         .btn-primary {
-            background: var(--gradient-primary);
+            background: var(--gradient-long);
             color: white;
         }
         
         .btn-primary:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+            filter: brightness(1.1);
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25);
         }
         
         .btn-primary:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
-            transform: none;
+            filter: none;
+            box-shadow: none;
         }
         
         .btn-secondary {
@@ -237,12 +233,18 @@
         }
         
         .btn-secondary:hover {
-            background: var(--border-color);
+            background: var(--bg-elevated);
+            border-color: var(--text-muted);
         }
         
-        .btn-danger {
-            background: var(--accent-red);
+        .btn-short {
+            background: var(--gradient-short);
             color: white;
+        }
+        
+        .btn-short:hover {
+            filter: brightness(1.1);
+            box-shadow: 0 4px 16px rgba(244, 63, 94, 0.25);
         }
         
         .btn-sm {
@@ -259,7 +261,7 @@
             display: flex;
             align-items: center;
             padding: 14px 0;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-subtle);
         }
         
         .stock-item:last-child {
@@ -267,45 +269,59 @@
         }
         
         .stock-rank {
-            width: 28px;
-            height: 28px;
+            width: 26px;
+            height: 26px;
             background: var(--bg-hover);
-            border-radius: 50%;
+            border-radius: var(--radius-sm);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
-            color: var(--text-secondary);
-            margin-right: 12px;
+            color: var(--text-muted);
+            margin-right: 14px;
+            flex-shrink: 0;
         }
         
         .stock-rank.top {
-            background: var(--gradient-primary);
+            background: var(--accent-long);
+            color: var(--bg-primary);
+        }
+        
+        .stock-rank.short {
+            background: var(--accent-short);
             color: white;
         }
         
         .stock-info {
             flex: 1;
+            min-width: 0;
         }
         
         .stock-ticker {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 15px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 14px;
             font-weight: 600;
+            letter-spacing: 0.02em;
         }
         
         .stock-signal {
-            font-size: 12px;
-            margin-top: 2px;
+            font-size: 11px;
+            margin-top: 3px;
+            font-weight: 500;
+            letter-spacing: 0.02em;
         }
         
         .stock-signal.buy {
-            color: var(--accent-green);
+            color: var(--accent-long);
         }
         
         .stock-signal.sell {
-            color: var(--accent-red);
+            color: var(--text-muted);
+        }
+        
+        .stock-signal.short-signal {
+            color: var(--accent-short);
         }
         
         .stock-momentum {
@@ -313,58 +329,66 @@
         }
         
         .momentum-value {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 15px;
-            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 14px;
+            font-weight: 500;
         }
         
         .momentum-value.positive {
-            color: var(--accent-green);
+            color: var(--accent-long);
         }
         
         .momentum-value.negative {
-            color: var(--accent-red);
+            color: var(--accent-short);
         }
         
         .allocation-badge {
             display: inline-block;
-            padding: 4px 10px;
-            background: rgba(34, 197, 94, 0.15);
-            color: var(--accent-green);
-            border-radius: 9999px;
-            font-size: 12px;
+            padding: 3px 8px;
+            background: var(--accent-long-dim);
+            color: var(--accent-long);
+            border-radius: var(--radius-sm);
+            font-size: 11px;
             font-weight: 600;
             margin-top: 4px;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        
+        .allocation-badge.short {
+            background: var(--accent-short-dim);
+            color: var(--accent-short);
         }
         
         /* Forms */
         .form-group {
-            margin-bottom: 16px;
+            margin-bottom: 20px;
         }
         
         .form-label {
             display: block;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 6px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            letter-spacing: 0.01em;
         }
         
         .form-input {
             width: 100%;
             padding: 12px 14px;
-            font-size: 15px;
+            font-size: 14px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm);
+            border-radius: var(--radius-md);
             color: var(--text-primary);
             font-family: inherit;
-            transition: border-color 0.2s;
+            transition: all 0.15s ease;
         }
         
         .form-input:focus {
             outline: none;
-            border-color: var(--accent-blue);
+            border-color: var(--text-muted);
+            background: var(--bg-elevated);
         }
         
         .form-input::placeholder {
@@ -372,9 +396,9 @@
         }
         
         .form-hint {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-muted);
-            margin-top: 4px;
+            margin-top: 6px;
         }
         
         /* Panel list */
@@ -383,7 +407,7 @@
             align-items: center;
             justify-content: space-between;
             padding: 12px 0;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-subtle);
         }
         
         .panel-item:last-child {
@@ -391,46 +415,34 @@
         }
         
         .panel-ticker {
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 500;
+            font-size: 13px;
         }
         
         /* Liens TradingView */
         .ticker-link {
             color: inherit;
             text-decoration: none;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
+            transition: color 0.15s ease;
         }
         
         .ticker-link:hover {
             color: var(--accent-blue);
         }
         
-        .ticker-link::after {
-            content: '↗';
-            font-size: 10px;
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        
-        .ticker-link:hover::after {
-            opacity: 1;
-        }
-        
         /* Stock item cliquable */
         .stock-item.clickable {
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.15s ease;
+            border-radius: var(--radius-sm);
+            margin: 0 -12px;
+            padding-left: 12px;
+            padding-right: 12px;
         }
         
         .stock-item.clickable:hover {
             background: var(--bg-hover);
-            margin: 0 -16px;
-            padding-left: 16px;
-            padding-right: 16px;
         }
         
         /* Modal */
@@ -440,7 +452,9 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
             z-index: 300;
             display: flex;
             align-items: center;
@@ -448,7 +462,7 @@
             padding: 20px;
             opacity: 0;
             visibility: hidden;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
         }
         
         .modal-overlay.active {
@@ -459,78 +473,91 @@
         .modal {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: var(--radius-lg);
+            border-radius: var(--radius-xl);
             width: 100%;
-            max-width: 500px;
-            max-height: 80vh;
+            max-width: 440px;
+            max-height: 85vh;
             overflow: hidden;
-            transform: translateY(20px);
-            transition: transform 0.3s ease;
+            transform: scale(0.96) translateY(10px);
+            transition: transform 0.2s ease;
+            box-shadow: var(--shadow-lg);
         }
         
         .modal-overlay.active .modal {
-            transform: translateY(0);
+            transform: scale(1) translateY(0);
         }
         
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 20px;
-            border-bottom: 1px solid var(--border-color);
-            background: var(--gradient-primary);
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-secondary);
+        }
+        
+        .modal-header.long {
+            border-bottom-color: var(--accent-long);
+        }
+        
+        .modal-header.short {
+            border-bottom-color: var(--accent-short);
         }
         
         .modal-title {
-            font-size: 18px;
-            font-weight: 700;
-            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-family: 'IBM Plex Mono', monospace;
         }
         
         .modal-close {
-            background: rgba(255,255,255,0.2);
+            background: var(--bg-hover);
             border: none;
-            color: white;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
+            color: var(--text-muted);
+            width: 30px;
+            height: 30px;
+            border-radius: var(--radius-sm);
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: background 0.2s;
+            transition: all 0.15s ease;
         }
         
         .modal-close:hover {
-            background: rgba(255,255,255,0.3);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
         }
         
         .modal-body {
             padding: 20px;
             overflow-y: auto;
-            max-height: calc(80vh - 80px);
+            max-height: calc(85vh - 70px);
         }
         
         /* Tableau des détails mensuels */
         .details-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 13px;
+            font-size: 12px;
         }
         
         .details-table th {
             text-align: left;
             padding: 10px 8px;
             background: var(--bg-secondary);
-            color: var(--text-secondary);
+            color: var(--text-muted);
             font-weight: 500;
-            position: sticky;
-            top: 0;
+            font-size: 11px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
         }
         
         .details-table td {
             padding: 10px 8px;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-subtle);
+            font-family: 'IBM Plex Mono', monospace;
         }
         
         .details-table tr:last-child td {
@@ -538,38 +565,40 @@
         }
         
         .details-table .positive {
-            color: var(--accent-green);
+            color: var(--accent-long);
         }
         
         .details-table .negative {
-            color: var(--accent-red);
+            color: var(--accent-short);
         }
         
         /* Résumé dans le modal */
         .detail-summary {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
+            gap: 10px;
             margin-bottom: 20px;
         }
         
         .detail-stat {
             background: var(--bg-secondary);
-            padding: 12px;
-            border-radius: var(--radius-sm);
+            padding: 14px 12px;
+            border-radius: var(--radius-md);
             text-align: center;
         }
         
         .detail-stat-value {
-            font-size: 20px;
-            font-weight: 700;
-            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
         }
         
         .detail-stat-label {
-            font-size: 11px;
+            font-size: 10px;
             color: var(--text-muted);
             margin-top: 4px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
         }
         
         /* Barre de recherche */
@@ -580,18 +609,20 @@
         
         .search-input {
             width: 100%;
-            padding: 12px 14px 12px 40px;
-            font-size: 14px;
+            padding: 11px 14px 11px 38px;
+            font-size: 13px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm);
+            border-radius: var(--radius-md);
             color: var(--text-primary);
             font-family: inherit;
+            transition: all 0.15s ease;
         }
         
         .search-input:focus {
             outline: none;
-            border-color: var(--accent-blue);
+            border-color: var(--text-muted);
+            background: var(--bg-elevated);
         }
         
         .search-icon {
@@ -600,6 +631,8 @@
             top: 50%;
             transform: translateY(-50%);
             color: var(--text-muted);
+            width: 16px;
+            height: 16px;
         }
         
         /* Toggle pour voir tous les tickers */
@@ -607,47 +640,52 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
+            gap: 6px;
             padding: 10px;
-            background: var(--bg-hover);
-            border-radius: var(--radius-sm);
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
             cursor: pointer;
-            font-size: 13px;
-            color: var(--text-secondary);
+            font-size: 12px;
+            color: var(--text-muted);
             margin-top: 12px;
-            transition: all 0.2s;
+            transition: all 0.15s ease;
         }
         
         .toggle-all:hover {
-            background: var(--border-color);
-            color: var(--text-primary);
+            border-color: var(--text-muted);
+            color: var(--text-secondary);
         }
         
         /* Progress bar */
         .progress-container {
-            margin: 20px 0;
+            margin: 24px 0;
         }
         
         .progress-bar {
-            height: 8px;
-            background: var(--bg-secondary);
-            border-radius: 4px;
+            height: 4px;
+            background: var(--bg-hover);
+            border-radius: 2px;
             overflow: hidden;
         }
         
         .progress-fill {
             height: 100%;
-            background: var(--gradient-primary);
-            border-radius: 4px;
+            background: var(--accent-long);
+            border-radius: 2px;
             transition: width 0.3s ease;
             width: 0%;
         }
         
+        .progress-fill.short {
+            background: var(--accent-short);
+        }
+        
         .progress-text {
-            font-size: 13px;
-            color: var(--text-secondary);
+            font-size: 12px;
+            color: var(--text-muted);
             text-align: center;
-            margin-top: 8px;
+            margin-top: 12px;
         }
         
         /* Screener results table */
@@ -659,18 +697,18 @@
         
         .screener-table th {
             text-align: left;
-            padding: 10px 6px;
+            padding: 10px 8px;
             background: var(--bg-secondary);
-            color: var(--text-secondary);
+            color: var(--text-muted);
             font-weight: 500;
-            position: sticky;
-            top: 0;
-            white-space: nowrap;
+            font-size: 10px;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
         }
         
         .screener-table td {
-            padding: 10px 6px;
-            border-bottom: 1px solid var(--border-color);
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-subtle);
         }
         
         .screener-table tr:hover {
@@ -679,33 +717,35 @@
         
         .screener-table .rank-cell {
             font-weight: 600;
-            color: var(--accent-blue);
+            color: var(--text-muted);
         }
         
         .screener-table .ticker-cell {
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 500;
         }
         
         .screener-table .number-cell {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'IBM Plex Mono', monospace;
             text-align: right;
+            color: var(--text-secondary);
         }
         
         /* Generate button style */
         .btn-generate {
-            background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-            color: white;
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border: 1px dashed var(--border-color);
         }
         
         .btn-generate:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+            border-style: solid;
+            border-color: var(--text-muted);
         }
         
         /* Modal large */
         .modal.large {
-            max-width: 700px;
+            max-width: 580px;
         }
         
         .modal-body.scrollable {
@@ -717,23 +757,23 @@
         .stats-summary {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
+            gap: 8px;
             margin-bottom: 16px;
         }
         
         .stats-summary .stat-card {
-            padding: 12px 8px;
+            padding: 12px 6px;
         }
         
         .stats-summary .stat-value {
-            font-size: 18px;
+            font-size: 15px;
         }
         
         /* Confirm dialog */
         .confirm-buttons {
             display: flex;
-            gap: 12px;
-            margin-top: 20px;
+            gap: 10px;
+            margin-top: 24px;
         }
         
         .confirm-buttons .btn {
@@ -748,14 +788,15 @@
             z-index: 100;
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px 14px;
+            gap: 6px;
+            padding: 6px 12px;
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 9999px;
-            font-size: 12px;
+            border-radius: var(--radius-md);
+            font-size: 11px;
+            font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.15s ease;
         }
         
         .admin-badge:hover {
@@ -763,133 +804,141 @@
         }
         
         .admin-badge.logged-in {
-            border-color: var(--accent-green);
-            color: var(--accent-green);
+            border-color: var(--accent-long);
+            color: var(--accent-long);
         }
         
         .admin-badge.logged-out {
-            border-color: var(--accent-orange);
-            color: var(--accent-orange);
+            border-color: var(--text-muted);
+            color: var(--text-muted);
         }
         
         /* Actions cachées en mode lecture */
         .admin-only {
-            transition: opacity 0.3s;
+            transition: opacity 0.2s ease;
         }
         
         .admin-only.hidden {
-            opacity: 0.3;
+            opacity: 0.4;
             pointer-events: none;
-        }
-        
-        .admin-only.hidden::after {
-            content: '🔒';
-            margin-left: 8px;
         }
         
         /* Login modal */
         .login-input {
             width: 100%;
             padding: 14px;
-            font-size: 16px;
+            font-size: 18px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm);
+            border-radius: var(--radius-md);
             color: var(--text-primary);
             text-align: center;
             margin-bottom: 16px;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.2em;
         }
         
         .login-input:focus {
             outline: none;
-            border-color: var(--accent-blue);
+            border-color: var(--text-muted);
         }
         
         .login-error {
-            color: var(--accent-red);
-            font-size: 13px;
+            color: var(--accent-short);
+            font-size: 12px;
             text-align: center;
             margin-bottom: 12px;
         }
         
         .btn-remove {
-            width: 32px;
-            height: 32px;
+            width: 28px;
+            height: 28px;
             padding: 0;
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--accent-red);
+            background: transparent;
+            color: var(--text-muted);
             border: none;
-            border-radius: 50%;
+            border-radius: var(--radius-sm);
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.2s;
+            transition: all 0.15s ease;
         }
         
         .btn-remove:hover {
-            background: var(--accent-red);
-            color: white;
+            background: var(--accent-short-dim);
+            color: var(--accent-short);
         }
         
         /* History list */
         .history-item {
-            padding: 14px;
+            padding: 14px 16px;
             background: var(--bg-secondary);
-            border-radius: var(--radius-sm);
-            margin-bottom: 10px;
+            border-radius: var(--radius-md);
+            margin-bottom: 8px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.15s ease;
+            border-left: 3px solid transparent;
         }
         
         .history-item:hover {
             background: var(--bg-hover);
         }
         
+        .history-item.long {
+            border-left-color: var(--accent-long);
+        }
+        
+        .history-item.short {
+            border-left-color: var(--accent-short);
+        }
+        
         .history-date {
-            font-weight: 600;
-            margin-bottom: 6px;
+            font-weight: 500;
+            font-size: 13px;
+            margin-bottom: 4px;
         }
         
         .history-summary {
-            font-size: 13px;
-            color: var(--text-secondary);
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'IBM Plex Mono', monospace;
         }
         
         /* Status badges */
         .status-badge {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 9999px;
-            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: var(--radius-sm);
+            font-size: 11px;
             font-weight: 500;
+            font-family: 'IBM Plex Mono', monospace;
         }
         
         .status-badge.success {
-            background: rgba(34, 197, 94, 0.15);
-            color: var(--accent-green);
+            background: var(--accent-long-dim);
+            color: var(--accent-long);
         }
         
         .status-badge.warning {
-            background: rgba(245, 158, 11, 0.15);
-            color: var(--accent-orange);
+            background: var(--bg-hover);
+            color: var(--text-secondary);
         }
         
         .status-badge.error {
-            background: rgba(239, 68, 68, 0.15);
-            color: var(--accent-red);
+            background: var(--accent-short-dim);
+            color: var(--accent-short);
         }
         
         /* Loading spinner */
         .spinner {
-            width: 20px;
-            height: 20px;
-            border: 2px solid transparent;
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--border-color);
             border-top-color: currentColor;
             border-radius: 50%;
-            animation: spin 0.8s linear infinite;
+            animation: spin 0.7s linear infinite;
         }
         
         @keyframes spin {
@@ -899,18 +948,19 @@
         /* Toast notifications */
         .toast {
             position: fixed;
-            bottom: 80px;
+            bottom: 90px;
             left: 50%;
-            transform: translateX(-50%) translateY(100px);
+            transform: translateX(-50%) translateY(20px);
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            padding: 12px 20px;
-            border-radius: var(--radius-sm);
-            font-size: 14px;
+            padding: 12px 18px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 500;
             z-index: 200;
             opacity: 0;
-            transition: all 0.3s ease;
-            box-shadow: var(--shadow-lg);
+            transition: all 0.25s ease;
+            box-shadow: var(--shadow-md);
         }
         
         .toast.show {
@@ -919,52 +969,105 @@
         }
         
         .toast.success {
-            border-color: var(--accent-green);
+            border-left: 3px solid var(--accent-long);
         }
         
         .toast.error {
-            border-color: var(--accent-red);
+            border-left: 3px solid var(--accent-short);
         }
         
         /* Empty state */
         .empty-state {
             text-align: center;
-            padding: 40px 20px;
-            color: var(--text-secondary);
-        }
-        
-        .empty-state svg {
-            width: 48px;
-            height: 48px;
-            margin-bottom: 16px;
-            opacity: 0.5;
+            padding: 32px 20px;
+            color: var(--text-muted);
+            font-size: 13px;
         }
         
         /* Stats grid */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
+            gap: 10px;
             margin-bottom: 20px;
         }
         
         .stat-card {
             background: var(--bg-secondary);
-            padding: 16px;
-            border-radius: var(--radius-sm);
+            padding: 18px 16px;
+            border-radius: var(--radius-md);
             text-align: center;
         }
         
         .stat-value {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--accent-blue);
+            font-size: 26px;
+            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            color: var(--accent-long);
+        }
+        
+        .stat-value.short {
+            color: var(--accent-short);
         }
         
         .stat-label {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-muted);
             margin-top: 4px;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+        
+        /* Section title */
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+            padding-left: 2px;
+        }
+        
+        /* Tab buttons */
+        .tab-group {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 20px;
+            background: var(--bg-secondary);
+            padding: 4px;
+            border-radius: var(--radius-md);
+        }
+        
+        .tab-btn {
+            flex: 1;
+            padding: 10px 16px;
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        
+        .tab-btn:hover {
+            color: var(--text-secondary);
+        }
+        
+        .tab-btn.active {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .tab-btn.long.active {
+            color: var(--accent-long);
+        }
+        
+        .tab-btn.short.active {
+            color: var(--accent-short);
         }
         
         /* Scrollbar */
@@ -973,12 +1076,33 @@
         }
         
         ::-webkit-scrollbar-track {
-            background: var(--bg-primary);
+            background: transparent;
         }
         
         ::-webkit-scrollbar-thumb {
             background: var(--border-color);
             border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+        
+        /* Subtle divider */
+        .divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 20px 0;
+        }
+        
+        /* Info box */
+        .info-box {
+            padding: 14px 16px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.6;
         }
     </style>
 </head>
@@ -988,28 +1112,28 @@
     
     <!-- Badge Admin -->
     <div id="admin-badge" class="admin-badge logged-out" onclick="toggleLoginModal()">
-        <span id="admin-icon">🔒</span>
-        <span id="admin-text">Connexion</span>
+        <svg id="admin-icon-svg" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+        <span id="admin-text">Accès</span>
     </div>
     
     <!-- Modal Login -->
     <div id="login-modal-overlay" class="modal-overlay" onclick="closeLoginModal(event)">
-        <div class="modal" onclick="event.stopPropagation()" style="max-width: 350px;">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 340px;">
             <div class="modal-header">
-                <span class="modal-title">🔐 Connexion Admin</span>
+                <span class="modal-title">Authentification</span>
                 <button class="modal-close" onclick="closeLoginModal()">
-                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                 </button>
             </div>
             <div class="modal-body">
-                <p style="text-align: center; color: var(--text-secondary); margin-bottom: 20px;">
-                    Entrez le code PIN pour accéder aux fonctions d'édition.
+                <p style="text-align: center; color: var(--text-muted); margin-bottom: 20px; font-size: 13px;">
+                    Entrez votre code pour débloquer les actions.
                 </p>
                 <div id="login-error" class="login-error" style="display: none;"></div>
-                <input type="password" class="login-input" id="admin-password" placeholder="Code PIN" inputmode="numeric" pattern="[0-9]*" autocomplete="off" onkeypress="if(event.key==='Enter')doLogin()">
-                <button class="btn btn-primary btn-block" onclick="doLogin()">Se connecter</button>
+                <input type="password" class="login-input" id="admin-password" placeholder="• • • •" inputmode="numeric" pattern="[0-9]*" autocomplete="off" onkeypress="if(event.key==='Enter')doLogin()">
+                <button class="btn btn-primary btn-block" onclick="doLogin()">Continuer</button>
             </div>
         </div>
     </div>
@@ -1017,10 +1141,10 @@
     <!-- Modal détails ticker -->
     <div id="modal-overlay" class="modal-overlay" onclick="closeModal(event)">
         <div class="modal" onclick="event.stopPropagation()">
-            <div class="modal-header">
+            <div class="modal-header long" id="modal-header-style">
                 <span class="modal-title" id="modal-title">Détails</span>
                 <button class="modal-close" onclick="closeModal()">
-                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                 </button>
@@ -1034,10 +1158,10 @@
     <!-- Modal génération de panel -->
     <div id="generate-modal-overlay" class="modal-overlay" onclick="closeGenerateModal(event)">
         <div class="modal large" onclick="event.stopPropagation()">
-            <div class="modal-header" style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);">
-                <span class="modal-title" id="generate-modal-title">🎯 Générer les 50 Tickers</span>
+            <div class="modal-header" id="generate-modal-header">
+                <span class="modal-title" id="generate-modal-title">Générer le panel</span>
                 <button class="modal-close" onclick="closeGenerateModal()">
-                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                 </button>
@@ -1051,119 +1175,215 @@
     <!-- Main content -->
     <main class="main-content">
         
-        <!-- Sélecteur de stratégie -->
-        <div class="strategy-tabs">
-            <div id="tab-strategy-long" class="strategy-tab long active" onclick="switchStrategy('long')">
-                🔵 Position LONG
-            </div>
-            <div id="tab-strategy-short" class="strategy-tab short" onclick="switchStrategy('short')">
-                🔴 Position SHORT
-            </div>
-        </div>
-        
-        <!-- PAGE: Dashboard -->
+        <!-- PAGE: Dashboard Long -->
         <div id="page-dashboard" class="page active">
-            <div class="header">
-                <h1>📈 Momentum Strategy</h1>
-                <p id="last-update">Dernière MAJ: --</p>
+            <div class="header long">
+                <div class="header-label long">Stratégie Long</div>
+                <h1>Momentum 12-1</h1>
+                <p id="last-update">Mise à jour : —</p>
             </div>
             
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-value" id="stat-top">-</div>
-                    <div class="stat-label">Top Actions</div>
+                    <div class="stat-value" id="stat-top">—</div>
+                    <div class="stat-label">Positions</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value" id="stat-allocation">-</div>
-                    <div class="stat-label">Par Action</div>
+                    <div class="stat-value" id="stat-allocation">—</div>
+                    <div class="stat-label">Allocation</div>
                 </div>
             </div>
             
             <button class="btn btn-primary btn-block admin-only" id="btn-refresh" onclick="calculateMomentum()">
-                🔄 Mettre à jour
+                Calculer le momentum
             </button>
             
-            <button class="btn btn-secondary btn-block admin-only" style="margin-top: 10px;" onclick="calculateAndNotify()">
-                📧 Mettre à jour + Envoyer email
+            <button class="btn btn-secondary btn-block admin-only" style="margin-top: 8px;" onclick="calculateAndNotify()">
+                Calculer et notifier
             </button>
             
             <div class="card" style="margin-top: 20px;">
                 <div class="card-header">
-                    <span class="card-title">🟢 Actions à Investir</span>
+                    <span class="card-title">Acheter</span>
                 </div>
                 <div id="invest-list">
                     <div class="empty-state">
-                        <p>Cliquez sur "Mettre à jour" pour calculer</p>
+                        Lancez un calcul pour voir les recommandations
                     </div>
                 </div>
             </div>
             
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🔴 Actions à Sortir</span>
+                    <span class="card-title">Ne pas détenir</span>
                 </div>
                 <div id="sell-list">
-                    <div class="empty-state">
-                        <p>--</p>
-                    </div>
+                    <div class="empty-state">—</div>
                 </div>
                 <div class="toggle-all" id="toggle-all" onclick="toggleAllStocks()" style="display: none;">
-                    <span id="toggle-text">📊 Voir toutes les actions</span>
+                    <span id="toggle-text">Voir tout le classement</span>
                 </div>
             </div>
             
             <!-- Toutes les actions (masqué par défaut) -->
             <div class="card" id="all-stocks-card" style="display: none;">
                 <div class="card-header">
-                    <span class="card-title">📋 Toutes les Actions</span>
+                    <span class="card-title">Classement complet</span>
                     <span class="status-badge success" id="all-count">0</span>
                 </div>
                 <div class="search-container">
                     <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                     </svg>
-                    <input type="text" class="search-input" id="search-ticker" placeholder="Rechercher un ticker..." oninput="filterStocks()">
+                    <input type="text" class="search-input" id="search-ticker" placeholder="Rechercher..." oninput="filterStocks()">
                 </div>
-                <div id="all-stocks-list">
-                    <!-- Liste complète -->
+                <div id="all-stocks-list"></div>
+            </div>
+        </div>
+        
+        <!-- PAGE: Short Dashboard -->
+        <div id="page-short" class="page">
+            <div class="header short">
+                <div class="header-label short">Stratégie Short</div>
+                <h1>Momentum Inversé</h1>
+                <p id="short-last-update">Mise à jour : —</p>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value short" id="short-stat-top">—</div>
+                    <div class="stat-label">Positions</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-value short" id="short-stat-allocation">—</div>
+                    <div class="stat-label">Allocation</div>
+                </div>
+            </div>
+            
+            <button class="btn btn-short btn-block admin-only" id="btn-short-refresh" onclick="calculateShortMomentum()">
+                Calculer le momentum
+            </button>
+            
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-header">
+                    <span class="card-title">Vendre à découvert</span>
+                </div>
+                <div id="short-list">
+                    <div class="empty-state">
+                        Lancez un calcul pour voir les recommandations
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Ne pas shorter</span>
+                </div>
+                <div id="cover-list">
+                    <div class="empty-state">—</div>
+                </div>
+                <div class="toggle-all" id="toggle-all-short" onclick="toggleAllShortStocks()" style="display: none;">
+                    <span id="toggle-text-short">Voir tout le classement</span>
+                </div>
+            </div>
+            
+            <!-- Toutes les actions Short (masqué par défaut) -->
+            <div class="card" id="all-short-stocks-card" style="display: none;">
+                <div class="card-header">
+                    <span class="card-title">Classement complet</span>
+                    <span class="status-badge error" id="all-short-count">0</span>
+                </div>
+                <div class="search-container">
+                    <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" class="search-input" id="search-short-ticker" placeholder="Rechercher..." oninput="filterShortStocks()">
+                </div>
+                <div id="all-short-stocks-list"></div>
             </div>
         </div>
         
         <!-- PAGE: Panel -->
         <div id="page-panel" class="page">
-            <!-- Génération automatique -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title" id="screener-title">🎯 Génération Automatique</span>
-                </div>
-                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;" id="screener-desc">
-                    Génère un panel de 50 actions US basé sur des critères quantitatifs rigoureux :
-                    MarketCap ≥ 1B$, ADV ≥ 5M$
-                </p>
-                <button class="btn btn-generate btn-block admin-only" id="btn-generate-panel" onclick="confirmGeneratePanel()">
-                    ⚡ Générer les 50 Tickers
+            <!-- Tabs pour Long / Short -->
+            <div class="tab-group">
+                <button class="tab-btn long active" id="tab-long-panel" onclick="showPanelTab('long')">
+                    Long
+                </button>
+                <button class="tab-btn short" id="tab-short-panel" onclick="showPanelTab('short')">
+                    Short
                 </button>
             </div>
             
-            <div class="card admin-only">
-                <div class="card-header">
-                    <span class="card-title">➕ Ajouter une action</span>
+            <!-- Panel LONG -->
+            <div id="panel-long-section">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Génération automatique</span>
+                        <span class="status-badge warning">Finviz</span>
+                    </div>
+                    <p class="info-box" style="margin-bottom: 14px;">
+                        Critères quantitatifs : MarketCap ≥ 2B$, ADV ≥ 5M$.<br>
+                        Score = log(MarketCap) × log(ADV). Top 50 par score.
+                    </p>
+                    <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
+                        Générer 50 tickers
+                    </button>
                 </div>
-                <div style="display: flex; gap: 10px;">
-                    <input type="text" class="form-input" id="input-ticker" placeholder="Ex: AAPL" style="flex: 1;">
-                    <button class="btn btn-primary" onclick="addTicker()">Ajouter</button>
+                
+                <div class="card admin-only">
+                    <div class="card-header">
+                        <span class="card-title">Ajouter manuellement</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="form-input" id="input-ticker" placeholder="AAPL" style="flex: 1; text-transform: uppercase;">
+                        <button class="btn btn-primary" onclick="addTicker()">Ajouter</button>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Panel actuel</span>
+                        <span class="status-badge success" id="panel-count">0</span>
+                    </div>
+                    <div id="panel-list">
+                        <div class="empty-state">Chargement...</div>
+                    </div>
                 </div>
             </div>
             
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">📋 Panel d'actions</span>
-                    <span class="status-badge success" id="panel-count">0 actions</span>
+            <!-- Panel SHORT -->
+            <div id="panel-short-section" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Génération automatique</span>
+                        <span class="status-badge warning">Finviz</span>
+                    </div>
+                    <p class="info-box" style="margin-bottom: 14px;">
+                        Sélectionne via Finviz les 50 actions en forte baisse : Market Cap ≥ 2B$, Volume ≥ 500K, Performance annuelle ≤ -20%.
+                    </p>
+                    <button class="btn btn-short btn-block admin-only" onclick="confirmGenerateShortPanel()">
+                        Générer 50 tickers
+                    </button>
                 </div>
-                <div id="panel-list">
-                    <div class="empty-state">
-                        <p>Chargement...</p>
+                
+                <div class="card admin-only">
+                    <div class="card-header">
+                        <span class="card-title">Ajouter manuellement</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="form-input" id="input-short-ticker" placeholder="XYZ" style="flex: 1; text-transform: uppercase;">
+                        <button class="btn btn-short" onclick="addShortTicker()">Ajouter</button>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Panel actuel</span>
+                        <span class="status-badge error" id="short-panel-count">0</span>
+                    </div>
+                    <div id="short-panel-list">
+                        <div class="empty-state">Aucun ticker</div>
                     </div>
                 </div>
             </div>
@@ -1171,13 +1391,36 @@
         
         <!-- PAGE: History -->
         <div id="page-history" class="page">
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">📅 Historique</span>
+            <!-- Tabs pour Long / Short -->
+            <div class="tab-group">
+                <button class="tab-btn long active" id="tab-long-history" onclick="showHistoryTab('long')">
+                    Long
+                </button>
+                <button class="tab-btn short" id="tab-short-history" onclick="showHistoryTab('short')">
+                    Short
+                </button>
+            </div>
+            
+            <!-- Historique Long -->
+            <div id="history-long-section">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Calculs précédents</span>
+                    </div>
+                    <div id="history-list">
+                        <div class="empty-state">Aucun historique</div>
+                    </div>
                 </div>
-                <div id="history-list">
-                    <div class="empty-state">
-                        <p>Aucun historique disponible</p>
+            </div>
+            
+            <!-- Historique Short -->
+            <div id="history-short-section" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Calculs précédents</span>
+                    </div>
+                    <div id="short-history-list">
+                        <div class="empty-state">Aucun historique</div>
                     </div>
                 </div>
             </div>
@@ -1185,50 +1428,66 @@
         
         <!-- PAGE: Settings -->
         <div id="page-settings" class="page">
+            <!-- Paramètres Long -->
+            <div class="section-title">Stratégie Long</div>
             <div class="card admin-only">
-                <div class="card-header">
-                    <span class="card-title">⚙️ Paramètres</span>
-                </div>
-                
                 <div class="form-group">
-                    <label class="form-label">Nombre de Top Actions</label>
+                    <label class="form-label">Nombre de positions</label>
                     <input type="number" class="form-input" id="input-nb-top" min="1" max="50" value="5">
-                    <p class="form-hint">Nombre d'actions à sélectionner pour investir</p>
+                    <p class="form-hint">Actions sélectionnées pour investir</p>
                 </div>
                 
                 <div class="form-group">
-                    <label class="form-label">Date de calcul</label>
+                    <label class="form-label">Date de référence</label>
                     <input type="date" class="form-input" id="input-date-calcul">
-                    <p class="form-hint">Laissez vide pour utiliser la date du jour</p>
+                    <p class="form-hint">Vide = date du jour</p>
                 </div>
                 
                 <button class="btn btn-primary btn-block" onclick="saveSettings()">
-                    💾 Enregistrer
+                    Enregistrer
                 </button>
             </div>
             
+            <!-- Paramètres Short -->
+            <div class="section-title" style="margin-top: 24px;">Stratégie Short</div>
             <div class="card admin-only">
-                <div class="card-header">
-                    <span class="card-title">📧 Notifications Email</span>
+                <div class="form-group">
+                    <label class="form-label">Nombre de positions</label>
+                    <input type="number" class="form-input" id="input-short-nb-top" min="1" max="50" value="5">
+                    <p class="form-hint">Actions sélectionnées pour vendre à découvert</p>
                 </div>
                 
+                <div class="form-group">
+                    <label class="form-label">Date de référence</label>
+                    <input type="date" class="form-input" id="input-short-date-calcul">
+                    <p class="form-hint">Vide = date du jour</p>
+                </div>
+                
+                <button class="btn btn-short btn-block" onclick="saveShortSettings()">
+                    Enregistrer
+                </button>
+            </div>
+            
+            <!-- Notifications -->
+            <div class="section-title" style="margin-top: 24px;">Notifications</div>
+            <div class="card admin-only">
                 <div id="email-status">
-                    <p style="color: var(--text-secondary);">Chargement...</p>
+                    <p style="color: var(--text-muted); font-size: 13px;">Chargement...</p>
                 </div>
                 
                 <button class="btn btn-secondary btn-block" style="margin-top: 16px;" onclick="sendTestEmail()">
-                    🧪 Envoyer un email de test
+                    Envoyer un test
                 </button>
             </div>
             
+            <!-- Info -->
+            <div class="section-title" style="margin-top: 24px;">Informations</div>
             <div class="card">
-                <div class="card-header">
-                    <span class="card-title">ℹ️ À propos</span>
-                </div>
-                <p style="font-size: 13px; color: var(--text-secondary);">
-                    Stratégie Momentum 12-1<br>
-                    Mise à jour automatique le 1er de chaque mois à 8h00 UTC<br><br>
-                    <em>⚠️ Ceci n'est pas un conseil financier</em>
+                <p class="info-box">
+                    <strong style="color: var(--text-primary);">Stratégie Momentum 12-1</strong><br><br>
+                    Le momentum est calculé sur les 12 derniers mois en excluant le mois le plus récent.<br><br>
+                    Mise à jour automatique programmée le 1er de chaque mois à 8h UTC.<br><br>
+                    <span style="color: var(--text-muted);">Information à titre indicatif uniquement.</span>
                 </p>
             </div>
         </div>
@@ -1238,20 +1497,24 @@
     <!-- Navigation -->
     <nav class="nav-tabs">
         <button class="nav-tab active" onclick="showPage('dashboard')">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
-            Accueil
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2 12L6.5 7.5L10.5 11.5L17 5L22 10V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V12Z"></path></svg>
+            Long
+        </button>
+        <button class="nav-tab" onclick="showPage('short')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2 4V14L6.5 9.5L10.5 13.5L17 7L22 12V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4Z"></path></svg>
+            Short
         </button>
         <button class="nav-tab" onclick="showPage('panel')">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
             Panel
         </button>
         <button class="nav-tab" onclick="showPage('history')">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            Historique
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Archives
         </button>
         <button class="nav-tab" onclick="showPage('settings')">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-            Réglages
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+            Config
         </button>
     </nav>
     
@@ -1260,60 +1523,13 @@
         // DONNÉES GLOBALES
         // =================================================================
         
-        let currentStrategy = 'long';     // 'long' ou 'short'
-        let currentRecommendations = [];  // Stocke toutes les recommandations
-        let showAllStocks = false;        // Toggle pour voir toutes les actions
+        let currentRecommendations = [];  // Stocke toutes les recommandations Long
+        let currentShortRecommendations = [];  // Stocke toutes les recommandations Short
+        let showAllStocks = false;        // Toggle pour voir toutes les actions Long
+        let showAllShortStocks = false;   // Toggle pour voir toutes les actions Short
         let isAdmin = false;              // Mode admin actif
         let adminToken = localStorage.getItem('adminToken') || '';  // Token stocké
-        
-        // =================================================================
-        // STRATÉGIE
-        // =================================================================
-        
-        function switchStrategy(strategy) {
-            if (currentStrategy === strategy) return;
-            
-            currentStrategy = strategy;
-            
-            // Update tabs UI
-            document.getElementById('tab-strategy-long').classList.toggle('active', strategy === 'long');
-            document.getElementById('tab-strategy-short').classList.toggle('active', strategy === 'short');
-            
-            // Update screener text
-            const title = document.getElementById('screener-title');
-            const desc = document.getElementById('screener-desc');
-            const btnGen = document.getElementById('btn-generate-panel');
-            
-            if (strategy === 'short') {
-                title.textContent = '📉 Génération Automatique (SHORT)';
-                desc.textContent = 'Génère un panel des 50 pires perdants via Finviz (MarketCap > 2B$, ADV > 500K, Perf Year < -20%).';
-                btnGen.textContent = '⚡ Générer les 50 Perdants';
-            } else {
-                title.textContent = '🎯 Génération Automatique (LONG)';
-                desc.textContent = 'Génère un panel de 50 actions US basé sur des critères quantitatifs rigoureux : MarketCap ≥ 1B$, ADV ≥ 5M$.';
-                btnGen.textContent = '⚡ Générer les 50 Tickers';
-            }
-            
-            // Refresh current page
-            const activePage = document.querySelector('.page.active').id.replace('page-', '');
-            refreshPage(activePage);
-            
-            showToast(`Mode ${strategy.toUpperCase()} activé`);
-        }
-
-        function refreshPage(pageName) {
-            switch(pageName) {
-                case 'dashboard':
-                    loadLatest();
-                    break;
-                case 'panel':
-                    loadPanel();
-                    break;
-                case 'history':
-                    loadHistory();
-                    break;
-            }
-        }
+        let generatedShortTickers = [];   // Stocke les tickers Short générés
         
         // =================================================================
         // AUTHENTIFICATION
@@ -1343,17 +1559,17 @@
         
         function updateAdminUI() {
             const badge = document.getElementById('admin-badge');
-            const icon = document.getElementById('admin-icon');
+            const iconSvg = document.getElementById('admin-icon-svg');
             const text = document.getElementById('admin-text');
             
             if (isAdmin) {
                 badge.className = 'admin-badge logged-in';
-                icon.textContent = '✅';
-                text.textContent = 'Admin';
+                iconSvg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>';
+                text.textContent = 'Actif';
             } else {
                 badge.className = 'admin-badge logged-out';
-                icon.textContent = '🔒';
-                text.textContent = 'Connexion';
+                iconSvg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>';
+                text.textContent = 'Accès';
             }
             
             // Afficher/masquer les éléments admin-only
@@ -1419,7 +1635,7 @@
                     isAdmin = true;
                     updateAdminUI();
                     closeLoginModal();
-                    showToast('✅ Connecté en mode admin');
+                    showToast('Connecté');
                 } else {
                     errorEl.textContent = data.message || 'Mot de passe incorrect';
                     errorEl.style.display = 'block';
@@ -1466,7 +1682,7 @@
                         <div class="detail-stat-label">Classement</div>
                     </div>
                     <div class="detail-stat">
-                        <div class="detail-stat-value" style="color: ${rec.signal === 'Investir' ? 'var(--accent-green)' : 'var(--accent-red)'}">${rec.signal}</div>
+                        <div class="detail-stat-value" style="color: ${rec.signal === 'Investir' ? 'var(--accent-long)' : 'var(--text-muted)'}">${rec.signal}</div>
                         <div class="detail-stat-label">Signal</div>
                     </div>
                     <div class="detail-stat">
@@ -1478,7 +1694,7 @@
             
             if (details.length > 0) {
                 html += `
-                    <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📈 Performance mensuelle</h4>
+                    <h4 style="margin-bottom: 12px; color: var(--text-secondary);">Performance mensuelle</h4>
                     <table class="details-table">
                         <thead>
                             <tr>
@@ -1551,32 +1767,25 @@
         function confirmGeneratePanel() {
             // Afficher le modal de confirmation
             const body = document.getElementById('generate-modal-body');
-            
-            const listItems = currentStrategy === 'long' 
-                ? `<li>Analyser l'ensemble de l'univers d'actions US</li>
-                   <li>Filtrer par MarketCap ≥ 1B$ et ADV ≥ 5M$</li>
-                   <li>Calculer le score = log(ADV)</li>
-                   <li>Sélectionner les 50 meilleurs</li>`
-                : `<li>Scanner le marché via Finviz (Screener)</li>
-                   <li>Filtrer les actions Mid/Large Cap (> 2B$)</li>
-                   <li>Filtrer par liquidité (Volume > 500K)</li>
-                   <li>Sélectionner les 50 pires performances annuelles</li>`;
-
+            document.getElementById('generate-modal-title').textContent = 'Panel Long';
+            document.getElementById('generate-modal-header').classList.add('long');
+            document.getElementById('generate-modal-header').classList.remove('short');
             body.innerHTML = `
                 <div style="text-align: center; padding: 20px;">
-                    <h3 style="margin-bottom: 16px;">⚠️ Confirmation (${currentStrategy.toUpperCase()})</h3>
-                    <p style="color: var(--text-secondary); margin-bottom: 8px;">
-                        Cette opération va :
+                    <h3 style="margin-bottom: 16px;">Générer panel Long</h3>
+                    <p class="info-box" style="margin-bottom: 16px; text-align: left;">
+                        Critères du screening via Finviz :<br><br>
+                        • MarketCap ≥ 2B$<br>
+                        • ADV ≥ 5M$ (Prix × Volume)<br>
+                        • Score = log(MarketCap) × log(ADV)<br>
+                        • Top 50 par score décroissant
                     </p>
-                    <ul style="text-align: left; color: var(--text-secondary); margin: 16px 0; padding-left: 20px;">
-                        ${listItems}
-                    </ul>
-                    <p style="color: var(--accent-orange); font-size: 13px;">
-                        ⏱️ Cette opération peut prendre quelques instants
+                    <p style="color: var(--accent-long); font-size: 12px; margin-bottom: 20px;">
+                        0 appel API Tiingo consommé
                     </p>
                     <div class="confirm-buttons">
                         <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
-                        <button class="btn btn-generate" onclick="startGeneratePanel()">🚀 Lancer</button>
+                        <button class="btn btn-primary" onclick="startGeneratePanel()">Lancer</button>
                     </div>
                 </div>
             `;
@@ -1589,7 +1798,7 @@
             // Afficher la progress bar
             body.innerHTML = `
                 <div style="text-align: center; padding: 20px;">
-                    <h3 style="margin-bottom: 20px;">🔍 Analyse en cours...</h3>
+                    <h3 style="margin-bottom: 20px;">Analyse en cours</h3>
                     <div class="progress-container">
                         <div class="progress-bar">
                             <div class="progress-fill" id="generate-progress" style="width: 0%"></div>
@@ -1612,7 +1821,7 @@
             }, 1000);
             
             try {
-                const data = await api('/screener/generate', { method: 'POST' });
+                const data = await api('/screener/finviz/generate', { method: 'POST' });
                 
                 clearInterval(progressInterval);
                 
@@ -1622,7 +1831,7 @@
                 } else {
                     body.innerHTML = `
                         <div style="text-align: center; padding: 20px;">
-                            <h3 style="color: var(--accent-red); margin-bottom: 16px;">❌ Erreur</h3>
+                            <h3 style="color: var(--accent-short); margin-bottom: 16px;">Erreur</h3>
                             <p style="color: var(--text-secondary);">${data?.error || 'Erreur inconnue'}</p>
                             <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
                         </div>
@@ -1632,7 +1841,7 @@
                 clearInterval(progressInterval);
                 body.innerHTML = `
                     <div style="text-align: center; padding: 20px;">
-                        <h3 style="color: var(--accent-red); margin-bottom: 16px;">❌ Erreur</h3>
+                        <h3 style="color: var(--accent-short); margin-bottom: 16px;">Erreur</h3>
                         <p style="color: var(--text-secondary);">Erreur de connexion au serveur</p>
                         <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
                     </div>
@@ -1644,30 +1853,29 @@
             const body = document.getElementById('generate-modal-body');
             const tickers = data.tickers;
             const stats = data.stats;
-            const strategy = data.strategy_type || currentStrategy;
             
             let html = `
                 <div class="stats-summary">
                     <div class="stat-card">
-                        <div class="stat-value">${(stats.total_tickers || stats.total_tickers_us || stats.total_found)?.toLocaleString() || '-'}</div>
+                        <div class="stat-value">${(stats.total_tickers || stats.total_tickers_us)?.toLocaleString() || '-'}</div>
                         <div class="stat-label">Tickers analysés</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${stats.above_adv_threshold || stats.selected || '-'}</div>
-                        <div class="stat-label">${strategy === 'long' ? 'ADV ≥ 5M$' : 'Sélectionnés'}</div>
+                        <div class="stat-value">${stats.above_adv_threshold || '-'}</div>
+                        <div class="stat-label">ADV ≥ 5M$</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" style="color: var(--accent-green);">${stats.selected || '-'}</div>
-                        <div class="stat-label">Candidats</div>
+                        <div class="stat-value">${stats.selected || '-'}</div>
+                        <div class="stat-label">Sélectionnés</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" style="color: var(--accent-blue);">${stats.api_calls_used || '0'}</div>
+                        <div class="stat-value" style="color: var(--accent-blue);">${stats.api_calls_used || '1'}</div>
                         <div class="stat-label">Appel API</div>
                     </div>
                 </div>
                 
                 <div style="text-align: center; margin-bottom: 16px; padding: 8px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-muted);">
-                    ${strategy === 'long' ? 'Critère: Score = log(ADV) • MarketCap ≥ 1B$' : 'Critère: Losers (Finviz) • MarketCap > 2B$'}
+                    Score = log(ADV) • ADV max: ${stats.max_adv || '-'} • ADV min: ${stats.min_adv || '-'}
                 </div>
                 
                 <div class="search-container">
@@ -1684,8 +1892,8 @@
                                 <th>#</th>
                                 <th>Ticker</th>
                                 <th>Prix</th>
-                                <th>${strategy === 'long' ? 'Volume' : 'Perf Year'}</th>
-                                <th>${strategy === 'long' ? 'ADV' : ''}</th>
+                                <th>Volume</th>
+                                <th>ADV</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1696,10 +1904,8 @@
                                         <a href="${getTradingViewUrl(t.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${t.ticker}</a>
                                     </td>
                                     <td class="number-cell">$${t.price}</td>
-                                    <td class="number-cell" style="${strategy === 'short' ? 'color: var(--accent-red);' : ''}">
-                                        ${strategy === 'long' ? t.volume_display : (t.perf_year ? t.perf_year + '%' : '-')}
-                                    </td>
-                                    <td class="number-cell">${strategy === 'long' ? t.adv_display : ''}</td>
+                                    <td class="number-cell">${t.volume_display}</td>
+                                    <td class="number-cell">${t.adv_display}</td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -1709,7 +1915,7 @@
                 <div class="confirm-buttons">
                     <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
                     <button class="btn btn-primary" onclick="applyGeneratedPanel()">
-                        ✅ Appliquer au Panel ${strategy.toUpperCase()}
+                        Appliquer au panel
                     </button>
                 </div>
             `;
@@ -1759,7 +1965,7 @@
                     </div>
                 </div>
                 
-                <h4 style="margin: 16px 0 12px; color: var(--text-secondary);">📊 Données de marché</h4>
+                <h4 style="margin: 16px 0 12px; color: var(--text-secondary);">Données de marché</h4>
                 <table class="details-table">
                     <tr>
                         <td>Prix actuel</td>
@@ -1803,13 +2009,13 @@
             });
             
             if (data && data.success) {
-                showToast(`✅ ${data.count} tickers ajoutés au panel !`);
+                showToast(`${data.count} tickers ajoutés`);
                 closeGenerateModal();
                 loadPanel();
             } else {
                 body.innerHTML = `
                     <div style="text-align: center; padding: 20px;">
-                        <h3 style="color: var(--accent-red); margin-bottom: 16px;">❌ Erreur</h3>
+                        <h3 style="color: var(--accent-short); margin-bottom: 16px;">Erreur</h3>
                         <p style="color: var(--text-secondary);">${data?.error || 'Erreur inconnue'}</p>
                         <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
                     </div>
@@ -1832,7 +2038,7 @@
                 renderAllStocks();
             } else {
                 card.style.display = 'none';
-                toggleText.textContent = '📊 Voir toutes les actions';
+                toggleText.textContent = 'Voir tout le classement';
             }
         }
         
@@ -1856,24 +2062,20 @@
                 return;
             }
             
-            const buySignal = currentStrategy === 'long' ? 'Investir' : 'Short';
-
             list.innerHTML = filtered.map(r => `
                 <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                    <div class="stock-rank ${r.signal === buySignal ? 'top' : ''}" style="${r.signal === 'Short' ? 'background: var(--accent-red); color: white;' : ''}">${r.rank}</div>
+                    <div class="stock-rank ${r.signal === 'Investir' ? 'top' : ''}">${r.rank}</div>
                     <div class="stock-info">
                         <div class="stock-ticker">
                             <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                         </div>
-                        <div class="stock-signal ${r.signal === buySignal ? (currentStrategy === 'long' ? 'buy' : 'sell') : 'sell'}">
-                            ${r.signal === buySignal ? (currentStrategy === 'long' ? '▲ Investir' : '▼ Short') : (currentStrategy === 'long' ? '▼ Sortir' : '▲ Cover')}
-                        </div>
+                        <div class="stock-signal ${r.signal === 'Investir' ? 'buy' : 'sell'}">${r.signal === 'Investir' ? 'Acheter' : 'Éviter'}</div>
                     </div>
                     <div class="stock-momentum">
                         <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                             ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                         </div>
-                        ${r.allocation > 0 ? `<div class="allocation-badge" style="${currentStrategy === 'short' ? 'background: rgba(239, 68, 68, 0.15); color: var(--accent-red);' : ''}">${r.allocation}%</div>` : ''}
+                        ${r.allocation > 0 ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -1893,9 +2095,14 @@
             event.currentTarget.classList.add('active');
             
             // Load data for specific pages
+            if (pageName === 'dashboard') loadLatest();
+            if (pageName === 'short') loadShortLatest();
             if (pageName === 'panel') loadPanel();
             if (pageName === 'history') loadHistory();
-            if (pageName === 'settings') loadSettings();
+            if (pageName === 'settings') {
+                loadSettings();
+                loadShortSettings();
+            }
         }
         
         // =================================================================
@@ -1915,14 +2122,6 @@
         
         async function api(endpoint, options = {}) {
             try {
-                let url = '/api' + endpoint;
-                
-                // Ajouter strategy_type aux paramètres GET
-                if (!options.method || options.method === 'GET') {
-                    const separator = url.includes('?') ? '&' : '?';
-                    url += `${separator}strategy_type=${currentStrategy}`;
-                }
-
                 // Ajouter le token admin si disponible
                 const headers = {
                     'Content-Type': 'application/json',
@@ -1933,20 +2132,7 @@
                     headers['X-Admin-Token'] = adminToken;
                 }
                 
-                // Si c'est un POST/PUT/DELETE, on peut aussi l'ajouter dans le body
-                if (options.method && options.method !== 'GET' && options.body) {
-                    try {
-                        const body = JSON.parse(options.body);
-                        if (typeof body === 'object' && !body.strategy_type) {
-                            body.strategy_type = currentStrategy;
-                            options.body = JSON.stringify(body);
-                        }
-                    } catch (e) { }
-                } else if (options.method && options.method !== 'GET' && !options.body) {
-                    options.body = JSON.stringify({ strategy_type: currentStrategy });
-                }
-
-                const response = await fetch(url, {
+                const response = await fetch('/api' + endpoint, {
                     ...options,
                     headers
                 });
@@ -1987,7 +2173,7 @@
             const data = await api('/calculate', { method: 'POST' });
             
             btn.disabled = false;
-            btn.innerHTML = '🔄 Mettre à jour';
+            btn.innerHTML = 'Calculer le momentum';
             
             if (data && data.success) {
                 displayRecommendations(data);
@@ -2005,7 +2191,7 @@
             const data = await api('/calculate-and-notify', { method: 'POST' });
             
             btn.disabled = false;
-            btn.innerHTML = '📧 Mettre à jour + Envoyer email';
+            btn.innerHTML = 'Calculer et notifier';
             
             if (data && data.success) {
                 displayRecommendations(data);
@@ -2024,25 +2210,12 @@
             const sellList = document.getElementById('sell-list');
             
             const recs = data.recommandations || data.details || [];
-            
-            // Le signal d'achat est "Investir" pour Long et "Short" pour Short
-            const buySignal = currentStrategy === 'long' ? 'Investir' : 'Short';
-            const invest = recs.filter(r => r.signal === buySignal);
+            const invest = recs.filter(r => r.signal === 'Investir');
             const sell = recs.filter(r => r.signal === 'Sortir');
             
             // Stocker pour la recherche et les détails
             currentRecommendations = recs;
             
-            // Update UI titles based on strategy
-            const investTitle = document.querySelector('#invest-list').previousElementSibling.querySelector('.card-title');
-            if (currentStrategy === 'short') {
-                investTitle.textContent = '🔴 Actions à Shorter';
-                investTitle.style.color = 'var(--accent-red)';
-            } else {
-                investTitle.textContent = '🟢 Actions à Investir';
-                investTitle.style.color = 'var(--accent-green)';
-            }
-
             // Update stats
             document.getElementById('stat-top').textContent = invest.length;
             document.getElementById('stat-allocation').textContent = invest.length > 0 ? 
@@ -2061,20 +2234,18 @@
             if (invest.length > 0) {
                 investList.innerHTML = invest.map((r, i) => `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                        <div class="stock-rank ${currentStrategy === 'long' ? 'top' : ''}" style="${currentStrategy === 'short' ? 'background: var(--accent-red); color: white;' : ''}">${i + 1}</div>
+                        <div class="stock-rank top">${i + 1}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
-                            <div class="stock-signal ${currentStrategy === 'long' ? 'buy' : 'sell'}">
-                                ${currentStrategy === 'long' ? '▲ Investir' : '▼ Short'}
-                            </div>
+                            <div class="stock-signal buy">Acheter</div>
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                                 ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                             </div>
-                            <div class="allocation-badge" style="${currentStrategy === 'short' ? 'background: rgba(239, 68, 68, 0.15); color: var(--accent-red);' : ''}">${r.allocation}%</div>
+                            <div class="allocation-badge">${r.allocation}%</div>
                         </div>
                     </div>
                 `).join('');
@@ -2091,9 +2262,7 @@
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
-                            <div class="stock-signal sell">
-                                ${currentStrategy === 'long' ? '▼ Sortir' : '▲ Racheter (Cover)'}
-                            </div>
+                            <div class="stock-signal sell">Éviter</div>
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
@@ -2185,23 +2354,20 @@
         
         async function loadHistory() {
             const data = await api('/history');
-            if (data && data.history && data.history.length > 0) {
-                // Le signal d'achat dépend de la stratégie
-                const buySignal = currentStrategy === 'long' ? 'Investir' : 'Short';
-                
+            if (data && data.history.length > 0) {
                 document.getElementById('history-list').innerHTML = data.history.map(h => {
-                    const topActions = h.details.filter(d => d.signal === buySignal);
+                    const topActions = h.details.filter(d => d.signal === 'Investir');
                     return `
-                        <div class="history-item" onclick="showHistoryDetail(${h.id})">
-                            <div class="history-date">📅 ${h.calculation_date}</div>
+                        <div class="history-item long" onclick="showHistoryDetail(${h.id})">
+                            <div class="history-date">${h.calculation_date}</div>
                             <div class="history-summary">
-                                ${currentStrategy.toUpperCase()} ${h.nb_top}: ${topActions.map(a => a.ticker).join(', ')}
+                                Top ${h.nb_top}: ${topActions.map(a => a.ticker).join(', ')}
                             </div>
                         </div>
                     `;
                 }).join('');
             } else {
-                document.getElementById('history-list').innerHTML = '<div class="empty-state"><p>Aucun historique disponible pour ' + currentStrategy.toUpperCase() + '</p></div>';
+                document.getElementById('history-list').innerHTML = '<div class="empty-state"><p>Aucun historique disponible</p></div>';
             }
         }
         
@@ -2235,7 +2401,7 @@
                     `;
                 } else {
                     emailDiv.innerHTML = `
-                        <div class="status-badge warning">⚠ Non configuré</div>
+                        <div class="status-badge warning">Non configuré</div>
                         <p style="margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
                             Configurez RESEND_API_KEY et EMAIL_TO dans les variables d'environnement.
                         </p>
@@ -2271,12 +2437,612 @@
             const data = await api('/email/test', { method: 'POST' });
             
             btn.disabled = false;
-            btn.innerHTML = '🧪 Envoyer un email de test';
+            btn.innerHTML = 'Envoyer un test';
             
             if (data && data.success) {
                 showToast(data.message);
             } else {
                 showToast(data?.message || 'Erreur', 'error');
+            }
+        }
+        
+        // =================================================================
+        // SHORT - PANEL TABS
+        // =================================================================
+        
+        function showPanelTab(tab) {
+            const longSection = document.getElementById('panel-long-section');
+            const shortSection = document.getElementById('panel-short-section');
+            const longTab = document.getElementById('tab-long-panel');
+            const shortTab = document.getElementById('tab-short-panel');
+            
+            if (tab === 'long') {
+                longSection.style.display = 'block';
+                shortSection.style.display = 'none';
+                longTab.classList.add('active');
+                shortTab.classList.remove('active');
+                loadPanel();
+            } else {
+                longSection.style.display = 'none';
+                shortSection.style.display = 'block';
+                shortTab.classList.add('active');
+                longTab.classList.remove('active');
+                loadShortPanel();
+            }
+        }
+        
+        function showHistoryTab(tab) {
+            const longSection = document.getElementById('history-long-section');
+            const shortSection = document.getElementById('history-short-section');
+            const longTab = document.getElementById('tab-long-history');
+            const shortTab = document.getElementById('tab-short-history');
+            
+            if (tab === 'long') {
+                longSection.style.display = 'block';
+                shortSection.style.display = 'none';
+                longTab.classList.add('active');
+                shortTab.classList.remove('active');
+                loadHistory();
+            } else {
+                longSection.style.display = 'none';
+                shortSection.style.display = 'block';
+                shortTab.classList.add('active');
+                longTab.classList.remove('active');
+                loadShortHistory();
+            }
+        }
+        
+        // =================================================================
+        // SHORT - PANEL
+        // =================================================================
+        
+        async function loadShortPanel() {
+            const data = await api('/short/panel');
+            if (data) {
+                document.getElementById('short-panel-count').textContent = data.count + ' actions';
+                
+                if (data.actions.length > 0) {
+                    document.getElementById('short-panel-list').innerHTML = data.actions.map(a => `
+                        <div class="panel-item">
+                            <div style="display: flex; flex-direction: column;">
+                                <span class="panel-ticker">
+                                    <a href="${getTradingViewUrl(a.ticker)}" target="_blank" rel="noopener" class="ticker-link">${a.ticker}</a>
+                                </span>
+                                ${a.perf_year ? `<span style="font-size: 11px; color: var(--accent-short);">${a.perf_year}% YTD</span>` : ''}
+                            </div>
+                            <button class="btn-remove" onclick="removeShortTicker('${a.ticker}')">
+                                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+                    `).join('');
+                } else {
+                    document.getElementById('short-panel-list').innerHTML = '<div class="empty-state"><p>Aucune action dans le panel Short</p></div>';
+                }
+            }
+        }
+        
+        async function addShortTicker() {
+            const input = document.getElementById('input-short-ticker');
+            const ticker = input.value.trim().toUpperCase();
+            
+            if (!ticker) {
+                showToast('Entrez un symbole', 'error');
+                return;
+            }
+            
+            const data = await api('/short/panel', {
+                method: 'POST',
+                body: JSON.stringify({ ticker })
+            });
+            
+            if (data && data.success) {
+                input.value = '';
+                showToast(data.message);
+                loadShortPanel();
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        async function removeShortTicker(ticker) {
+            if (!confirm(`Retirer ${ticker} du panel Short ?`)) return;
+            
+            const data = await api('/short/panel/' + ticker, { method: 'DELETE' });
+            
+            if (data && data.success) {
+                showToast(data.message);
+                loadShortPanel();
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        // =================================================================
+        // SHORT - SCREENER (via Finviz)
+        // =================================================================
+        
+        function confirmGenerateShortPanel() {
+            const body = document.getElementById('generate-modal-body');
+            body.innerHTML = `
+                <div style="text-align: center; padding: 20px;">
+                    <h3 style="margin-bottom: 16px;">Générer panel Short</h3>
+                    <p class="info-box" style="margin-bottom: 16px;">
+                        Filtrage via Finviz : Market Cap ≥ 2B$, Volume ≥ 500K, Performance annuelle ≤ -20%.<br>
+                        Les 50 plus fortes baisses seront sélectionnées.
+                    </p>
+                    <p style="color: var(--accent-long); font-size: 12px; margin-bottom: 20px;">
+                        0 appel API Tiingo consommé
+                    </p>
+                    <div class="confirm-buttons">
+                        <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
+                        <button class="btn btn-short" onclick="startGenerateShortPanel()">Lancer</button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('generate-modal-title').textContent = 'Panel Short';
+            document.getElementById('generate-modal-header').classList.remove('long');
+            document.getElementById('generate-modal-header').classList.add('short');
+            openGenerateModal();
+        }
+        
+        async function startGenerateShortPanel() {
+            const body = document.getElementById('generate-modal-body');
+            
+            body.innerHTML = `
+                <div style="text-align: center; padding: 20px;">
+                    <h3 style="margin-bottom: 20px;">Analyse Finviz en cours</h3>
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="generate-short-progress" style="width: 0%"></div>
+                        </div>
+                        <p class="progress-text" id="generate-short-status">Connexion à Finviz...</p>
+                    </div>
+                    <p style="color: var(--text-muted); font-size: 12px; margin-top: 20px;">
+                        Ne fermez pas cette fenêtre pendant l'analyse
+                    </p>
+                </div>
+            `;
+            
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                if (progress < 90) {
+                    progress += Math.random() * 8;
+                    const el = document.getElementById('generate-short-progress');
+                    if (el) el.style.width = progress + '%';
+                }
+            }, 500);
+            
+            try {
+                const data = await api('/short/screener/generate', { method: 'POST' });
+                
+                clearInterval(progressInterval);
+                
+                if (data && data.success) {
+                    generatedShortTickers = data.tickers;
+                    displayGeneratedShortResults(data);
+                } else {
+                    body.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <h3 style="color: var(--accent-short); margin-bottom: 16px;">Erreur</h3>
+                            <p style="color: var(--text-secondary);">${data?.error || 'Erreur inconnue'}</p>
+                            <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                body.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <h3 style="color: var(--accent-short); margin-bottom: 16px;">Erreur</h3>
+                        <p style="color: var(--text-secondary);">Erreur de connexion</p>
+                        <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
+                    </div>
+                `;
+            }
+        }
+        
+        function displayGeneratedShortResults(data) {
+            const body = document.getElementById('generate-modal-body');
+            const tickers = data.tickers;
+            const stats = data.stats;
+            
+            let html = `
+                <div class="stats-summary">
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.total_found || '-'}</div>
+                        <div class="stat-label">Actions trouvées</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value short">${stats.selected || '-'}</div>
+                        <div class="stat-label">Sélectionnées</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value short">${stats.worst_perf || '-'}</div>
+                        <div class="stat-label">Pire Perf</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.best_perf || '-'}</div>
+                        <div class="stat-label">Meilleure</div>
+                    </div>
+                </div>
+                
+                <div class="search-container">
+                    <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" class="search-input" id="search-short-generated" placeholder="Rechercher..." oninput="filterGeneratedShortTickers()">
+                </div>
+                
+                <div style="max-height: 300px; overflow-y: auto;">
+                    <table class="screener-table" id="generated-short-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Ticker</th>
+                                <th>Secteur</th>
+                                <th>Prix</th>
+                                <th>Perf Year</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tickers.map(t => `
+                                <tr>
+                                    <td class="rank-cell">${t.rank}</td>
+                                    <td class="ticker-cell">
+                                        <a href="${getTradingViewUrl(t.ticker)}" target="_blank" rel="noopener" class="ticker-link">${t.ticker}</a>
+                                    </td>
+                                    <td style="font-size: 11px;">${t.sector || '-'}</td>
+                                    <td class="number-cell">$${t.price || '-'}</td>
+                                    <td class="number-cell" style="color: var(--accent-short);">${t.perf_year}%</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="confirm-buttons">
+                    <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
+                    <button class="btn" onclick="applyGeneratedShortPanel()" style="background: linear-gradient(135deg, #ef4444 0%, #f59e0b 100%); color: white;">
+                        Appliquer au panel Short
+                    </button>
+                </div>
+            `;
+            
+            body.innerHTML = html;
+        }
+        
+        function filterGeneratedShortTickers() {
+            const query = document.getElementById('search-short-generated').value.toUpperCase();
+            const rows = document.querySelectorAll('#generated-short-table tbody tr');
+            
+            rows.forEach(row => {
+                const ticker = row.querySelector('.ticker-cell')?.textContent || '';
+                row.style.display = ticker.includes(query) ? '' : 'none';
+            });
+        }
+        
+        async function applyGeneratedShortPanel() {
+            if (generatedShortTickers.length === 0) {
+                showToast('Aucun ticker à appliquer', 'error');
+                return;
+            }
+            
+            const body = document.getElementById('generate-modal-body');
+            body.innerHTML = `
+                <div style="text-align: center; padding: 40px;">
+                    <span class="spinner" style="width: 40px; height: 40px; border-width: 3px;"></span>
+                    <p style="margin-top: 16px; color: var(--text-secondary);">Application au panel Short...</p>
+                </div>
+            `;
+            
+            const data = await api('/short/screener/apply', {
+                method: 'POST',
+                body: JSON.stringify({ tickers: generatedShortTickers })
+            });
+            
+            if (data && data.success) {
+                showToast(`${data.count} tickers ajoutés`);
+                closeGenerateModal();
+                loadShortPanel();
+            } else {
+                body.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <h3 style="color: var(--accent-short); margin-bottom: 16px;">Erreur</h3>
+                        <p style="color: var(--text-secondary);">${data?.error || 'Erreur inconnue'}</p>
+                        <button class="btn btn-secondary" style="margin-top: 20px;" onclick="closeGenerateModal()">Fermer</button>
+                    </div>
+                `;
+            }
+        }
+        
+        // =================================================================
+        // SHORT - MOMENTUM CALCULATION
+        // =================================================================
+        
+        async function loadShortLatest() {
+            const data = await api('/short/history/latest');
+            if (data && data.details) {
+                displayShortRecommendations(data);
+            }
+        }
+        
+        async function calculateShortMomentum() {
+            const btn = document.getElementById('btn-short-refresh');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Calcul en cours...';
+            
+            const data = await api('/short/calculate', { method: 'POST' });
+            
+            btn.disabled = false;
+            btn.innerHTML = 'Calculer le momentum';
+            
+            if (data && data.success) {
+                displayShortRecommendations(data);
+                showToast('Recommandations Short mises à jour !');
+            } else {
+                showToast(data?.error || 'Erreur lors du calcul', 'error');
+            }
+        }
+        
+        function displayShortRecommendations(data) {
+            const shortList = document.getElementById('short-list');
+            const coverList = document.getElementById('cover-list');
+            
+            const recs = data.recommandations || data.details || [];
+            const toShort = recs.filter(r => r.signal === 'Shorter');
+            const toCover = recs.filter(r => r.signal === 'Couvrir');
+            
+            currentShortRecommendations = recs;
+            
+            // Update stats
+            document.getElementById('short-stat-top').textContent = toShort.length;
+            document.getElementById('short-stat-allocation').textContent = toShort.length > 0 ? 
+                (100 / toShort.length).toFixed(1) + '%' : '-';
+            
+            // Update date
+            const dateStr = data.calculation_date || data.date_calcul;
+            document.getElementById('short-last-update').textContent = 'Dernière MAJ: ' + dateStr;
+            
+            // Afficher le toggle si on a des données
+            if (recs.length > 0) {
+                document.getElementById('toggle-all-short').style.display = 'flex';
+            }
+            
+            // Render short list
+            if (toShort.length > 0) {
+                shortList.innerHTML = toShort.map((r, i) => `
+                    <div class="stock-item clickable" onclick="openShortModal('${r.ticker}')">
+                        <div class="stock-rank short">${i + 1}</div>
+                        <div class="stock-info">
+                            <div class="stock-ticker">
+                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                            </div>
+                            <div class="stock-signal short-signal">Short</div>
+                        </div>
+                        <div class="stock-momentum">
+                            <div class="momentum-value negative">
+                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                            </div>
+                            <div class="allocation-badge short">${r.allocation}%</div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                shortList.innerHTML = '<div class="empty-state"><p>Aucune position Short sélectionnée</p></div>';
+            }
+            
+            // Render cover list (top 5 visibles)
+            if (toCover.length > 0) {
+                coverList.innerHTML = toCover.slice(0, 5).map((r, i) => `
+                    <div class="stock-item clickable" onclick="openShortModal('${r.ticker}')">
+                        <div class="stock-rank">${toShort.length + i + 1}</div>
+                        <div class="stock-info">
+                            <div class="stock-ticker">
+                                <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                            </div>
+                            <div class="stock-signal" style="color: var(--text-muted);">Ne pas détenir</div>
+                        </div>
+                        <div class="stock-momentum">
+                            <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
+                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                if (toCover.length > 5) {
+                    coverList.innerHTML += `<p style="text-align: center; color: var(--text-muted); font-size: 12px; padding: 8px;">+ ${toCover.length - 5} autres actions</p>`;
+                }
+            } else {
+                coverList.innerHTML = '<div class="empty-state"><p>--</p></div>';
+            }
+            
+            if (showAllShortStocks) {
+                renderAllShortStocks();
+            }
+        }
+        
+        function openShortModal(ticker) {
+            const rec = currentShortRecommendations.find(r => r.ticker === ticker);
+            if (!rec) return;
+            
+            document.getElementById('modal-title').innerHTML = `
+                <a href="${getTradingViewUrl(ticker)}" target="_blank" rel="noopener" style="color: white; text-decoration: none;">
+                    ${ticker} ↗
+                </a>
+            `;
+            
+            const details = rec.details_mensuels || [];
+            const momentumClass = rec.momentum >= 0 ? 'positive' : 'negative';
+            
+            let html = `
+                <div class="detail-summary">
+                    <div class="detail-stat">
+                        <div class="detail-stat-value ${momentumClass}">${rec.momentum >= 0 ? '+' : ''}${rec.momentum.toFixed(2)}%</div>
+                        <div class="detail-stat-label">Momentum 12-1</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">#${rec.rank}</div>
+                        <div class="detail-stat-label">Classement</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value" style="color: ${rec.signal === 'Shorter' ? 'var(--accent-short)' : 'var(--text-muted)'}">${rec.signal}</div>
+                        <div class="detail-stat-label">Signal</div>
+                    </div>
+                    <div class="detail-stat">
+                        <div class="detail-stat-value">${rec.allocation}%</div>
+                        <div class="detail-stat-label">Allocation</div>
+                    </div>
+                </div>
+            `;
+            
+            if (details.length > 0) {
+                html += `
+                    <h4 style="margin-bottom: 12px; color: var(--text-secondary);">Performance mensuelle</h4>
+                    <table class="details-table">
+                        <thead>
+                            <tr>
+                                <th>Mois</th>
+                                <th>Prix</th>
+                                <th>Mensuel</th>
+                                <th>Cumulé</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${details.map(d => `
+                                <tr>
+                                    <td>${d.mois}</td>
+                                    <td>$${d.prix}</td>
+                                    <td class="${d.rendement_mensuel >= 0 ? 'positive' : 'negative'}">${d.rendement_mensuel >= 0 ? '+' : ''}${d.rendement_mensuel}%</td>
+                                    <td class="${d.rendement_cumule >= 0 ? 'positive' : 'negative'}">${d.rendement_cumule >= 0 ? '+' : ''}${d.rendement_cumule}%</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                html += `<p style="color: var(--text-muted); text-align: center; padding: 20px;">Détails mensuels non disponibles</p>`;
+            }
+            
+            document.getElementById('modal-body').innerHTML = html;
+            document.getElementById('modal-overlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function toggleAllShortStocks() {
+            showAllShortStocks = !showAllShortStocks;
+            const card = document.getElementById('all-short-stocks-card');
+            const toggleText = document.getElementById('toggle-text-short');
+            
+            if (showAllShortStocks) {
+                card.style.display = 'block';
+                toggleText.textContent = '🔼 Masquer toutes les actions';
+                renderAllShortStocks();
+            } else {
+                card.style.display = 'none';
+                toggleText.textContent = 'Voir tout le classement';
+            }
+        }
+        
+        function filterShortStocks() {
+            const query = document.getElementById('search-short-ticker').value.toUpperCase();
+            renderAllShortStocks(query);
+        }
+        
+        function renderAllShortStocks(filter = '') {
+            const list = document.getElementById('all-short-stocks-list');
+            let filtered = currentShortRecommendations;
+            
+            if (filter) {
+                filtered = currentShortRecommendations.filter(r => r.ticker.includes(filter));
+            }
+            
+            document.getElementById('all-short-count').textContent = filtered.length;
+            
+            if (filtered.length === 0) {
+                list.innerHTML = '<div class="empty-state"><p>Aucun ticker trouvé</p></div>';
+                return;
+            }
+            
+            list.innerHTML = filtered.map(r => `
+                <div class="stock-item clickable" onclick="openShortModal('${r.ticker}')">
+                    <div class="stock-rank ${r.signal === 'Shorter' ? 'short' : ''}">${r.rank}</div>
+                    <div class="stock-info">
+                        <div class="stock-ticker">
+                            <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                        </div>
+                        <div class="stock-signal ${r.signal === 'Shorter' ? 'short-signal' : ''}">${r.signal === 'Shorter' ? 'Short' : 'Ne pas détenir'}</div>
+                    </div>
+                    <div class="stock-momentum">
+                        <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
+                            ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                        </div>
+                        ${r.allocation > 0 ? `<div class="allocation-badge short">${r.allocation}%</div>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // =================================================================
+        // SHORT - HISTORY
+        // =================================================================
+        
+        async function loadShortHistory() {
+            const data = await api('/short/history');
+            if (data && data.history.length > 0) {
+                document.getElementById('short-history-list').innerHTML = data.history.map(h => {
+                    const shortActions = h.details.filter(d => d.signal === 'Shorter');
+                    return `
+                        <div class="history-item short" onclick="showShortHistoryDetail(${h.id})">
+                            <div class="history-date">${h.calculation_date}</div>
+                            <div class="history-summary">
+                                Short ${h.nb_top}: ${shortActions.map(a => a.ticker).join(', ')}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                document.getElementById('short-history-list').innerHTML = '<div class="empty-state"><p>Aucun historique Short disponible</p></div>';
+            }
+        }
+        
+        async function showShortHistoryDetail(id) {
+            const data = await api('/short/history/' + id);
+            if (data) {
+                displayShortRecommendations(data);
+                showPage('short');
+                document.querySelectorAll('.nav-tab')[1].click();
+            }
+        }
+        
+        // =================================================================
+        // SHORT - SETTINGS
+        // =================================================================
+        
+        async function loadShortSettings() {
+            const data = await api('/short/settings');
+            if (data) {
+                document.getElementById('input-short-nb-top').value = data.nb_top;
+                document.getElementById('input-short-date-calcul').value = data.date_calcul || '';
+            }
+        }
+        
+        async function saveShortSettings() {
+            const nbTop = document.getElementById('input-short-nb-top').value;
+            const dateCalcul = document.getElementById('input-short-date-calcul').value;
+            
+            const data = await api('/short/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nb_top: parseInt(nbTop),
+                    date_calcul: dateCalcul
+                })
+            });
+            
+            if (data && data.success) {
+                showToast('Paramètres Short enregistrés');
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
             }
         }
         
@@ -2288,12 +3054,20 @@
             // Vérifier l'authentification d'abord
             await checkAuth();
             
-            // Charger les données
+            // Charger les données Long
             loadLatest();
+            
+            // Charger les données Short
+            loadShortLatest();
             
             // Allow enter key on ticker input
             document.getElementById('input-ticker').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') addTicker();
+            });
+            
+            // Allow enter key on short ticker input
+            document.getElementById('input-short-ticker')?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') addShortTicker();
             });
         });
         

@@ -30,9 +30,9 @@ APScheduler==3.10.4
 # Envoi d'emails
 resend==0.7.0
 
-# Screening externe (Gratuit)
-finvizfinance==0.14.7
-
 # Serveur WSGI pour production
 gunicorn==21.2.0
+
+# Screener Finviz pour stratégie Short
+finvizfinance==0.14.7
 

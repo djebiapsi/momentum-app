@@ -14,10 +14,16 @@ from apscheduler.triggers.cron import CronTrigger
 
 from functools import wraps
 from config import get_config
-from models import db, init_db, Settings, PanelAction, RecommendationHistory, RecommendationDetail
+from models import (
+    db, init_db, Settings, 
+    PanelAction, RecommendationHistory, RecommendationDetail,
+    ShortPanelAction, ShortRecommendationHistory, ShortRecommendationDetail
+)
 from momentum_service import MomentumService
 from email_service import EmailService
 from screener_service import ScreenerService
+from short_screener_service import ShortScreenerService
+from finviz_screener_service import FinvizScreenerService
 
 
 def require_admin(f):
@@ -74,6 +80,8 @@ app = create_app()
 momentum_service = None
 email_service = None
 screener_service = None
+short_screener_service = None
+finviz_screener_service = None
 
 
 def get_momentum_service():
@@ -106,6 +114,22 @@ def get_screener_service():
         if api_key:
             screener_service = ScreenerService(api_key)
     return screener_service
+
+
+def get_short_screener_service():
+    """Récupère ou crée le service de screening Short (via Finviz) - LEGACY"""
+    global short_screener_service
+    if short_screener_service is None:
+        short_screener_service = ShortScreenerService()
+    return short_screener_service
+
+
+def get_finviz_screener_service():
+    """Récupère ou crée le service Finviz unifié (Long & Short)"""
+    global finviz_screener_service
+    if finviz_screener_service is None:
+        finviz_screener_service = FinvizScreenerService()
+    return finviz_screener_service
 
 
 # =============================================================================
@@ -172,8 +196,7 @@ def update_settings():
 @app.route('/api/panel', methods=['GET'])
 def get_panel():
     """Récupère la liste des actions du panel"""
-    strategy_type = request.args.get('strategy_type', 'long')
-    actions = PanelAction.query.filter_by(is_active=True, strategy_type=strategy_type).all()
+    actions = PanelAction.query.filter_by(is_active=True).all()
     return jsonify({
         'count': len(actions),
         'actions': [a.to_dict() for a in actions]
@@ -186,21 +209,20 @@ def add_to_panel():
     """Ajoute une action au panel"""
     data = request.get_json()
     ticker = data.get('ticker', '').upper().strip()
-    strategy_type = data.get('strategy_type', 'long')
     
     if not ticker:
         return jsonify({'error': 'Ticker requis'}), 400
     
-    # Vérifier si déjà présent pour cette stratégie
-    existing = PanelAction.query.filter_by(ticker=ticker, strategy_type=strategy_type).first()
+    # Vérifier si déjà présent
+    existing = PanelAction.query.filter_by(ticker=ticker).first()
     if existing:
         if existing.is_active:
-            return jsonify({'error': f'{ticker} est déjà dans le panel {strategy_type}'}), 400
+            return jsonify({'error': f'{ticker} est déjà dans le panel'}), 400
         else:
             # Réactiver
             existing.is_active = True
             db.session.commit()
-            return jsonify({'success': True, 'message': f'{ticker} réactivé dans {strategy_type}', 'action': existing.to_dict()})
+            return jsonify({'success': True, 'message': f'{ticker} réactivé', 'action': existing.to_dict()})
     
     # Valider le ticker via Tiingo
     service = get_momentum_service()
@@ -213,13 +235,13 @@ def add_to_panel():
         name = None
     
     # Ajouter
-    action = PanelAction(ticker=ticker, name=name, strategy_type=strategy_type)
+    action = PanelAction(ticker=ticker, name=name, strategy_type='long')
     db.session.add(action)
     db.session.commit()
     
     return jsonify({
         'success': True,
-        'message': f'{ticker} ajouté au panel {strategy_type}',
+        'message': f'{ticker} ajouté au panel',
         'action': action.to_dict()
     })
 
@@ -228,17 +250,16 @@ def add_to_panel():
 @require_admin
 def remove_from_panel(ticker):
     """Retire une action du panel"""
-    strategy_type = request.args.get('strategy_type', 'long')
     ticker = ticker.upper()
-    action = PanelAction.query.filter_by(ticker=ticker, strategy_type=strategy_type).first()
+    action = PanelAction.query.filter_by(ticker=ticker).first()
     
     if not action:
-        return jsonify({'error': f'{ticker} non trouvé dans {strategy_type}'}), 404
+        return jsonify({'error': f'{ticker} non trouvé'}), 404
     
     action.is_active = False
     db.session.commit()
     
-    return jsonify({'success': True, 'message': f'{ticker} retiré du panel {strategy_type}'})
+    return jsonify({'success': True, 'message': f'{ticker} retiré du panel'})
 
 
 # =============================================================================
@@ -249,8 +270,6 @@ def remove_from_panel(ticker):
 @require_admin
 def calculate_momentum():
     """Lance le calcul du momentum et génère les recommandations"""
-    data = request.get_json() or {}
-    strategy_type = data.get('strategy_type', 'long')
     
     service = get_momentum_service()
     if not service:
@@ -264,14 +283,14 @@ def calculate_momentum():
         date_calcul = None  # Utiliser la date du jour
     
     # Récupérer le panel
-    actions = PanelAction.query.filter_by(is_active=True, strategy_type=strategy_type).all()
+    actions = PanelAction.query.filter_by(is_active=True).all()
     panel = [a.ticker for a in actions]
     
     if not panel:
-        return jsonify({'error': f'Panel {strategy_type} vide - ajoutez des actions'}), 400
+        return jsonify({'error': 'Panel vide - ajoutez des actions'}), 400
     
     # Calculer le momentum
-    resultats = service.analyser_panel(panel, date_calcul, strategy_type=strategy_type)
+    resultats = service.analyser_panel(panel, date_calcul)
     
     if not resultats['success']:
         return jsonify({
@@ -280,11 +299,10 @@ def calculate_momentum():
         }), 500
     
     # Générer les recommandations
-    recommandations = service.generer_recommandations(resultats, nb_top, strategy_type=strategy_type)
+    recommandations = service.generer_recommandations(resultats, nb_top)
     
     # Sauvegarder dans l'historique
     history = RecommendationHistory(
-        strategy_type=strategy_type,
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
         nb_top=nb_top
     )
@@ -307,7 +325,6 @@ def calculate_momentum():
     return jsonify({
         'success': True,
         'history_id': history.id,
-        'strategy_type': strategy_type,
         **recommandations
     })
 
@@ -316,8 +333,6 @@ def calculate_momentum():
 @require_admin
 def calculate_and_notify():
     """Lance le calcul et envoie une notification email"""
-    data = request.get_json() or {}
-    strategy_type = data.get('strategy_type', 'long')
     
     # D'abord calculer
     service = get_momentum_service()
@@ -330,22 +345,21 @@ def calculate_and_notify():
     if not date_calcul:
         date_calcul = None
     
-    actions = PanelAction.query.filter_by(is_active=True, strategy_type=strategy_type).all()
+    actions = PanelAction.query.filter_by(is_active=True).all()
     panel = [a.ticker for a in actions]
     
     if not panel:
-        return jsonify({'error': f'Panel {strategy_type} vide'}), 400
+        return jsonify({'error': 'Panel vide'}), 400
     
-    resultats = service.analyser_panel(panel, date_calcul, strategy_type=strategy_type)
+    resultats = service.analyser_panel(panel, date_calcul)
     
     if not resultats['success']:
         return jsonify({'error': 'Échec du calcul', 'erreurs': resultats['erreurs']}), 500
     
-    recommandations = service.generer_recommandations(resultats, nb_top, strategy_type=strategy_type)
+    recommandations = service.generer_recommandations(resultats, nb_top)
     
     # Sauvegarder
     history = RecommendationHistory(
-        strategy_type=strategy_type,
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
         nb_top=nb_top
     )
@@ -367,13 +381,11 @@ def calculate_and_notify():
     
     # Envoyer l'email
     email_svc = get_email_service()
-    # On pourrait ajouter le type de stratégie dans le sujet de l'email
     email_result = email_svc.envoyer_recommandations(recommandations)
     
     return jsonify({
         'success': True,
         'history_id': history.id,
-        'strategy_type': strategy_type,
         'email_sent': email_result['success'],
         'email_message': email_result['message'],
         **recommandations
@@ -409,15 +421,13 @@ def get_history_detail(history_id):
 
 @app.route('/api/history/latest', methods=['GET'])
 def get_latest():
-    """Récupère la dernière recommandation pour une stratégie"""
-    strategy_type = request.args.get('strategy_type', 'long')
+    """Récupère la dernière recommandation"""
     history = RecommendationHistory.query\
-        .filter_by(strategy_type=strategy_type)\
         .order_by(RecommendationHistory.created_at.desc())\
         .first()
     
     if not history:
-        return jsonify({'message': f'Aucune recommandation disponible pour {strategy_type}'}), 404
+        return jsonify({'message': 'Aucune recommandation disponible'}), 404
     
     return jsonify(history.to_dict())
 
@@ -515,22 +525,17 @@ def admin_login():
 @require_admin
 def generate_panel():
     """
-    Génère automatiquement un panel de 50 tickers basé sur les critères.
-    Long: MarketCap/ADV (via Tiingo)
-    Short: Losers (via Finviz)
+    Génère automatiquement un panel de 50 tickers basé sur les critères:
+    - MarketCap >= 1B$
+    - ADV >= 5M$
+    - Score = log(MarketCap) × log(ADV)
     """
-    data = request.get_json() or {}
-    strategy_type = data.get('strategy_type', 'long')
-    
     screener = get_screener_service()
     if not screener:
-        return jsonify({'error': 'Service de screening indisponible'}), 500
+        return jsonify({'error': 'API Tiingo non configurée'}), 500
     
-    # Lancer le screening selon le type
-    if strategy_type == 'short':
-        result = screener.screen_losers_finviz()
-    else:
-        result = screener.screen_universe()
+    # Lancer le screening (peut prendre du temps)
+    result = screener.screen_universe()
     
     if not result['success']:
         return jsonify({
@@ -541,7 +546,6 @@ def generate_panel():
     
     return jsonify({
         'success': True,
-        'strategy_type': strategy_type,
         'tickers': result['tickers'],
         'stats': result['stats']
     })
@@ -551,18 +555,17 @@ def generate_panel():
 @require_admin
 def apply_generated_panel():
     """
-    Applique les tickers générés au panel actuel pour une stratégie donnée.
-    Remplace tout le panel existant de cette stratégie par les nouveaux tickers.
+    Applique les tickers générés au panel actuel.
+    Remplace tout le panel existant par les nouveaux tickers.
     """
     data = request.get_json()
     tickers = data.get('tickers', [])
-    strategy_type = data.get('strategy_type', 'long')
     
     if not tickers:
         return jsonify({'error': 'Aucun ticker fourni'}), 400
     
-    # Désactiver tous les tickers actuels de cette stratégie
-    PanelAction.query.filter_by(strategy_type=strategy_type).update({PanelAction.is_active: False})
+    # Désactiver tous les tickers actuels
+    PanelAction.query.update({PanelAction.is_active: False})
     
     # Ajouter ou réactiver les nouveaux tickers
     added = 0
@@ -571,14 +574,14 @@ def apply_generated_panel():
         if not ticker:
             continue
         
-        existing = PanelAction.query.filter_by(ticker=ticker, strategy_type=strategy_type).first()
+        existing = PanelAction.query.filter_by(ticker=ticker).first()
         if existing:
             existing.is_active = True
         else:
             action = PanelAction(
                 ticker=ticker,
-                name=ticker_data.get('name'), # Utiliser le nom si disponible (ex: Finviz)
-                strategy_type=strategy_type
+                name=None,  # On pourrait stocker le nom si disponible
+                strategy_type='long'
             )
             db.session.add(action)
         added += 1
@@ -587,9 +590,400 @@ def apply_generated_panel():
     
     return jsonify({
         'success': True,
-        'message': f'{added} tickers ajoutés au panel {strategy_type}',
-        'count': added,
-        'strategy_type': strategy_type
+        'message': f'{added} tickers ajoutés au panel',
+        'count': added
+    })
+
+
+# =============================================================================
+# ROUTES - API SCREENER FINVIZ (Long - 0 appel API Tiingo)
+# =============================================================================
+
+@app.route('/api/screener/finviz/generate', methods=['POST'])
+@require_admin
+def generate_panel_finviz():
+    """
+    Génère automatiquement un panel Long de 50 tickers via Finviz.
+    Critères conformes à select_50_tickers.md:
+    - MarketCap >= 1B$
+    - ADV >= 5M$ (Price × Volume)
+    - Score = log(MarketCap) × log(ADV)
+    
+    Avantage: 0 appel API Tiingo !
+    """
+    screener = get_finviz_screener_service()
+    
+    result = screener.screen_long()
+    
+    if not result['success']:
+        return jsonify({
+            'success': False,
+            'error': result['error'],
+            'stats': result.get('stats', {})
+        }), 500
+    
+    return jsonify({
+        'success': True,
+        'tickers': result['tickers'],
+        'stats': result['stats']
+    })
+
+
+# =============================================================================
+# ROUTES - API SHORT PANEL
+# =============================================================================
+
+@app.route('/api/short/panel', methods=['GET'])
+def get_short_panel():
+    """Récupère la liste des actions du panel Short"""
+    actions = ShortPanelAction.query.filter_by(is_active=True).all()
+    return jsonify({
+        'count': len(actions),
+        'actions': [a.to_dict() for a in actions]
+    })
+
+
+@app.route('/api/short/panel', methods=['POST'])
+@require_admin
+def add_to_short_panel():
+    """Ajoute une action au panel Short"""
+    data = request.get_json()
+    ticker = data.get('ticker', '').upper().strip()
+    
+    if not ticker:
+        return jsonify({'error': 'Ticker requis'}), 400
+    
+    # Vérifier si déjà présent
+    existing = ShortPanelAction.query.filter_by(ticker=ticker).first()
+    if existing:
+        if existing.is_active:
+            return jsonify({'error': f'{ticker} est déjà dans le panel Short'}), 400
+        else:
+            # Réactiver
+            existing.is_active = True
+            db.session.commit()
+            return jsonify({'success': True, 'message': f'{ticker} réactivé', 'action': existing.to_dict()})
+    
+    # Valider le ticker via Tiingo (si configuré)
+    service = get_momentum_service()
+    name = None
+    if service:
+        validation = service.valider_ticker(ticker)
+        if not validation['valid']:
+            return jsonify({'error': f'Ticker invalide: {validation["error"]}'}), 400
+        name = validation['name']
+    
+    # Ajouter
+    action = ShortPanelAction(ticker=ticker, name=name)
+    db.session.add(action)
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'{ticker} ajouté au panel Short',
+        'action': action.to_dict()
+    })
+
+
+@app.route('/api/short/panel/<ticker>', methods=['DELETE'])
+@require_admin
+def remove_from_short_panel(ticker):
+    """Retire une action du panel Short"""
+    ticker = ticker.upper()
+    action = ShortPanelAction.query.filter_by(ticker=ticker).first()
+    
+    if not action:
+        return jsonify({'error': f'{ticker} non trouvé'}), 404
+    
+    action.is_active = False
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': f'{ticker} retiré du panel Short'})
+
+
+# =============================================================================
+# ROUTES - API SHORT MOMENTUM
+# =============================================================================
+
+@app.route('/api/short/calculate', methods=['POST'])
+@require_admin
+def calculate_short_momentum():
+    """Lance le calcul du momentum Short et génère les recommandations"""
+    
+    service = get_momentum_service()
+    if not service:
+        return jsonify({'error': 'API Tiingo non configurée'}), 500
+    
+    # Récupérer les paramètres Short
+    nb_top = int(Settings.get('short_nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
+    date_calcul = Settings.get('short_date_calcul', '')
+    
+    if not date_calcul:
+        date_calcul = None
+    
+    # Récupérer le panel Short
+    actions = ShortPanelAction.query.filter_by(is_active=True).all()
+    panel = [a.ticker for a in actions]
+    
+    if not panel:
+        return jsonify({'error': 'Panel Short vide - ajoutez des actions'}), 400
+    
+    # Calculer le momentum (même méthode, mais on triera différemment)
+    resultats = service.analyser_panel(panel, date_calcul)
+    
+    if not resultats['success']:
+        return jsonify({
+            'error': 'Échec du calcul',
+            'erreurs': resultats['erreurs']
+        }), 500
+    
+    # Générer les recommandations SHORT (inverser le tri)
+    recommandations = generer_recommandations_short(resultats, nb_top)
+    
+    # Sauvegarder dans l'historique Short
+    history = ShortRecommendationHistory(
+        calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
+        nb_top=nb_top
+    )
+    db.session.add(history)
+    db.session.flush()
+    
+    for r in recommandations['recommandations']:
+        detail = ShortRecommendationDetail(
+            history_id=history.id,
+            ticker=r['ticker'],
+            momentum=r['momentum'],
+            signal=r['signal'],
+            allocation=r['allocation'],
+            rank=r['rank']
+        )
+        db.session.add(detail)
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'history_id': history.id,
+        **recommandations
+    })
+
+
+def generer_recommandations_short(resultats_analyse, nb_top):
+    """
+    Génère les signaux Short (inverse du Long).
+    Trie par momentum CROISSANT (les plus fortes baisses en premier).
+    """
+    if not resultats_analyse['success']:
+        return {
+            'date_calcul': resultats_analyse['date_calcul'],
+            'nb_top': nb_top,
+            'recommandations': [],
+            'total_shorter': 0,
+            'erreurs': resultats_analyse['erreurs']
+        }
+    
+    resultats = resultats_analyse['resultats']
+    
+    # IMPORTANT: Trier par momentum CROISSANT (les plus bas en premier)
+    resultats.sort(key=lambda x: x['momentum'], reverse=False)
+    
+    # Réattribuer les rangs après le nouveau tri
+    for i, r in enumerate(resultats):
+        r['rank'] = i + 1
+    
+    nb_actions = len(resultats)
+    nb_selection = min(nb_top, nb_actions)
+    
+    # Allocation par action sélectionnée
+    allocation_par_action = round(100.0 / nb_selection, 2) if nb_selection > 0 else 0
+    
+    recommandations = []
+    
+    for i, r in enumerate(resultats):
+        if i < nb_selection:
+            signal = "Shorter"  # Signal pour vendre à découvert
+            allocation = allocation_par_action
+        else:
+            signal = "Couvrir"  # Signal pour ne pas shorter / couvrir position existante
+            allocation = 0.0
+        
+        recommandations.append({
+            'ticker': r['ticker'],
+            'momentum': round(r['momentum'], 2),
+            'signal': signal,
+            'allocation': allocation,
+            'rank': r['rank'],
+            'details_mensuels': r.get('details_mensuels', [])
+        })
+    
+    return {
+        'date_calcul': resultats_analyse['date_calcul'],
+        'nb_top': nb_top,
+        'recommandations': recommandations,
+        'total_shorter': nb_selection,
+        'erreurs': resultats_analyse['erreurs']
+    }
+
+
+# =============================================================================
+# ROUTES - API SHORT HISTORIQUE
+# =============================================================================
+
+@app.route('/api/short/history', methods=['GET'])
+def get_short_history():
+    """Récupère l'historique des recommandations Short"""
+    limit = request.args.get('limit', 12, type=int)
+    
+    history = ShortRecommendationHistory.query\
+        .order_by(ShortRecommendationHistory.created_at.desc())\
+        .limit(limit)\
+        .all()
+    
+    return jsonify({
+        'count': len(history),
+        'history': [h.to_dict() for h in history]
+    })
+
+
+@app.route('/api/short/history/<int:history_id>', methods=['GET'])
+def get_short_history_detail(history_id):
+    """Récupère les détails d'une recommandation Short passée"""
+    history = ShortRecommendationHistory.query.get_or_404(history_id)
+    return jsonify(history.to_dict())
+
+
+@app.route('/api/short/history/latest', methods=['GET'])
+def get_short_latest():
+    """Récupère la dernière recommandation Short"""
+    history = ShortRecommendationHistory.query\
+        .order_by(ShortRecommendationHistory.created_at.desc())\
+        .first()
+    
+    if not history:
+        return jsonify({'message': 'Aucune recommandation Short disponible'}), 404
+    
+    return jsonify(history.to_dict())
+
+
+# =============================================================================
+# ROUTES - API SHORT SETTINGS
+# =============================================================================
+
+@app.route('/api/short/settings', methods=['GET'])
+def get_short_settings():
+    """Récupère les paramètres Short"""
+    nb_top = Settings.get('short_nb_top', app.config.get('DEFAULT_NB_TOP', 5))
+    date_calcul = Settings.get('short_date_calcul', '')
+    
+    return jsonify({
+        'nb_top': int(nb_top),
+        'date_calcul': date_calcul
+    })
+
+
+@app.route('/api/short/settings', methods=['POST'])
+@require_admin
+def update_short_settings():
+    """Met à jour les paramètres Short"""
+    data = request.get_json()
+    
+    if 'nb_top' in data:
+        nb_top = int(data['nb_top'])
+        if 1 <= nb_top <= 50:
+            Settings.set('short_nb_top', nb_top)
+        else:
+            return jsonify({'error': 'nb_top doit être entre 1 et 50'}), 400
+    
+    if 'date_calcul' in data:
+        date_calcul = data['date_calcul']
+        if date_calcul:
+            try:
+                datetime.strptime(date_calcul, '%Y-%m-%d')
+            except ValueError:
+                return jsonify({'error': 'Format de date invalide (YYYY-MM-DD)'}), 400
+        Settings.set('short_date_calcul', date_calcul)
+    
+    return jsonify({'success': True, 'message': 'Paramètres Short mis à jour'})
+
+
+# =============================================================================
+# ROUTES - API SHORT SCREENER (via Finviz)
+# =============================================================================
+
+@app.route('/api/short/screener/generate', methods=['POST'])
+@require_admin
+def generate_short_panel():
+    """
+    Génère automatiquement un panel Short de 50 tickers via Finviz.
+    Critères: Market Cap >= 2B$, Volume >= 500K, Perf Year <= -20%
+    """
+    screener = get_finviz_screener_service()
+    
+    # Récupérer le seuil de performance (optionnel)
+    data = request.get_json(silent=True) or {}
+    min_perf = data.get('min_perf_year', -20)
+    
+    result = screener.screen_short(min_perf_year=min_perf)
+    
+    if not result['success']:
+        return jsonify({
+            'success': False,
+            'error': result['error'],
+            'stats': result.get('stats', {})
+        }), 500
+    
+    return jsonify({
+        'success': True,
+        'tickers': result['tickers'],
+        'stats': result['stats']
+    })
+
+
+@app.route('/api/short/screener/apply', methods=['POST'])
+@require_admin
+def apply_short_panel():
+    """
+    Applique les tickers générés au panel Short.
+    Remplace tout le panel Short existant par les nouveaux tickers.
+    """
+    data = request.get_json()
+    tickers = data.get('tickers', [])
+    
+    if not tickers:
+        return jsonify({'error': 'Aucun ticker fourni'}), 400
+    
+    # Désactiver tous les tickers Short actuels
+    ShortPanelAction.query.update({ShortPanelAction.is_active: False})
+    
+    # Ajouter ou réactiver les nouveaux tickers
+    added = 0
+    for ticker_data in tickers:
+        ticker = ticker_data.get('ticker', '').upper().strip()
+        if not ticker:
+            continue
+        
+        existing = ShortPanelAction.query.filter_by(ticker=ticker).first()
+        if existing:
+            existing.is_active = True
+            existing.name = ticker_data.get('company')
+            existing.sector = ticker_data.get('sector')
+            existing.perf_year = ticker_data.get('perf_year')
+        else:
+            action = ShortPanelAction(
+                ticker=ticker,
+                name=ticker_data.get('company'),
+                sector=ticker_data.get('sector'),
+                perf_year=ticker_data.get('perf_year')
+            )
+            db.session.add(action)
+        added += 1
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'{added} tickers ajoutés au panel Short',
+        'count': added
     })
 
 
@@ -600,8 +994,7 @@ def apply_generated_panel():
 def job_mensuel():
     """
     Tâche exécutée le 1er de chaque mois.
-    Calcule le momentum pour les deux stratégies (Long et Short)
-    et envoie les recommandations par email.
+    Calcule le momentum et envoie les recommandations par email.
     """
     with app.app_context():
         print(f"[{datetime.now()}] 🚀 Démarrage du calcul mensuel automatique...")
@@ -613,59 +1006,54 @@ def job_mensuel():
         
         nb_top = int(Settings.get('nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
         
-        for strategy_type in ['long', 'short']:
-            print(f"📊 Traitement de la stratégie: {strategy_type.upper()}")
-            
-            actions = PanelAction.query.filter_by(is_active=True, strategy_type=strategy_type).all()
-            panel = [a.ticker for a in actions]
-            
-            if not panel:
-                print(f"⚠️ Panel {strategy_type} vide, passage à la suite")
-                continue
-            
-            # Calculer
-            resultats = service.analyser_panel(panel, None, strategy_type=strategy_type)
-            
-            if not resultats['success']:
-                print(f"❌ Échec du calcul {strategy_type}: {resultats['erreurs']}")
-                continue
-            
-            recommandations = service.generer_recommandations(resultats, nb_top, strategy_type=strategy_type)
-            
-            # Sauvegarder
-            history = RecommendationHistory(
-                strategy_type=strategy_type,
-                calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
-                nb_top=nb_top
+        actions = PanelAction.query.filter_by(is_active=True).all()
+        panel = [a.ticker for a in actions]
+        
+        if not panel:
+            print("❌ Panel vide")
+            return
+        
+        # Calculer
+        resultats = service.analyser_panel(panel, None)
+        
+        if not resultats['success']:
+            print(f"❌ Échec du calcul: {resultats['erreurs']}")
+            return
+        
+        recommandations = service.generer_recommandations(resultats, nb_top)
+        
+        # Sauvegarder
+        history = RecommendationHistory(
+            calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
+            nb_top=nb_top
+        )
+        db.session.add(history)
+        db.session.flush()
+        
+        for r in recommandations['recommandations']:
+            detail = RecommendationDetail(
+                history_id=history.id,
+                ticker=r['ticker'],
+                momentum=r['momentum'],
+                signal=r['signal'],
+                allocation=r['allocation'],
+                rank=r['rank']
             )
-            db.session.add(history)
-            db.session.flush()
-            
-            for r in recommandations['recommandations']:
-                detail = RecommendationDetail(
-                    history_id=history.id,
-                    ticker=r['ticker'],
-                    momentum=r['momentum'],
-                    signal=r['signal'],
-                    allocation=r['allocation'],
-                    rank=r['rank']
-                )
-                db.session.add(detail)
-            
-            db.session.commit()
-            print(f"✅ Recommandations {strategy_type} sauvegardées (ID: {history.id})")
-            
-            # Envoyer email pour chaque stratégie
-            email_svc = get_email_service()
-            if email_svc.is_configured():
-                # On ajoute le type de stratégie dans le sujet via un préfixe ou autre si besoin
-                result = email_svc.envoyer_recommandations(recommandations)
-                if result['success']:
-                    print(f"✅ Email {strategy_type} envoyé: {result['message']}")
-                else:
-                    print(f"❌ Erreur email {strategy_type}: {result['message']}")
+            db.session.add(detail)
+        
+        db.session.commit()
+        print(f"✅ Recommandations sauvegardées (ID: {history.id})")
+        
+        # Envoyer email
+        email_svc = get_email_service()
+        if email_svc.is_configured():
+            result = email_svc.envoyer_recommandations(recommandations)
+            if result['success']:
+                print(f"✅ Email envoyé: {result['message']}")
             else:
-                print(f"⚠️ Service email non configuré pour {strategy_type}")
+                print(f"❌ Erreur email: {result['message']}")
+        else:
+            print("⚠️ Service email non configuré")
 
 
 # Initialiser le scheduler

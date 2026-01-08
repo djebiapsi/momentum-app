@@ -16,9 +16,7 @@ Résultat: 1 seul appel API !
 
 import requests
 import math
-import pandas as pd
 from datetime import datetime
-from finvizfinance.screener.overview import Overview
 
 
 class ScreenerService:
@@ -247,75 +245,6 @@ class ScreenerService:
             'error': None
         }
     
-    def screen_losers_finviz(self, progress_callback=None):
-        """
-        Effectue le screening des perdants via Finviz (Gratuit, 0 appel Tiingo).
-        Filtres: Market Cap > 2B, ADV > 500K, Perf Year < -20%.
-        """
-        def report(current, total, msg):
-            if progress_callback:
-                progress_callback(current, total, msg)
-
-        report(10, 100, "🔍 Connexion à Finviz...")
-        
-        try:
-            foverview = Overview()
-            filters_dict = {
-                'Market Cap.': 'Mid Cap ($2bln to $10bln)', # On commence par Mid
-                'Average Volume': 'Over 500K',
-                'Performance': 'Year -20% or lower'
-            }
-            
-            foverview.set_filter(filters_dict=filters_dict)
-            
-            report(40, 100, "📊 Récupération des données Finviz...")
-            df = foverview.screener_view()
-            
-            if df.empty:
-                # Essayer avec Large Cap si Mid est vide ou pour compléter
-                filters_dict['Market Cap.'] = 'Large Cap ($10bln to $200bln)'
-                foverview.set_filter(filters_dict=filters_dict)
-                df = foverview.screener_view()
-
-            if df.empty:
-                return self._error_result("Aucun ticker trouvé sur Finviz avec ces critères")
-
-            report(70, 100, f"✅ {len(df)} tickers trouvés. Tri par performance...")
-
-            # Nettoyage et tri
-            # La colonne performance peut varier selon la vue, Overview a 'Perf Year'
-            col_perf = 'Perf Year' if 'Perf Year' in df.columns else None
-            
-            if col_perf:
-                df[col_perf] = df[col_perf].str.replace('%', '').astype(float)
-                df = df.sort_values(by=col_perf, ascending=True)
-            
-            top_50 = []
-            for i, row in df.head(self.target_count).iterrows():
-                top_50.append({
-                    'ticker': row['Ticker'],
-                    'price': float(row['Price']) if 'Price' in row else 0,
-                    'perf_year': row[col_perf] if col_perf else 0,
-                    'rank': i + 1
-                })
-
-            report(100, 100, f"✅ Terminé ! {len(top_50)} perdants sélectionnés.")
-
-            return {
-                'success': True,
-                'tickers': top_50,
-                'stats': {
-                    'total_found': len(df),
-                    'selected': len(top_50),
-                    'source': 'Finviz',
-                    'generated_at': datetime.now().isoformat()
-                },
-                'error': None
-            }
-
-        except Exception as e:
-            return self._error_result(f"Erreur Finviz: {str(e)}")
-
     def _error_result(self, error_msg):
         """Retourne un résultat d'erreur formaté."""
         return {
