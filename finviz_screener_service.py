@@ -24,6 +24,11 @@ from finvizfinance.screener.performance import Performance
 from datetime import datetime
 import math
 import time
+import signal
+
+
+class TimeoutError(Exception):
+    pass
 
 
 class FinvizScreenerService:
@@ -63,23 +68,23 @@ class FinvizScreenerService:
             
             foverview = Overview()
             
-            # Filtres stricts pour limiter le nombre de pages (= plus rapide)
+            # Filtres TRÈS stricts pour rapidité (moins de résultats = plus rapide)
             filters_dict = {
-                'Market Cap.': '+Mid (over $2bln)',  # Mid cap et plus
-                'Average Volume': 'Over 500K',
+                'Market Cap.': '+Large (over $10bln)',  # Large cap seulement = beaucoup moins de résultats
+                'Average Volume': 'Over 1M',            # Volume élevé uniquement
             }
             
             report(20, "Envoi de la requête à Finviz...")
             foverview.set_filter(filters_dict=filters_dict)
             
             report(40, "Récupération des données...")
-            # Limiter à 500 résultats, triés par MarketCap décroissant
+            # Limiter à 150 résultats max pour éviter timeout
             df = foverview.screener_view(
                 order='Market Cap.',
                 ascend=False,
-                limit=500,
+                limit=150,
                 verbose=0,
-                sleep_sec=0.3
+                sleep_sec=0.05  # Réduit pour rapidité
             )
             
             if df is None or df.empty:
@@ -101,7 +106,7 @@ class FinvizScreenerService:
                     
                     # Parser le Market Cap
                     market_cap = self._parse_market_cap(row.get('Market Cap', ''))
-                    if market_cap < 2_000_000_000:  # < 2B
+                    if market_cap < 10_000_000_000:  # < 10B (Large Cap)
                         continue
                     
                     # Parser Price et Volume pour ADV
@@ -135,7 +140,7 @@ class FinvizScreenerService:
                     continue
             
             if not scored:
-                return self._error("Aucune action ne respecte les critères (MarketCap >= 2B$, ADV >= 5M$)")
+                return self._error("Aucune action ne respecte les critères (MarketCap >= 10B$, ADV >= 5M$)")
             
             report(75, f"{len(scored)} actions qualifiées")
             
@@ -159,7 +164,7 @@ class FinvizScreenerService:
                     'total_found': len(df),
                     'qualified': len(scored),
                     'selected': len(top_50),
-                    'min_market_cap': '$2B',
+                    'min_market_cap': '$10B',
                     'min_adv': '$5M',
                     'best_score': top_50[0]['score'] if top_50 else '-',
                     'generated_at': datetime.now().isoformat()
@@ -198,6 +203,7 @@ class FinvizScreenerService:
             
             fperf = Performance()
             
+            # Filtres stricts pour rapidité
             filters_dict = {
                 'Market Cap.': '+Mid (over $2bln)',
                 'Average Volume': 'Over 500K',
@@ -219,13 +225,13 @@ class FinvizScreenerService:
             fperf.set_filter(filters_dict=filters_dict)
             
             report(40, "Récupération des données...")
-            # Limiter à 200 résultats (on veut les pires perfs)
+            # Limiter à 100 résultats pour éviter timeout
             df = fperf.screener_view(
                 order='Performance (Year)',
                 ascend=True,      # Croissant = pires en premier
-                limit=200,
+                limit=100,
                 verbose=0,
-                sleep_sec=0.3
+                sleep_sec=0.05  # Réduit pour rapidité
             )
             
             if df is None or df.empty:
