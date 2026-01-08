@@ -154,13 +154,14 @@ class MomentumService:
         
         return momentum, details_mensuels
     
-    def analyser_panel(self, panel_tickers, date_calcul=None):
+    def analyser_panel(self, panel_tickers, date_calcul=None, strategy_type='long'):
         """
         Analyse l'ensemble du panel d'actions et calcule le momentum de chacune.
         
         Args:
             panel_tickers: Liste des tickers à analyser
             date_calcul: Date du calcul (datetime ou string, None = aujourd'hui)
+            strategy_type: 'long' ou 'short'
         
         Returns:
             dict: {
@@ -202,8 +203,11 @@ class MomentumService:
             else:
                 erreurs.append({'ticker': ticker, 'erreur': 'Données insuffisantes pour le calcul'})
         
-        # Tri par momentum décroissant
-        resultats.sort(key=lambda x: x['momentum'], reverse=True)
+        # Tri par momentum
+        # Long: décroissant (meilleurs en premier)
+        # Short: croissant (pires en premier)
+        reverse = True if strategy_type == 'long' else False
+        resultats.sort(key=lambda x: x['momentum'], reverse=reverse)
         
         # Ajout du rang
         for i, r in enumerate(resultats):
@@ -216,13 +220,14 @@ class MomentumService:
             'erreurs': erreurs
         }
     
-    def generer_recommandations(self, resultats_analyse, nb_top):
+    def generer_recommandations(self, resultats_analyse, nb_top, strategy_type='long'):
         """
         Génère les signaux d'investissement et calcule les allocations.
         
         Args:
             resultats_analyse: Résultat de analyser_panel()
             nb_top: Nombre d'actions à sélectionner pour investir
+            strategy_type: 'long' ou 'short'
         
         Returns:
             dict: {
@@ -253,7 +258,7 @@ class MomentumService:
         
         for i, r in enumerate(resultats):
             if i < nb_selection:
-                signal = "Investir"
+                signal = "Investir" if strategy_type == 'long' else "Short"
                 allocation = allocation_par_action
             else:
                 signal = "Sortir"

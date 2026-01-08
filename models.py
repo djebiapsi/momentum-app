@@ -49,15 +49,19 @@ class PanelAction(db.Model):
     __tablename__ = 'panel_actions'
     
     id = db.Column(db.Integer, primary_key=True)
-    ticker = db.Column(db.String(10), unique=True, nullable=False)
+    ticker = db.Column(db.String(10), nullable=False)
+    strategy_type = db.Column(db.String(10), default='long', nullable=False) # 'long' ou 'short'
     name = db.Column(db.String(100))  # Nom de l'entreprise (optionnel)
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+
+    __table_args__ = (db.UniqueConstraint('ticker', 'strategy_type', name='_ticker_strategy_uc'),)
     
     def to_dict(self):
         return {
             'id': self.id,
             'ticker': self.ticker,
+            'strategy_type': self.strategy_type,
             'name': self.name,
             'added_at': self.added_at.isoformat() if self.added_at else None,
             'is_active': self.is_active
@@ -72,6 +76,7 @@ class RecommendationHistory(db.Model):
     __tablename__ = 'recommendation_history'
     
     id = db.Column(db.Integer, primary_key=True)
+    strategy_type = db.Column(db.String(10), default='long', nullable=False) # 'long' ou 'short'
     calculation_date = db.Column(db.DateTime, nullable=False)  # Date du calcul
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     nb_top = db.Column(db.Integer, default=5)  # Nombre de top actions à ce moment
@@ -83,6 +88,7 @@ class RecommendationHistory(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
+            'strategy_type': self.strategy_type,
             'calculation_date': self.calculation_date.strftime('%Y-%m-%d'),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'nb_top': self.nb_top,
@@ -129,8 +135,8 @@ def init_db(app, default_panel):
         # Initialiser le panel par défaut si vide
         if PanelAction.query.count() == 0:
             for ticker in default_panel:
-                action = PanelAction(ticker=ticker.upper())
+                action = PanelAction(ticker=ticker.upper(), strategy_type='long')
                 db.session.add(action)
             db.session.commit()
-            print(f"✅ Panel initialisé avec {len(default_panel)} actions")
+            print(f"✅ Panel LONG initialisé avec {len(default_panel)} actions")
 

@@ -10,7 +10,43 @@
     
     <title>📈 Momentum Strategy</title>
     
-    <!-- PWA Manifest -->
+        /* Strategy tabs */
+        .strategy-tabs {
+            display: flex;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 4px;
+            margin-bottom: 24px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .strategy-tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-muted);
+        }
+        
+        .strategy-tab.active {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .strategy-tab.long.active {
+            border-bottom: 2px solid var(--accent-blue);
+        }
+        
+        .strategy-tab.short.active {
+            border-bottom: 2px solid var(--accent-red);
+        }
+
+        /* PWA Manifest */
     <link rel="manifest" href="/static/manifest.json">
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
     
@@ -1015,6 +1051,16 @@
     <!-- Main content -->
     <main class="main-content">
         
+        <!-- Sélecteur de stratégie -->
+        <div class="strategy-tabs">
+            <div id="tab-strategy-long" class="strategy-tab long active" onclick="switchStrategy('long')">
+                🔵 Position LONG
+            </div>
+            <div id="tab-strategy-short" class="strategy-tab short" onclick="switchStrategy('short')">
+                🔴 Position SHORT
+            </div>
+        </div>
+        
         <!-- PAGE: Dashboard -->
         <div id="page-dashboard" class="page active">
             <div class="header">
@@ -1089,13 +1135,13 @@
             <!-- Génération automatique -->
             <div class="card">
                 <div class="card-header">
-                    <span class="card-title">🎯 Génération Automatique</span>
+                    <span class="card-title" id="screener-title">🎯 Génération Automatique</span>
                 </div>
-                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;" id="screener-desc">
                     Génère un panel de 50 actions US basé sur des critères quantitatifs rigoureux :
                     MarketCap ≥ 1B$, ADV ≥ 5M$
                 </p>
-                <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
+                <button class="btn btn-generate btn-block admin-only" id="btn-generate-panel" onclick="confirmGeneratePanel()">
                     ⚡ Générer les 50 Tickers
                 </button>
             </div>
@@ -1214,10 +1260,60 @@
         // DONNÉES GLOBALES
         // =================================================================
         
+        let currentStrategy = 'long';     // 'long' ou 'short'
         let currentRecommendations = [];  // Stocke toutes les recommandations
         let showAllStocks = false;        // Toggle pour voir toutes les actions
         let isAdmin = false;              // Mode admin actif
         let adminToken = localStorage.getItem('adminToken') || '';  // Token stocké
+        
+        // =================================================================
+        // STRATÉGIE
+        // =================================================================
+        
+        function switchStrategy(strategy) {
+            if (currentStrategy === strategy) return;
+            
+            currentStrategy = strategy;
+            
+            // Update tabs UI
+            document.getElementById('tab-strategy-long').classList.toggle('active', strategy === 'long');
+            document.getElementById('tab-strategy-short').classList.toggle('active', strategy === 'short');
+            
+            // Update screener text
+            const title = document.getElementById('screener-title');
+            const desc = document.getElementById('screener-desc');
+            const btnGen = document.getElementById('btn-generate-panel');
+            
+            if (strategy === 'short') {
+                title.textContent = '📉 Génération Automatique (SHORT)';
+                desc.textContent = 'Génère un panel des 50 pires perdants via Finviz (MarketCap > 2B$, ADV > 500K, Perf Year < -20%).';
+                btnGen.textContent = '⚡ Générer les 50 Perdants';
+            } else {
+                title.textContent = '🎯 Génération Automatique (LONG)';
+                desc.textContent = 'Génère un panel de 50 actions US basé sur des critères quantitatifs rigoureux : MarketCap ≥ 1B$, ADV ≥ 5M$.';
+                btnGen.textContent = '⚡ Générer les 50 Tickers';
+            }
+            
+            // Refresh current page
+            const activePage = document.querySelector('.page.active').id.replace('page-', '');
+            refreshPage(activePage);
+            
+            showToast(`Mode ${strategy.toUpperCase()} activé`);
+        }
+
+        function refreshPage(pageName) {
+            switch(pageName) {
+                case 'dashboard':
+                    loadLatest();
+                    break;
+                case 'panel':
+                    loadPanel();
+                    break;
+                case 'history':
+                    loadHistory();
+                    break;
+            }
+        }
         
         // =================================================================
         // AUTHENTIFICATION
@@ -1455,20 +1551,28 @@
         function confirmGeneratePanel() {
             // Afficher le modal de confirmation
             const body = document.getElementById('generate-modal-body');
+            
+            const listItems = currentStrategy === 'long' 
+                ? `<li>Analyser l'ensemble de l'univers d'actions US</li>
+                   <li>Filtrer par MarketCap ≥ 1B$ et ADV ≥ 5M$</li>
+                   <li>Calculer le score = log(ADV)</li>
+                   <li>Sélectionner les 50 meilleurs</li>`
+                : `<li>Scanner le marché via Finviz (Screener)</li>
+                   <li>Filtrer les actions Mid/Large Cap (> 2B$)</li>
+                   <li>Filtrer par liquidité (Volume > 500K)</li>
+                   <li>Sélectionner les 50 pires performances annuelles</li>`;
+
             body.innerHTML = `
                 <div style="text-align: center; padding: 20px;">
-                    <h3 style="margin-bottom: 16px;">⚠️ Confirmation</h3>
+                    <h3 style="margin-bottom: 16px;">⚠️ Confirmation (${currentStrategy.toUpperCase()})</h3>
                     <p style="color: var(--text-secondary); margin-bottom: 8px;">
                         Cette opération va :
                     </p>
                     <ul style="text-align: left; color: var(--text-secondary); margin: 16px 0; padding-left: 20px;">
-                        <li>Analyser l'ensemble de l'univers d'actions US</li>
-                        <li>Filtrer par MarketCap ≥ 1B$ et ADV ≥ 5M$</li>
-                        <li>Calculer le score = log(MarketCap) × log(ADV)</li>
-                        <li>Sélectionner les 50 meilleurs</li>
+                        ${listItems}
                     </ul>
                     <p style="color: var(--accent-orange); font-size: 13px;">
-                        ⏱️ Cette opération peut prendre plusieurs minutes
+                        ⏱️ Cette opération peut prendre quelques instants
                     </p>
                     <div class="confirm-buttons">
                         <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
@@ -1540,29 +1644,30 @@
             const body = document.getElementById('generate-modal-body');
             const tickers = data.tickers;
             const stats = data.stats;
+            const strategy = data.strategy_type || currentStrategy;
             
             let html = `
                 <div class="stats-summary">
                     <div class="stat-card">
-                        <div class="stat-value">${(stats.total_tickers || stats.total_tickers_us)?.toLocaleString() || '-'}</div>
+                        <div class="stat-value">${(stats.total_tickers || stats.total_tickers_us || stats.total_found)?.toLocaleString() || '-'}</div>
                         <div class="stat-label">Tickers analysés</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${stats.above_adv_threshold || '-'}</div>
-                        <div class="stat-label">ADV ≥ 5M$</div>
+                        <div class="stat-value">${stats.above_adv_threshold || stats.selected || '-'}</div>
+                        <div class="stat-label">${strategy === 'long' ? 'ADV ≥ 5M$' : 'Sélectionnés'}</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" style="color: var(--accent-green);">${stats.selected || '-'}</div>
-                        <div class="stat-label">Sélectionnés</div>
+                        <div class="stat-label">Candidats</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" style="color: var(--accent-blue);">${stats.api_calls_used || '1'}</div>
+                        <div class="stat-value" style="color: var(--accent-blue);">${stats.api_calls_used || '0'}</div>
                         <div class="stat-label">Appel API</div>
                     </div>
                 </div>
                 
                 <div style="text-align: center; margin-bottom: 16px; padding: 8px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-muted);">
-                    Score = log(ADV) • ADV max: ${stats.max_adv || '-'} • ADV min: ${stats.min_adv || '-'}
+                    ${strategy === 'long' ? 'Critère: Score = log(ADV) • MarketCap ≥ 1B$' : 'Critère: Losers (Finviz) • MarketCap > 2B$'}
                 </div>
                 
                 <div class="search-container">
@@ -1579,8 +1684,8 @@
                                 <th>#</th>
                                 <th>Ticker</th>
                                 <th>Prix</th>
-                                <th>Volume</th>
-                                <th>ADV</th>
+                                <th>${strategy === 'long' ? 'Volume' : 'Perf Year'}</th>
+                                <th>${strategy === 'long' ? 'ADV' : ''}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1591,8 +1696,10 @@
                                         <a href="${getTradingViewUrl(t.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${t.ticker}</a>
                                     </td>
                                     <td class="number-cell">$${t.price}</td>
-                                    <td class="number-cell">${t.volume_display}</td>
-                                    <td class="number-cell">${t.adv_display}</td>
+                                    <td class="number-cell" style="${strategy === 'short' ? 'color: var(--accent-red);' : ''}">
+                                        ${strategy === 'long' ? t.volume_display : (t.perf_year ? t.perf_year + '%' : '-')}
+                                    </td>
+                                    <td class="number-cell">${strategy === 'long' ? t.adv_display : ''}</td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -1602,7 +1709,7 @@
                 <div class="confirm-buttons">
                     <button class="btn btn-secondary" onclick="closeGenerateModal()">Annuler</button>
                     <button class="btn btn-primary" onclick="applyGeneratedPanel()">
-                        ✅ Appliquer au Panel
+                        ✅ Appliquer au Panel ${strategy.toUpperCase()}
                     </button>
                 </div>
             `;
@@ -1749,20 +1856,24 @@
                 return;
             }
             
+            const buySignal = currentStrategy === 'long' ? 'Investir' : 'Short';
+
             list.innerHTML = filtered.map(r => `
                 <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                    <div class="stock-rank ${r.signal === 'Investir' ? 'top' : ''}">${r.rank}</div>
+                    <div class="stock-rank ${r.signal === buySignal ? 'top' : ''}" style="${r.signal === 'Short' ? 'background: var(--accent-red); color: white;' : ''}">${r.rank}</div>
                     <div class="stock-info">
                         <div class="stock-ticker">
                             <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                         </div>
-                        <div class="stock-signal ${r.signal === 'Investir' ? 'buy' : 'sell'}">${r.signal === 'Investir' ? '▲ Investir' : '▼ Sortir'}</div>
+                        <div class="stock-signal ${r.signal === buySignal ? (currentStrategy === 'long' ? 'buy' : 'sell') : 'sell'}">
+                            ${r.signal === buySignal ? (currentStrategy === 'long' ? '▲ Investir' : '▼ Short') : (currentStrategy === 'long' ? '▼ Sortir' : '▲ Cover')}
+                        </div>
                     </div>
                     <div class="stock-momentum">
                         <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                             ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                         </div>
-                        ${r.allocation > 0 ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
+                        ${r.allocation > 0 ? `<div class="allocation-badge" style="${currentStrategy === 'short' ? 'background: rgba(239, 68, 68, 0.15); color: var(--accent-red);' : ''}">${r.allocation}%</div>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -1804,6 +1915,14 @@
         
         async function api(endpoint, options = {}) {
             try {
+                let url = '/api' + endpoint;
+                
+                // Ajouter strategy_type aux paramètres GET
+                if (!options.method || options.method === 'GET') {
+                    const separator = url.includes('?') ? '&' : '?';
+                    url += `${separator}strategy_type=${currentStrategy}`;
+                }
+
                 // Ajouter le token admin si disponible
                 const headers = {
                     'Content-Type': 'application/json',
@@ -1814,7 +1933,20 @@
                     headers['X-Admin-Token'] = adminToken;
                 }
                 
-                const response = await fetch('/api' + endpoint, {
+                // Si c'est un POST/PUT/DELETE, on peut aussi l'ajouter dans le body
+                if (options.method && options.method !== 'GET' && options.body) {
+                    try {
+                        const body = JSON.parse(options.body);
+                        if (typeof body === 'object' && !body.strategy_type) {
+                            body.strategy_type = currentStrategy;
+                            options.body = JSON.stringify(body);
+                        }
+                    } catch (e) { }
+                } else if (options.method && options.method !== 'GET' && !options.body) {
+                    options.body = JSON.stringify({ strategy_type: currentStrategy });
+                }
+
+                const response = await fetch(url, {
                     ...options,
                     headers
                 });
@@ -1892,12 +2024,25 @@
             const sellList = document.getElementById('sell-list');
             
             const recs = data.recommandations || data.details || [];
-            const invest = recs.filter(r => r.signal === 'Investir');
+            
+            // Le signal d'achat est "Investir" pour Long et "Short" pour Short
+            const buySignal = currentStrategy === 'long' ? 'Investir' : 'Short';
+            const invest = recs.filter(r => r.signal === buySignal);
             const sell = recs.filter(r => r.signal === 'Sortir');
             
             // Stocker pour la recherche et les détails
             currentRecommendations = recs;
             
+            // Update UI titles based on strategy
+            const investTitle = document.querySelector('#invest-list').previousElementSibling.querySelector('.card-title');
+            if (currentStrategy === 'short') {
+                investTitle.textContent = '🔴 Actions à Shorter';
+                investTitle.style.color = 'var(--accent-red)';
+            } else {
+                investTitle.textContent = '🟢 Actions à Investir';
+                investTitle.style.color = 'var(--accent-green)';
+            }
+
             // Update stats
             document.getElementById('stat-top').textContent = invest.length;
             document.getElementById('stat-allocation').textContent = invest.length > 0 ? 
@@ -1916,18 +2061,20 @@
             if (invest.length > 0) {
                 investList.innerHTML = invest.map((r, i) => `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                        <div class="stock-rank top">${i + 1}</div>
+                        <div class="stock-rank ${currentStrategy === 'long' ? 'top' : ''}" style="${currentStrategy === 'short' ? 'background: var(--accent-red); color: white;' : ''}">${i + 1}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
-                            <div class="stock-signal buy">▲ Investir</div>
+                            <div class="stock-signal ${currentStrategy === 'long' ? 'buy' : 'sell'}">
+                                ${currentStrategy === 'long' ? '▲ Investir' : '▼ Short'}
+                            </div>
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                                 ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                             </div>
-                            <div class="allocation-badge">${r.allocation}%</div>
+                            <div class="allocation-badge" style="${currentStrategy === 'short' ? 'background: rgba(239, 68, 68, 0.15); color: var(--accent-red);' : ''}">${r.allocation}%</div>
                         </div>
                     </div>
                 `).join('');
@@ -1944,7 +2091,9 @@
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
-                            <div class="stock-signal sell">▼ Sortir</div>
+                            <div class="stock-signal sell">
+                                ${currentStrategy === 'long' ? '▼ Sortir' : '▲ Racheter (Cover)'}
+                            </div>
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
@@ -2036,20 +2185,23 @@
         
         async function loadHistory() {
             const data = await api('/history');
-            if (data && data.history.length > 0) {
+            if (data && data.history && data.history.length > 0) {
+                // Le signal d'achat dépend de la stratégie
+                const buySignal = currentStrategy === 'long' ? 'Investir' : 'Short';
+                
                 document.getElementById('history-list').innerHTML = data.history.map(h => {
-                    const topActions = h.details.filter(d => d.signal === 'Investir');
+                    const topActions = h.details.filter(d => d.signal === buySignal);
                     return `
                         <div class="history-item" onclick="showHistoryDetail(${h.id})">
                             <div class="history-date">📅 ${h.calculation_date}</div>
                             <div class="history-summary">
-                                Top ${h.nb_top}: ${topActions.map(a => a.ticker).join(', ')}
+                                ${currentStrategy.toUpperCase()} ${h.nb_top}: ${topActions.map(a => a.ticker).join(', ')}
                             </div>
                         </div>
                     `;
                 }).join('');
             } else {
-                document.getElementById('history-list').innerHTML = '<div class="empty-state"><p>Aucun historique disponible</p></div>';
+                document.getElementById('history-list').innerHTML = '<div class="empty-state"><p>Aucun historique disponible pour ' + currentStrategy.toUpperCase() + '</p></div>';
             }
         }
         
