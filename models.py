@@ -210,6 +210,9 @@ def init_db(app, default_panel):
     with app.app_context():
         db.create_all()
         
+        # Migration: Ajouter la colonne strategy_type si elle n'existe pas
+        _migrate_add_strategy_type(app)
+        
         # Initialiser le panel Long par défaut si vide
         if PanelAction.query.count() == 0:
             for ticker in default_panel:
@@ -217,4 +220,39 @@ def init_db(app, default_panel):
                 db.session.add(action)
             db.session.commit()
             print(f"✅ Panel Long initialisé avec {len(default_panel)} actions")
+
+
+def _migrate_add_strategy_type(app):
+    """
+    Migration pour ajouter la colonne strategy_type à panel_actions.
+    Compatible PostgreSQL et SQLite.
+    """
+    from sqlalchemy import text, inspect
+    
+    inspector = inspect(db.engine)
+    columns = [col['name'] for col in inspector.get_columns('panel_actions')]
+    
+    if 'strategy_type' not in columns:
+        print("🔄 Migration: Ajout de la colonne strategy_type...")
+        
+        # Détecte si c'est PostgreSQL ou SQLite
+        dialect = db.engine.dialect.name
+        
+        if dialect == 'postgresql':
+            # PostgreSQL: ajouter colonne avec valeur par défaut
+            db.session.execute(text(
+                "ALTER TABLE panel_actions ADD COLUMN strategy_type VARCHAR(10) DEFAULT 'long' NOT NULL"
+            ))
+        else:
+            # SQLite: syntaxe légèrement différente
+            db.session.execute(text(
+                "ALTER TABLE panel_actions ADD COLUMN strategy_type VARCHAR(10) DEFAULT 'long'"
+            ))
+            # Mettre à jour les valeurs NULL existantes
+            db.session.execute(text(
+                "UPDATE panel_actions SET strategy_type = 'long' WHERE strategy_type IS NULL"
+            ))
+        
+        db.session.commit()
+        print("✅ Migration terminée: colonne strategy_type ajoutée")
 
