@@ -6,7 +6,8 @@ API REST pour l'application de stratégie momentum.
 """
 
 import os
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, make_response
+import json
 from flask_cors import CORS
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -24,6 +25,7 @@ from email_service import EmailService
 from screener_service import ScreenerService
 from short_screener_service import ShortScreenerService
 from finviz_screener_service import FinvizScreenerService
+from options_service import OptionsService, estimate_historical_volatility
 
 
 def require_admin(f):
@@ -260,6 +262,89 @@ def remove_from_panel(ticker):
     db.session.commit()
     
     return jsonify({'success': True, 'message': f'{ticker} retiré du panel'})
+
+
+@app.route('/api/panel/export', methods=['GET'])
+def export_panel():
+    """Exporte le panel Long en JSON"""
+    strategy = request.args.get('strategy', 'long')
+    
+    if strategy == 'short':
+        actions = ShortPanelAction.query.filter_by(is_active=True).all()
+    else:
+        actions = PanelAction.query.filter_by(is_active=True).all()
+    
+    export_data = {
+        'strategy': strategy,
+        'exported_at': datetime.now().isoformat(),
+        'count': len(actions),
+        'tickers': [{'ticker': a.ticker, 'name': a.name} for a in actions]
+    }
+    
+    response = make_response(json.dumps(export_data, indent=2, ensure_ascii=False))
+    response.headers['Content-Type'] = 'application/json'
+    response.headers['Content-Disposition'] = f'attachment; filename=panel_{strategy}_{datetime.now().strftime("%Y%m%d")}.json'
+    return response
+
+
+@app.route('/api/panel/import', methods=['POST'])
+@require_admin
+def import_panel():
+    """Importe un panel depuis JSON"""
+    data = request.get_json(silent=True)
+    
+    if not data:
+        return jsonify({'error': 'Données JSON invalides'}), 400
+    
+    strategy = data.get('strategy', 'long')
+    tickers_data = data.get('tickers', [])
+    
+    if not tickers_data:
+        return jsonify({'error': 'Aucun ticker dans le fichier'}), 400
+    
+    added = 0
+    skipped = 0
+    
+    for item in tickers_data:
+        ticker = item.get('ticker', '').upper().strip() if isinstance(item, dict) else str(item).upper().strip()
+        name = item.get('name') if isinstance(item, dict) else None
+        
+        if not ticker:
+            continue
+        
+        if strategy == 'short':
+            existing = ShortPanelAction.query.filter_by(ticker=ticker).first()
+            if existing:
+                if not existing.is_active:
+                    existing.is_active = True
+                    added += 1
+                else:
+                    skipped += 1
+            else:
+                action = ShortPanelAction(ticker=ticker, name=name)
+                db.session.add(action)
+                added += 1
+        else:
+            existing = PanelAction.query.filter_by(ticker=ticker).first()
+            if existing:
+                if not existing.is_active:
+                    existing.is_active = True
+                    added += 1
+                else:
+                    skipped += 1
+            else:
+                action = PanelAction(ticker=ticker, name=name, strategy_type='long')
+                db.session.add(action)
+                added += 1
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'{added} tickers importés ({skipped} déjà présents)',
+        'added': added,
+        'skipped': skipped
+    })
 
 
 # =============================================================================
@@ -708,7 +793,13 @@ def remove_from_short_panel(ticker):
 @app.route('/api/short/calculate', methods=['POST'])
 @require_admin
 def calculate_short_momentum():
-    """Lance le calcul du momentum Short et génère les recommandations"""
+    """
+    Lance le calcul du momentum Short avec la méthode court terme.
+    
+    Méthode: Score = Perf(63j) - Perf(5j)
+    - Capture la tendance baissière sur 3 mois
+    - Exclut les 5 derniers jours pour éviter l'overshoot/rebond technique
+    """
     
     service = get_momentum_service()
     if not service:
@@ -717,6 +808,10 @@ def calculate_short_momentum():
     # Récupérer les paramètres Short
     nb_top = int(Settings.get('short_nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
     date_calcul = Settings.get('short_date_calcul', '')
+    
+    # Paramètres de la méthode momentum Short
+    lookback = int(Settings.get('short_lookback', 63))  # 63 jours = ~3 mois
+    skip_recent = int(Settings.get('short_skip_recent', 5))  # Exclure 5 derniers jours
     
     if not date_calcul:
         date_calcul = None
@@ -728,8 +823,8 @@ def calculate_short_momentum():
     if not panel:
         return jsonify({'error': 'Panel Short vide - ajoutez des actions'}), 400
     
-    # Calculer le momentum (même méthode, mais on triera différemment)
-    resultats = service.analyser_panel(panel, date_calcul)
+    # Calculer le momentum Short avec la nouvelle méthode
+    resultats = service.analyser_panel_short(panel, lookback, skip_recent, date_calcul)
     
     if not resultats['success']:
         return jsonify({
@@ -737,7 +832,7 @@ def calculate_short_momentum():
             'erreurs': resultats['erreurs']
         }), 500
     
-    # Générer les recommandations SHORT (inverser le tri)
+    # Générer les recommandations SHORT
     recommandations = generer_recommandations_short(resultats, nb_top)
     
     # Sauvegarder dans l'historique Short
@@ -770,8 +865,10 @@ def calculate_short_momentum():
 
 def generer_recommandations_short(resultats_analyse, nb_top):
     """
-    Génère les signaux Short (inverse du Long).
-    Trie par momentum CROISSANT (les plus fortes baisses en premier).
+    Génère les signaux Short avec la méthode momentum court terme.
+    
+    Méthode: Score = Perf(63j) - Perf(5j)
+    Trie par momentum CROISSANT (plus négatif = meilleur candidat short).
     """
     if not resultats_analyse['success']:
         return {
@@ -779,18 +876,13 @@ def generer_recommandations_short(resultats_analyse, nb_top):
             'nb_top': nb_top,
             'recommandations': [],
             'total_shorter': 0,
-            'erreurs': resultats_analyse['erreurs']
+            'erreurs': resultats_analyse['erreurs'],
+            'methode': resultats_analyse.get('methode', {})
         }
     
     resultats = resultats_analyse['resultats']
     
-    # IMPORTANT: Trier par momentum CROISSANT (les plus bas en premier)
-    resultats.sort(key=lambda x: x['momentum'], reverse=False)
-    
-    # Réattribuer les rangs après le nouveau tri
-    for i, r in enumerate(resultats):
-        r['rank'] = i + 1
-    
+    # Déjà trié par momentum croissant dans analyser_panel_short
     nb_actions = len(resultats)
     nb_selection = min(nb_top, nb_actions)
     
@@ -810,10 +902,12 @@ def generer_recommandations_short(resultats_analyse, nb_top):
         recommandations.append({
             'ticker': r['ticker'],
             'momentum': round(r['momentum'], 2),
+            'perf_lookback': r.get('perf_lookback', 0),
+            'perf_recent': r.get('perf_recent', 0),
+            'prix_actuel': r.get('prix_actuel', 0),
             'signal': signal,
             'allocation': allocation,
-            'rank': r['rank'],
-            'details_mensuels': r.get('details_mensuels', [])
+            'rank': r['rank']
         })
     
     return {
@@ -821,7 +915,8 @@ def generer_recommandations_short(resultats_analyse, nb_top):
         'nb_top': nb_top,
         'recommandations': recommandations,
         'total_shorter': nb_selection,
-        'erreurs': resultats_analyse['erreurs']
+        'erreurs': resultats_analyse['erreurs'],
+        'methode': resultats_analyse.get('methode', {})
     }
 
 
@@ -920,10 +1015,8 @@ def generate_short_panel():
     screener = get_finviz_screener_service()
     
     # Récupérer le seuil de performance (optionnel)
-    data = request.get_json(silent=True) or {}
-    min_perf = data.get('min_perf_year', -20)
-    
-    result = screener.screen_short(min_perf_year=min_perf)
+    # Les critères sont maintenant intégrés dans screen_short() avec fallback automatique
+    result = screener.screen_short()
     
     if not result['success']:
         return jsonify({
@@ -1054,6 +1147,279 @@ def job_mensuel():
                 print(f"❌ Erreur email: {result['message']}")
         else:
             print("⚠️ Service email non configuré")
+
+
+# =============================================================================
+# ROUTES - API OPTIONS (PUT & PUT SPREAD)
+# =============================================================================
+
+def get_options_service():
+    """Retourne une instance du service Options."""
+    return OptionsService(risk_free_rate=0.05)
+
+
+@app.route('/api/options/calculate', methods=['POST'])
+@require_admin
+def calculate_option():
+    """
+    Calcule un PUT ou PUT SPREAD pour un ticker donné.
+    
+    Body JSON:
+    {
+        "ticker": "AAPL",
+        "spot_price": 150.0,
+        "iv": 0.30,
+        "dte": 45,
+        "delta_long": -0.30,
+        "delta_short": -0.10,
+        "type": "spread"  // "put" ou "spread"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    
+    spot_price = data.get('spot_price')
+    iv = data.get('iv', 0.30)
+    dte = data.get('dte', 45)
+    delta_long = data.get('delta_long', -0.30)
+    delta_short = data.get('delta_short', -0.10)
+    option_type = data.get('type', 'spread')
+    
+    if not spot_price:
+        return jsonify({'error': 'spot_price requis'}), 400
+    
+    service = get_options_service()
+    T = dte / 365
+    r = service.risk_free_rate
+    
+    if option_type == 'spread':
+        result = service.calculate_put_spread(spot_price, T, r, iv, delta_long, delta_short)
+    else:
+        result = service.calculate_naked_put(spot_price, T, r, iv, delta_long)
+    
+    result['ticker'] = data.get('ticker', '')
+    result['expiration_date'] = service.get_expiration_date(dte)
+    
+    return jsonify({
+        'success': True,
+        'option': result
+    })
+
+
+@app.route('/api/options/recommendation/<ticker>', methods=['GET'])
+def get_option_recommendation(ticker):
+    """
+    Génère une recommandation d'option pour un ticker Short.
+    Utilise les données momentum existantes.
+    """
+    ticker = ticker.upper()
+    
+    # Récupérer les données du ticker depuis le dernier calcul Short
+    latest = ShortRecommendationHistory.query.order_by(
+        ShortRecommendationHistory.created_at.desc()
+    ).first()
+    
+    if not latest:
+        return jsonify({'error': 'Aucun calcul Short disponible'}), 404
+    
+    detail = ShortRecommendationDetail.query.filter_by(
+        history_id=latest.id, 
+        ticker=ticker
+    ).first()
+    
+    if not detail:
+        return jsonify({'error': f'{ticker} non trouvé dans les recommandations Short'}), 404
+    
+    # Récupérer le prix actuel via Tiingo
+    service = get_momentum_service()
+    if service:
+        df, err = service.recuperer_prix_journaliers(ticker, 100)
+        if df is not None and len(df) > 0:
+            spot_price = float(df['adjClose'].iloc[-1])
+            prices = df['adjClose'].tolist()
+            iv = estimate_historical_volatility(prices, min(30, len(prices) - 1))
+        else:
+            return jsonify({'error': f'Impossible de récupérer le prix de {ticker}'}), 500
+    else:
+        return jsonify({'error': 'API Tiingo non configurée'}), 500
+    
+    # Calculer les performances (adaptatif selon les données disponibles)
+    n = len(df)
+    lookback = min(63, n - 6)
+    skip = 5
+    
+    if n >= lookback + skip + 1:
+        prix_lookback = float(df['adjClose'].iloc[-(lookback + skip + 1)])
+        prix_skip = float(df['adjClose'].iloc[-(skip + 1)])
+        prix_0 = float(df['adjClose'].iloc[-1])
+        
+        perf_63_5 = ((prix_skip - prix_lookback) / prix_lookback) * 100
+        perf_5_0 = ((prix_0 - prix_skip) / prix_skip) * 100
+        momentum_score = perf_63_5
+    else:
+        perf_63_5 = 0
+        perf_5_0 = 0
+        momentum_score = detail.momentum
+    
+    # Générer la recommandation
+    options_service = get_options_service()
+    recommendation = options_service.build_option_recommendation(
+        ticker=ticker,
+        spot_price=spot_price,
+        iv=iv,
+        momentum_score=momentum_score,
+        perf_63_5=perf_63_5,
+        perf_5_0=perf_5_0,
+        dte_target=45
+    )
+    
+    return jsonify({
+        'success': True,
+        'recommendation': recommendation
+    })
+
+
+@app.route('/api/options/bulk-recommendations', methods=['GET'])
+def get_bulk_option_recommendations():
+    """
+    Génère des recommandations d'options pour tous les tickers Short signalés.
+    """
+    # Récupérer le dernier calcul Short
+    latest = ShortRecommendationHistory.query.order_by(
+        ShortRecommendationHistory.created_at.desc()
+    ).first()
+    
+    if not latest:
+        return jsonify({'error': 'Aucun calcul Short disponible'}), 404
+    
+    # Récupérer les tickers avec signal "Shorter"
+    details = ShortRecommendationDetail.query.filter_by(
+        history_id=latest.id,
+        signal='Shorter'
+    ).order_by(ShortRecommendationDetail.rank).all()
+    
+    if not details:
+        return jsonify({'error': 'Aucun signal Shorter trouvé'}), 404
+    
+    service = get_momentum_service()
+    options_service = get_options_service()
+    
+    recommendations = []
+    errors = []
+    
+    for detail in details:
+        ticker = detail.ticker
+        
+        try:
+            # Récupérer les prix (100 jours calendaires = ~70 jours de trading)
+            df, err = service.recuperer_prix_journaliers(ticker, 100)
+            if df is None or len(df) < 20:
+                errors.append({'ticker': ticker, 'error': err or 'Données insuffisantes'})
+                continue
+            
+            spot_price = float(df['adjClose'].iloc[-1])
+            prices = df['adjClose'].tolist()
+            iv = estimate_historical_volatility(prices, min(30, len(prices) - 1))
+            
+            # Performances (adaptatif selon les données disponibles)
+            n = len(df)
+            lookback = min(63, n - 6)  # Maximum 63 jours, sinon ce qu'on a
+            skip = 5
+            
+            if n >= lookback + skip + 1:
+                prix_lookback = float(df['adjClose'].iloc[-(lookback + skip + 1)])
+                prix_skip = float(df['adjClose'].iloc[-(skip + 1)])
+                prix_0 = float(df['adjClose'].iloc[-1])
+                
+                perf_63_5 = ((prix_skip - prix_lookback) / prix_lookback) * 100
+                perf_5_0 = ((prix_0 - prix_skip) / prix_skip) * 100
+                momentum_score = perf_63_5  # Momentum = perf sur la période (sans soustraction)
+            else:
+                # Fallback si pas assez de données
+                perf_63_5 = 0
+                perf_5_0 = 0
+                momentum_score = detail.momentum
+            
+            # Recommandation
+            rec = options_service.build_option_recommendation(
+                ticker=ticker,
+                spot_price=spot_price,
+                iv=iv,
+                momentum_score=momentum_score,
+                perf_63_5=perf_63_5,
+                perf_5_0=perf_5_0,
+                dte_target=45
+            )
+            rec['rank'] = detail.rank
+            recommendations.append(rec)
+            
+        except Exception as e:
+            errors.append({'ticker': ticker, 'error': str(e)})
+    
+    return jsonify({
+        'success': True,
+        'calculation_date': latest.calculation_date.strftime('%Y-%m-%d'),
+        'recommendations': recommendations,
+        'errors': errors,
+        'count': len(recommendations)
+    })
+
+
+@app.route('/api/options/quick-calc', methods=['POST'])
+def quick_option_calc():
+    """
+    Calcul rapide d'option sans authentification.
+    Pour le calculateur interactif.
+    """
+    data = request.get_json(silent=True) or {}
+    
+    spot_price = data.get('spot_price')
+    iv = data.get('iv', 30) / 100  # Convertir de % en décimal
+    dte = data.get('dte', 45)
+    strike_long = data.get('strike_long')
+    strike_short = data.get('strike_short')
+    
+    if not spot_price:
+        return jsonify({'error': 'spot_price requis'}), 400
+    
+    service = get_options_service()
+    T = dte / 365
+    r = service.risk_free_rate
+    
+    result = {
+        'spot_price': spot_price,
+        'iv_pct': round(iv * 100, 1),
+        'dte': dte,
+        'expiration_date': service.get_expiration_date(dte)
+    }
+    
+    if strike_long and strike_short:
+        # Calcul avec strikes manuels
+        price_long = service.put_price(spot_price, strike_long, T, r, iv)
+        price_short = service.put_price(spot_price, strike_short, T, r, iv)
+        net_debit = price_long - price_short
+        max_profit = (strike_long - strike_short) - net_debit
+        
+        result['type'] = 'PUT_SPREAD'
+        result['strike_long'] = strike_long
+        result['strike_short'] = strike_short
+        result['price_long'] = round(price_long, 2)
+        result['price_short'] = round(price_short, 2)
+        result['net_debit'] = round(net_debit, 2)
+        result['max_profit'] = round(max_profit, 2)
+        result['max_loss'] = round(net_debit, 2)
+        result['breakeven'] = round(strike_long - net_debit, 2)
+        result['risk_reward'] = round(max_profit / net_debit, 2) if net_debit > 0 else 0
+        result['delta_long'] = round(service.delta_put(spot_price, strike_long, T, r, iv), 3)
+        result['delta_short'] = round(service.delta_put(spot_price, strike_short, T, r, iv), 3)
+    else:
+        # Auto-calcul avec deltas par défaut
+        spread = service.calculate_put_spread(spot_price, T, r, iv)
+        result.update(spread)
+    
+    return jsonify({
+        'success': True,
+        'result': result
+    })
 
 
 # Initialiser le scheduler

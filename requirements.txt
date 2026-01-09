@@ -18,6 +18,9 @@ requests==2.31.0
 # Manipulation de données
 pandas==2.1.4
 
+# Calculs scientifiques (options Black-Scholes)
+scipy==1.11.4
+
 # Gestion des dates
 python-dateutil==2.8.2
 

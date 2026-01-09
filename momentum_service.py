@@ -322,4 +322,122 @@ class MomentumService:
                 'name': None,
                 'error': str(e)
             }
+    
+    # =========================================================================
+    # MÉTHODES POUR STRATÉGIE SHORT ET OPTIONS
+    # =========================================================================
+    
+    def recuperer_prix_journaliers(self, ticker, nb_jours=100):
+        """
+        Récupère les prix journaliers pour le calcul du momentum Short et Options.
+        
+        Args:
+            ticker: Symbole de l'action
+            nb_jours: Nombre de jours calendaires à récupérer (défaut: 100)
+        
+        Returns:
+            DataFrame pandas avec les prix journaliers ou (None, erreur)
+        """
+        date_fin = datetime.now()
+        date_debut = date_fin - relativedelta(days=nb_jours + 30)
+        
+        url = f"{self.base_url}/{ticker}/prices"
+        
+        params = {
+            "startDate": date_debut.strftime("%Y-%m-%d"),
+            "endDate": date_fin.strftime("%Y-%m-%d"),
+            "token": self.api_key,
+            "resampleFreq": "daily"
+        }
+        
+        try:
+            response = requests.get(url, params=params, headers={"Content-Type": "application/json"}, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if len(data) == 0:
+                    return None, "Aucune donnée disponible"
+                
+                df = pd.DataFrame(data)
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+                df = df.sort_index()
+                
+                return df, None
+                
+            elif response.status_code == 404:
+                return None, "Ticker non trouvé"
+            else:
+                return None, f"Erreur API: {response.status_code}"
+                
+        except Exception as e:
+            return None, str(e)
+    
+    def analyser_panel_short(self, panel_tickers, lookback=63, skip_recent=5, date_calcul=None):
+        """
+        Analyse le panel Short avec la méthode momentum court terme.
+        
+        Formule: Momentum = Perf(T-lookback à T-skip)
+        """
+        if date_calcul is None:
+            date_calcul = datetime.now()
+        elif isinstance(date_calcul, str):
+            date_calcul = datetime.strptime(date_calcul, "%Y-%m-%d")
+        
+        resultats = []
+        erreurs = []
+        
+        for ticker in panel_tickers:
+            ticker = ticker.upper().strip()
+            
+            df_prix, erreur = self.recuperer_prix_journaliers(ticker, lookback + 30)
+            
+            if erreur:
+                erreurs.append({'ticker': ticker, 'erreur': erreur})
+                continue
+            
+            if df_prix is None or len(df_prix) < lookback + skip_recent + 1:
+                erreurs.append({'ticker': ticker, 'erreur': 'Données insuffisantes'})
+                continue
+            
+            df = df_prix.sort_index()
+            
+            prix_lookback = df['adjClose'].iloc[-(lookback + skip_recent + 1)]
+            prix_skip = df['adjClose'].iloc[-(skip_recent + 1)]
+            prix_actuel = df['adjClose'].iloc[-1]
+            
+            if prix_lookback <= 0 or prix_skip <= 0:
+                erreurs.append({'ticker': ticker, 'erreur': 'Prix invalide'})
+                continue
+            
+            perf_lookback = ((prix_skip - prix_lookback) / prix_lookback) * 100
+            perf_recent = ((prix_actuel - prix_skip) / prix_skip) * 100
+            momentum = perf_lookback
+            
+            resultats.append({
+                'ticker': ticker,
+                'momentum': round(momentum, 2),
+                'perf_lookback': round(perf_lookback, 2),
+                'perf_recent': round(perf_recent, 2),
+                'prix_actuel': round(prix_actuel, 2)
+            })
+        
+        resultats.sort(key=lambda x: x['momentum'])
+        
+        for i, r in enumerate(resultats):
+            r['rank'] = i + 1
+        
+        return {
+            'success': len(resultats) > 0,
+            'date_calcul': date_calcul.strftime("%Y-%m-%d"),
+            'resultats': resultats,
+            'erreurs': erreurs,
+            'methode': {
+                'nom': 'Momentum Short Court Terme',
+                'formule': f'Perf(T-{lookback} à T-{skip_recent})',
+                'lookback': lookback,
+                'skip_recent': skip_recent
+            }
+        }
 

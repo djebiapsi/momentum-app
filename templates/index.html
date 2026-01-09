@@ -1323,8 +1323,12 @@
                         <span class="status-badge warning">Finviz</span>
                     </div>
                     <p class="info-box" style="margin-bottom: 14px;">
-                        Critères quantitatifs : MarketCap ≥ 2B$, ADV ≥ 5M$.<br>
-                        Score = log(MarketCap) × log(ADV). Top 50 par score.
+                        <strong>Critères de sélection :</strong><br>
+                        • MarketCap ≥ $10B (grandes capitalisations)<br>
+                        • Avg Volume ≥ 1M actions<br>
+                        • ADV ≥ $5M (Prix × Volume)<br><br>
+                        <strong>Score :</strong> log(MarketCap) × log(ADV)<br>
+                        <span style="color: var(--text-muted);">Top 50 par score décroissant</span>
                     </p>
                     <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
                         Générer 50 tickers
@@ -1346,6 +1350,15 @@
                         <span class="card-title">Panel actuel</span>
                         <span class="status-badge success" id="panel-count">0</span>
                     </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <button class="btn btn-secondary" onclick="exportPanel('long')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↓</span> Exporter
+                        </button>
+                        <button class="btn btn-secondary admin-only" onclick="triggerImportPanel('long')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↑</span> Importer
+                        </button>
+                        <input type="file" id="import-long-file" accept=".json" style="display: none;" onchange="importPanel('long', this)">
+                    </div>
                     <div id="panel-list">
                         <div class="empty-state">Chargement...</div>
                     </div>
@@ -1360,7 +1373,13 @@
                         <span class="status-badge warning">Finviz</span>
                     </div>
                     <p class="info-box" style="margin-bottom: 14px;">
-                        Sélectionne via Finviz les 50 actions en forte baisse : Market Cap ≥ 2B$, Volume ≥ 500K, Performance annuelle ≤ -20%.
+                        <strong>Critères de sélection (stricts) :</strong><br>
+                        • MarketCap ≥ $2B (shortabilité)<br>
+                        • Avg Volume ≥ 500K, Price ≥ $5<br>
+                        • Perf 1M ≤ -8%, Perf 3M ≤ -15%<br>
+                        • Price &lt; SMA50 &lt; SMA200 (Death Cross)<br><br>
+                        <strong>Score :</strong> (Perf_1M × 0.4) + (Perf_3M × 0.6)<br>
+                        <span style="color: var(--text-muted);">Top 50 scores les plus négatifs</span>
                     </p>
                     <button class="btn btn-short btn-block admin-only" onclick="confirmGenerateShortPanel()">
                         Générer 50 tickers
@@ -1381,6 +1400,15 @@
                     <div class="card-header">
                         <span class="card-title">Panel actuel</span>
                         <span class="status-badge error" id="short-panel-count">0</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <button class="btn btn-secondary" onclick="exportPanel('short')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↓</span> Exporter
+                        </button>
+                        <button class="btn btn-secondary admin-only" onclick="triggerImportPanel('short')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↑</span> Importer
+                        </button>
+                        <input type="file" id="import-short-file" accept=".json" style="display: none;" onchange="importPanel('short', this)">
                     </div>
                     <div id="short-panel-list">
                         <div class="empty-state">Aucun ticker</div>
@@ -1480,15 +1508,202 @@
                 </button>
             </div>
             
-            <!-- Info -->
-            <div class="section-title" style="margin-top: 24px;">Informations</div>
+            <!-- Méthodologie -->
+            <div class="section-title" style="margin-top: 24px;">Méthodologie</div>
             <div class="card">
-                <p class="info-box">
-                    <strong style="color: var(--text-primary);">Stratégie Momentum 12-1</strong><br><br>
-                    Le momentum est calculé sur les 12 derniers mois en excluant le mois le plus récent.<br><br>
-                    Mise à jour automatique programmée le 1er de chaque mois à 8h UTC.<br><br>
-                    <span style="color: var(--text-muted);">Information à titre indicatif uniquement.</span>
+                <div class="info-box" style="margin-bottom: 16px;">
+                    <strong style="color: var(--accent-long); font-size: 14px;">Stratégie Long : Momentum 12-1</strong><br><br>
+                    
+                    <strong>Sélection du panel (50 tickers) :</strong><br>
+                    • MarketCap ≥ $10B, Volume ≥ 1M, ADV ≥ $5M<br>
+                    • Score = log(MarketCap) × log(ADV)<br><br>
+                    
+                    <strong>Calcul du momentum :</strong><br>
+                    • Rendement sur 12 mois, <em>excluant le dernier mois</em><br>
+                    • Évite l'effet de "mean reversion" à très court terme<br>
+                    • Données : prix mensuels ajustés via Tiingo<br><br>
+                    
+                    <strong>Pourquoi exclure le dernier mois ?</strong><br>
+                    <span style="color: var(--text-secondary);">Recherche académique (Jegadeesh & Titman, 1993) : le dernier mois présente un effet de retour à la moyenne qui inverse souvent le momentum.</span>
+                </div>
+                
+                <div class="info-box" style="margin-bottom: 16px;">
+                    <strong style="color: var(--accent-short); font-size: 14px;">Stratégie Short : Momentum 63-5</strong><br><br>
+                    
+                    <strong>Sélection du panel (50 tickers) :</strong><br>
+                    • MarketCap ≥ $2B, Volume ≥ 500K, Price ≥ $5<br>
+                    • Perf 1M ≤ -8%, Perf 3M ≤ -15%<br>
+                    • Configuration technique : Price &lt; SMA50 &lt; SMA200 (Death Cross)<br><br>
+                    
+                    <strong>Calcul du momentum :</strong><br>
+                    • Score = Perf(63j) - Perf(5j)<br>
+                    • Lookback : 63 jours (~3 mois de trading)<br>
+                    • Exclut : 5 derniers jours (évite l'overshoot/rebond)<br>
+                    • Données : prix journaliers ajustés via Tiingo<br><br>
+                    
+                    <strong>Pourquoi exclure les 5 derniers jours ?</strong><br>
+                    <span style="color: var(--text-secondary);">Les actions qui chutent rapidement rebondissent souvent (overshoot). Cette méthode capture la vraie tendance baissière, sans être piégé par un rebond technique temporaire.</span>
+                </div>
+                
+                <div class="info-box">
+                    <strong style="color: var(--text-primary);">Mise à jour automatique</strong><br>
+                    Programmée le 1er de chaque mois à 8h UTC.<br><br>
+                    <span style="color: var(--text-muted);">⚠️ Information à titre indicatif uniquement. Le short selling comporte des risques de pertes illimitées.</span>
+                </div>
+            </div>
+            
+            <!-- Avertissements -->
+            <div class="section-title" style="margin-top: 24px;">Avertissements</div>
+            <div class="card">
+                <p class="info-box" style="border-left: 3px solid var(--accent-short);">
+                    <strong style="color: var(--accent-short);">Risques du Short Selling</strong><br><br>
+                    • <strong>Pertes illimitées</strong> : contrairement au long, une position short peut perdre plus de 100%<br>
+                    • <strong>Short squeeze</strong> : si trop d'investisseurs shortent, le prix peut exploser<br>
+                    • <strong>Coût d'emprunt</strong> : frais de financement quotidiens<br>
+                    • <strong>Rappel des titres</strong> : le prêteur peut rappeler à tout moment<br><br>
+                    <span style="color: var(--text-muted);">Utilisez une gestion de risque stricte avec des stop-loss définis.</span>
                 </p>
+            </div>
+        </div>
+        
+        <!-- PAGE: Options (Put Spread Calculator) -->
+        <div id="page-options" class="page">
+            <div class="section-title">Calculateur Put Spread</div>
+            
+            <!-- Calculateur interactif -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Paramètres</span>
+                    <span class="status-badge warning">Black-Scholes</span>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Prix du sous-jacent ($)</label>
+                    <input type="number" class="form-input" id="opt-spot" placeholder="150.00" step="0.01">
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="form-group">
+                        <label class="form-label">Volatilité IV (%)</label>
+                        <input type="number" class="form-input" id="opt-iv" placeholder="30" value="30" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">DTE (jours)</label>
+                        <input type="number" class="form-input" id="opt-dte" placeholder="45" value="45" step="1">
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="form-group">
+                        <label class="form-label">Strike Long (PUT acheté)</label>
+                        <input type="number" class="form-input" id="opt-strike-long" placeholder="Auto" step="0.5">
+                        <p class="form-hint">Delta cible: -0.30</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Strike Short (PUT vendu)</label>
+                        <input type="number" class="form-input" id="opt-strike-short" placeholder="Auto" step="0.5">
+                        <p class="form-hint">Delta cible: -0.10</p>
+                    </div>
+                </div>
+                
+                <button class="btn btn-short btn-block" onclick="calculatePutSpread()">
+                    Calculer le Spread
+                </button>
+            </div>
+            
+            <!-- Résultats du calcul -->
+            <div class="card" id="options-result" style="display: none;">
+                <div class="card-header">
+                    <span class="card-title">Résultat</span>
+                    <span class="status-badge" id="opt-result-type">PUT SPREAD</span>
+                </div>
+                
+                <div class="info-box" style="margin-bottom: 16px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div>
+                            <strong style="color: var(--accent-short);">PUT Long (acheté)</strong><br>
+                            Strike: <span id="res-strike-long">-</span><br>
+                            Prix: <span id="res-price-long">-</span><br>
+                            Delta: <span id="res-delta-long">-</span>
+                        </div>
+                        <div>
+                            <strong style="color: var(--accent-long);">PUT Short (vendu)</strong><br>
+                            Strike: <span id="res-strike-short">-</span><br>
+                            Prix: <span id="res-price-short">-</span><br>
+                            Delta: <span id="res-delta-short">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px;">
+                    <div style="text-align: center; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-md);">
+                        <div style="font-size: 20px; font-weight: 600; color: var(--accent-short);" id="res-net-debit">$0.00</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Prime payée</div>
+                    </div>
+                    <div style="text-align: center; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-md);">
+                        <div style="font-size: 20px; font-weight: 600; color: var(--accent-long);" id="res-max-profit">$0.00</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Profit max</div>
+                    </div>
+                    <div style="text-align: center; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-md);">
+                        <div style="font-size: 20px; font-weight: 600; color: var(--text-primary);" id="res-risk-reward">0:1</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Risk/Reward</div>
+                    </div>
+                </div>
+                
+                <div class="info-box">
+                    <strong>Détails du trade</strong><br><br>
+                    • Breakeven: <span id="res-breakeven">-</span><br>
+                    • Perte max: <span id="res-max-loss">-</span> (prime payée)<br>
+                    • Expiration: <span id="res-expiration">-</span><br>
+                    • DTE: <span id="res-dte">-</span> jours
+                </div>
+            </div>
+            
+            <!-- Recommandations automatiques -->
+            <div class="section-title" style="margin-top: 24px;">Recommandations Options</div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Basé sur vos signaux Short</span>
+                </div>
+                <p class="info-box" style="margin-bottom: 14px;">
+                    <strong>Stratégie Options Short Momentum</strong><br><br>
+                    • DTE cible: 30-60 jours<br>
+                    • Delta PUT Long: -0.25 à -0.40<br>
+                    • Delta PUT Short: -0.10<br>
+                    • Conditions: Perf 63j ≤ -15%, Perf 5j ≤ +5%
+                </p>
+                <button class="btn btn-secondary btn-block admin-only" onclick="loadOptionRecommendations()">
+                    Charger les recommandations
+                </button>
+            </div>
+            
+            <div id="options-recommendations-list"></div>
+            
+            <!-- Règles de la stratégie -->
+            <div class="section-title" style="margin-top: 24px;">Règles de Trading</div>
+            <div class="card">
+                <div class="info-box" style="border-left: 3px solid var(--accent-long);">
+                    <strong style="color: var(--accent-long);">Conditions d'entrée</strong><br><br>
+                    • RSI(14) entre 40 et 55<br>
+                    • Pullback ≤ 50% de l'impulsion baissière<br>
+                    • Pas de gap haussier > 3%
+                </div>
+                
+                <div class="info-box" style="border-left: 3px solid var(--accent-short); margin-top: 12px;">
+                    <strong style="color: var(--accent-short);">Gestion de position</strong><br><br>
+                    • Take Profit: +70% à +100% de la prime<br>
+                    • Stop Loss: -50% de la prime<br>
+                    • Time Stop: Sortie si DTE ≤ 14 jours
+                </div>
+                
+                <div class="info-box" style="border-left: 3px solid var(--text-muted); margin-top: 12px;">
+                    <strong>Sorties anticipées</strong><br><br>
+                    Sortie immédiate si:<br>
+                    • Price > SMA50<br>
+                    • RSI > 60<br>
+                    • Momentum Score devient positif
+                </div>
             </div>
         </div>
         
@@ -1508,9 +1723,9 @@
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
             Panel
         </button>
-        <button class="nav-tab" onclick="showPage('history')">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            Archives
+        <button class="nav-tab" onclick="showPage('options')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+            Options
         </button>
         <button class="nav-tab" onclick="showPage('settings')">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
@@ -1774,9 +1989,10 @@
                 <div style="text-align: center; padding: 20px;">
                     <h3 style="margin-bottom: 16px;">Générer panel Long</h3>
                     <p class="info-box" style="margin-bottom: 16px; text-align: left;">
-                        Critères du screening via Finviz :<br><br>
-                        • MarketCap ≥ 2B$<br>
-                        • ADV ≥ 5M$ (Prix × Volume)<br>
+                        <strong>Critères du screening via Finviz :</strong><br><br>
+                        • MarketCap ≥ $10B (grandes capitalisations)<br>
+                        • Avg Volume ≥ 1M actions<br>
+                        • ADV ≥ $5M (Prix × Volume)<br>
                         • Score = log(MarketCap) × log(ADV)<br>
                         • Top 50 par score décroissant
                     </p>
@@ -2349,6 +2565,58 @@
         }
         
         // =================================================================
+        // EXPORT / IMPORT PANEL
+        // =================================================================
+        
+        function exportPanel(strategy) {
+            window.location.href = `/api/panel/export?strategy=${strategy}`;
+        }
+        
+        function triggerImportPanel(strategy) {
+            document.getElementById(`import-${strategy}-file`).click();
+        }
+        
+        async function importPanel(strategy, input) {
+            const file = input.files[0];
+            if (!file) return;
+            
+            try {
+                const text = await file.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    showToast('Fichier JSON invalide', 'error');
+                    input.value = '';
+                    return;
+                }
+                
+                // S'assurer que le strategy est correct
+                data.strategy = strategy;
+                
+                const response = await api('/panel/import', {
+                    method: 'POST',
+                    body: JSON.stringify(data)
+                });
+                
+                if (response && response.success) {
+                    showToast(response.message);
+                    if (strategy === 'long') {
+                        loadPanel();
+                    } else {
+                        loadShortPanel();
+                    }
+                } else {
+                    showToast(response?.error || 'Erreur import', 'error');
+                }
+            } catch (e) {
+                showToast('Erreur lecture fichier', 'error');
+            }
+            
+            input.value = '';
+        }
+        
+        // =================================================================
         // HISTORY
         // =================================================================
         
@@ -2566,9 +2834,15 @@
             body.innerHTML = `
                 <div style="text-align: center; padding: 20px;">
                     <h3 style="margin-bottom: 16px;">Générer panel Short</h3>
-                    <p class="info-box" style="margin-bottom: 16px;">
-                        Filtrage via Finviz : Market Cap ≥ 2B$, Volume ≥ 500K, Performance annuelle ≤ -20%.<br>
-                        Les 50 plus fortes baisses seront sélectionnées.
+                    <p class="info-box" style="margin-bottom: 16px; text-align: left;">
+                        <strong>Critères stricts via Finviz :</strong><br><br>
+                        • MarketCap ≥ $2B (shortabilité)<br>
+                        • Avg Volume ≥ 500K, Price ≥ $5<br>
+                        • Perf 1M ≤ -8%, Perf 3M ≤ -15%<br>
+                        • Price &lt; SMA50, Price &lt; SMA200<br>
+                        • SMA50 &lt; SMA200 (Death Cross)<br><br>
+                        <strong>Score :</strong> (Perf_1M × 0.4) + (Perf_3M × 0.6)<br>
+                        <span style="color: var(--text-muted);">Les 50 scores les plus négatifs sont sélectionnés.</span>
                     </p>
                     <p style="color: var(--accent-long); font-size: 12px; margin-bottom: 20px;">
                         0 appel API Tiingo consommé
@@ -3044,6 +3318,154 @@
             } else {
                 showToast(data?.error || 'Erreur', 'error');
             }
+        }
+        
+        // =================================================================
+        // OPTIONS (PUT SPREAD CALCULATOR)
+        // =================================================================
+        
+        async function calculatePutSpread() {
+            const spot = parseFloat(document.getElementById('opt-spot').value);
+            const iv = parseFloat(document.getElementById('opt-iv').value) || 30;
+            const dte = parseInt(document.getElementById('opt-dte').value) || 45;
+            const strikeLong = parseFloat(document.getElementById('opt-strike-long').value) || null;
+            const strikeShort = parseFloat(document.getElementById('opt-strike-short').value) || null;
+            
+            if (!spot || spot <= 0) {
+                showToast('Entrez un prix valide', 'error');
+                return;
+            }
+            
+            const payload = {
+                spot_price: spot,
+                iv: iv,
+                dte: dte
+            };
+            
+            if (strikeLong) payload.strike_long = strikeLong;
+            if (strikeShort) payload.strike_short = strikeShort;
+            
+            const data = await api('/options/quick-calc', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            
+            if (data && data.success) {
+                displayOptionsResult(data.result);
+            } else {
+                showToast(data?.error || 'Erreur de calcul', 'error');
+            }
+        }
+        
+        function displayOptionsResult(result) {
+            document.getElementById('options-result').style.display = 'block';
+            
+            // Type
+            document.getElementById('opt-result-type').textContent = result.type || 'PUT SPREAD';
+            
+            // Strikes et prix
+            document.getElementById('res-strike-long').textContent = '$' + result.strike_long;
+            document.getElementById('res-strike-short').textContent = '$' + result.strike_short;
+            document.getElementById('res-price-long').textContent = '$' + result.price_long;
+            document.getElementById('res-price-short').textContent = '$' + result.price_short;
+            document.getElementById('res-delta-long').textContent = result.delta_long || result.delta_long_actual || '-';
+            document.getElementById('res-delta-short').textContent = result.delta_short || result.delta_short_actual || '-';
+            
+            // Métriques principales
+            document.getElementById('res-net-debit').textContent = '$' + result.net_debit;
+            document.getElementById('res-max-profit').textContent = '$' + result.max_profit;
+            
+            const rr = result.risk_reward || result.risk_reward_ratio || 0;
+            document.getElementById('res-risk-reward').textContent = rr.toFixed(1) + ':1';
+            
+            // Détails
+            document.getElementById('res-breakeven').textContent = '$' + result.breakeven;
+            document.getElementById('res-max-loss').textContent = '$' + result.max_loss;
+            document.getElementById('res-expiration').textContent = result.expiration_date || '-';
+            document.getElementById('res-dte').textContent = result.dte || '-';
+        }
+        
+        async function loadOptionRecommendations() {
+            const container = document.getElementById('options-recommendations-list');
+            container.innerHTML = '<div class="card"><div class="empty-state">Chargement...</div></div>';
+            
+            const data = await api('/options/bulk-recommendations');
+            
+            if (!data || !data.success) {
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="empty-state" style="color: var(--accent-short);">
+                            ${data?.error || 'Erreur lors du chargement'}
+                        </div>
+                    </div>`;
+                return;
+            }
+            
+            if (!data.recommendations || data.recommendations.length === 0) {
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="empty-state">
+                            Aucune recommandation disponible.<br>
+                            <span style="font-size: 12px;">Lancez d'abord un calcul Short.</span>
+                        </div>
+                    </div>`;
+                return;
+            }
+            
+            let html = data.recommendations.map(rec => `
+                <div class="card" style="margin-bottom: 12px;">
+                    <div class="card-header">
+                        <span class="card-title" style="font-size: 16px;">${rec.ticker}</span>
+                        <span class="status-badge ${rec.all_conditions_met ? 'success' : 'warning'}">
+                            ${rec.signal}
+                        </span>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                        <div style="font-size: 13px;">
+                            <strong>Momentum</strong>: ${rec.momentum_score}%<br>
+                            <span style="color: var(--text-muted);">Perf 63-5j: ${rec.perf_63_5}%</span><br>
+                            <span style="color: var(--text-muted);">Perf 5j: ${rec.perf_5_0}%</span>
+                        </div>
+                        <div style="font-size: 13px;">
+                            <strong>Prix</strong>: $${rec.spot_price}<br>
+                            <span style="color: var(--text-muted);">IV: ${rec.iv_pct}%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="info-box" style="margin-bottom: 12px;">
+                        <strong style="color: var(--accent-short);">PUT SPREAD recommandé</strong><br>
+                        Strike Long: $${rec.put_spread.strike_long} (Δ ${rec.put_spread.delta_long_actual})<br>
+                        Strike Short: $${rec.put_spread.strike_short} (Δ ${rec.put_spread.delta_short_actual})<br>
+                        Prime: <strong>$${rec.put_spread.net_debit}</strong> | 
+                        Profit max: <strong style="color: var(--accent-long);">$${rec.put_spread.max_profit}</strong> |
+                        R/R: ${rec.put_spread.risk_reward_ratio}:1
+                    </div>
+                    
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-secondary" style="flex: 1;" onclick="prefillCalculator('${rec.ticker}', ${rec.spot_price}, ${rec.iv_pct}, ${rec.put_spread.strike_long}, ${rec.put_spread.strike_short})">
+                            Éditer dans calculateur
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+            
+            container.innerHTML = html;
+        }
+        
+        function prefillCalculator(ticker, spot, iv, strikeLong, strikeShort) {
+            document.getElementById('opt-spot').value = spot;
+            document.getElementById('opt-iv').value = iv;
+            document.getElementById('opt-strike-long').value = strikeLong;
+            document.getElementById('opt-strike-short').value = strikeShort;
+            
+            // Scroll vers le calculateur
+            document.querySelector('#page-options').scrollTo({ top: 0, behavior: 'smooth' });
+            
+            // Calculer automatiquement
+            calculatePutSpread();
+            
+            showToast(`${ticker} chargé dans le calculateur`);
         }
         
         // =================================================================

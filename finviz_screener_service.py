@@ -176,17 +176,23 @@ class FinvizScreenerService:
             return self._error(f"Erreur: {str(e)}")
     
     # =========================================================================
-    # STRATÉGIE SHORT - Basée sur Performance négative
+    # STRATÉGIE SHORT - Critères techniques stricts
     # =========================================================================
     
-    def screen_short(self, min_perf_year=-20, progress_callback=None):
+    def screen_short(self, progress_callback=None):
         """
-        Screening pour stratégie Short (actions en forte baisse).
+        Screening pour stratégie Short avec critères techniques stricts.
         
-        Critères:
-        - MarketCap >= $2B (pour shortabilité)
-        - Volume >= 500K
-        - Performance Year <= min_perf_year%
+        Critères de sélection:
+        ----------------------
+        1. Market Cap ≥ 2B$ (shortabilité, liquidité emprunts)
+        2. Avg Volume ≥ 500K (facilité d'exécution)
+        3. Price ≥ 5$ (évite les penny stocks)
+        4. Perf Month ≤ -8% (momentum négatif court terme)
+        5. Perf Quarter ≤ -15% (momentum négatif moyen terme)
+        6. Price < SMA50 (tendance baissière court terme)
+        7. Price < SMA200 (tendance baissière long terme)
+        8. SMA50 < SMA200 (death cross confirmé)
         
         Returns:
             dict: {success, tickers, stats, error}
@@ -197,96 +203,189 @@ class FinvizScreenerService:
         
         try:
             # =================================================================
-            # ÉTAPE 1: Configuration Finviz mode Performance
+            # ÉTAPE 1: Configuration Finviz avec critères techniques
             # =================================================================
-            report(10, "Configuration des filtres Finviz...")
+            report(10, "Configuration des filtres techniques Finviz...")
             
-            fperf = Performance()
+            from finvizfinance.screener.technical import Technical
+            ftech = Technical()
             
-            # Filtres stricts pour rapidité
+            # Critères stricts pour Short
             filters_dict = {
+                # Liquidité et shortabilité
                 'Market Cap.': '+Mid (over $2bln)',
                 'Average Volume': 'Over 500K',
+                'Price': 'Over $5',
+                
+                # Momentum négatif
+                'Performance': 'Month Down',           # Perf mensuelle négative
+                'Performance 2': 'Quarter Down',       # Perf trimestrielle négative
+                
+                # Configuration technique baissière
+                '50-Day Simple Moving Average': 'Price below SMA50',
+                '200-Day Simple Moving Average': 'Price below SMA200',
+                '20-Day Simple Moving Average': 'SMA50 below SMA200',  # Death Cross
             }
             
-            # Filtre de performance selon le seuil
-            if min_perf_year <= -50:
-                filters_dict['Performance'] = 'Year -50%'
-            elif min_perf_year <= -30:
-                filters_dict['Performance'] = 'Year -30%'
-            elif min_perf_year <= -20:
-                filters_dict['Performance'] = 'Year -20%'
-            elif min_perf_year <= -10:
-                filters_dict['Performance'] = 'Year -10%'
-            else:
-                filters_dict['Performance'] = 'Year Down'
-            
             report(20, "Envoi de la requête à Finviz...")
-            fperf.set_filter(filters_dict=filters_dict)
+            ftech.set_filter(filters_dict=filters_dict)
             
             report(40, "Récupération des données...")
-            # Limiter à 100 résultats pour éviter timeout
-            df = fperf.screener_view(
-                order='Performance (Year)',
-                ascend=True,      # Croissant = pires en premier
-                limit=100,
+            df = ftech.screener_view(
+                order='Performance (Quarter)',
+                ascend=True,
+                limit=150,
                 verbose=0,
-                sleep_sec=0.05  # Réduit pour rapidité
+                sleep_sec=0.05
             )
             
             if df is None or df.empty:
-                return self._error("Aucune action trouvée avec ces critères")
+                # Fallback avec critères moins stricts
+                report(50, "Critères stricts: 0 résultat, essai critères relaxés...")
+                return self._screen_short_fallback(progress_callback)
             
-            report(60, f"{len(df)} actions récupérées")
+            report(60, f"{len(df)} actions trouvées avec critères stricts")
             
             # =================================================================
-            # ÉTAPE 2: Parser la performance et trier
+            # ÉTAPE 2: Parser et scorer les résultats
             # =================================================================
-            report(70, "Traitement des données...")
+            report(70, "Calcul des scores...")
             
-            # Parser la perf Year
             def parse_perf(val):
                 s = str(val).strip()
                 if '%' in s:
                     return float(s.replace('%', ''))
-                else:
-                    return float(s) * 100  # Décimal -> %
+                try:
+                    return float(s) * 100
+                except:
+                    return 0
             
-            if 'Perf Year' in df.columns:
-                df['Perf_Num'] = df['Perf Year'].apply(parse_perf)
-            elif 'Perf YTD' in df.columns:
-                df['Perf_Num'] = df['Perf YTD'].apply(parse_perf)
-            else:
-                perf_cols = [c for c in df.columns if 'perf' in c.lower()]
-                if perf_cols:
-                    df['Perf_Num'] = df[perf_cols[0]].apply(parse_perf)
-                else:
-                    return self._error(f"Colonnes: {list(df.columns)}")
+            scored = []
+            for _, row in df.iterrows():
+                try:
+                    ticker = row.get('Ticker', '')
+                    if not ticker:
+                        continue
+                    
+                    # Parser les performances
+                    perf_month = parse_perf(row.get('Perf Month', row.get('Perf M', 0)))
+                    perf_quarter = parse_perf(row.get('Perf Quart', row.get('Perf Q', 0)))
+                    
+                    # Score composite : plus c'est négatif, mieux c'est pour short
+                    score = (perf_month * 0.4) + (perf_quarter * 0.6)
+                    
+                    scored.append({
+                        'ticker': ticker,
+                        'company': row.get('Company', ''),
+                        'sector': row.get('Sector', ''),
+                        'price': self._parse_float(row.get('Price', 0)),
+                        'change': str(row.get('Change', '-')),
+                        'perf_month': round(perf_month, 2),
+                        'perf_quarter': round(perf_quarter, 2),
+                        'score': round(score, 2),
+                        'volume': self._format_number(row.get('Volume', 0)),
+                    })
+                except Exception:
+                    continue
             
-            # Trier par perf croissante (pires en premier)
-            df = df.sort_values(by='Perf_Num', ascending=True)
+            if not scored:
+                return self._screen_short_fallback(progress_callback)
             
             # =================================================================
-            # ÉTAPE 3: Sélection des 50 premiers
+            # ÉTAPE 3: Sélection des 50 meilleurs candidats Short
             # =================================================================
-            report(85, "Sélection des 50 plus fortes baisses...")
+            report(85, "Sélection des 50 meilleurs candidats...")
             
-            top_losers = df.head(self.target_count)
+            # Trier par score croissant (plus négatif = meilleur pour short)
+            scored.sort(key=lambda x: x['score'])
+            top_50 = scored[:self.target_count]
+            
+            for i, t in enumerate(top_50):
+                t['rank'] = i + 1
+            
+            report(100, f"Terminé - {len(top_50)} actions sélectionnées")
+            
+            return {
+                'success': True,
+                'tickers': top_50,
+                'stats': {
+                    'total_found': len(df),
+                    'qualified': len(scored),
+                    'selected': len(top_50),
+                    'criteria': 'Stricts (Death Cross + Momentum)',
+                    'worst_score': f"{top_50[0]['score']}%" if top_50 else '-',
+                    'best_score': f"{top_50[-1]['score']}%" if top_50 else '-',
+                    'generated_at': datetime.now().isoformat()
+                },
+                'error': None
+            }
+            
+        except Exception as e:
+            # En cas d'erreur, essayer le fallback
+            return self._screen_short_fallback(progress_callback)
+    
+    def _screen_short_fallback(self, progress_callback=None):
+        """
+        Fallback avec critères moins stricts si les critères stricts
+        ne retournent aucun résultat.
+        """
+        def report(pct, msg):
+            if progress_callback:
+                progress_callback(pct, 100, msg)
+        
+        try:
+            report(55, "Utilisation des critères relaxés...")
+            
+            fperf = Performance()
+            
+            filters_dict = {
+                'Market Cap.': '+Mid (over $2bln)',
+                'Average Volume': 'Over 500K',
+                'Price': 'Over $5',
+                'Performance': 'Quarter -10%',
+            }
+            
+            fperf.set_filter(filters_dict=filters_dict)
+            
+            df = fperf.screener_view(
+                order='Performance (Quarter)',
+                ascend=True,
+                limit=100,
+                verbose=0,
+                sleep_sec=0.05
+            )
+            
+            if df is None or df.empty:
+                return self._error("Aucune action ne correspond aux critères Short")
+            
+            report(75, f"{len(df)} actions trouvées (critères relaxés)")
+            
+            def parse_perf(val):
+                s = str(val).strip()
+                if '%' in s:
+                    return float(s.replace('%', ''))
+                try:
+                    return float(s) * 100
+                except:
+                    return 0
             
             tickers = []
-            for i, row in enumerate(top_losers.itertuples()):
+            for i, row in enumerate(df.head(self.target_count).itertuples()):
+                perf_q = parse_perf(getattr(row, 'Perf_Quart', getattr(row, 'Perf_Q', 0)))
                 tickers.append({
                     'ticker': row.Ticker if hasattr(row, 'Ticker') else str(row[1]),
                     'company': '',
                     'sector': '',
                     'price': self._parse_float(getattr(row, 'Price', 0)),
                     'change': str(getattr(row, 'Change', '-')),
-                    'perf_year': round(row.Perf_Num, 2),
+                    'perf_month': 0,
+                    'perf_quarter': round(perf_q, 2),
+                    'score': round(perf_q, 2),
                     'volume': self._format_number(getattr(row, 'Volume', 0)),
                     'rank': i + 1
                 })
             
-            report(100, f"Terminé - {len(tickers)} actions sélectionnées")
+            report(100, f"Terminé - {len(tickers)} actions (critères relaxés)")
             
             return {
                 'success': True,
@@ -294,16 +393,15 @@ class FinvizScreenerService:
                 'stats': {
                     'total_found': len(df),
                     'selected': len(tickers),
-                    'worst_perf': f"{tickers[0]['perf_year']}%" if tickers else '-',
-                    'best_perf': f"{tickers[-1]['perf_year']}%" if tickers else '-',
-                    'min_perf_filter': f"{min_perf_year}%",
+                    'criteria': 'Relaxés (Perf Quarter -10%)',
+                    'worst_score': f"{tickers[0]['score']}%" if tickers else '-',
                     'generated_at': datetime.now().isoformat()
                 },
                 'error': None
             }
             
         except Exception as e:
-            return self._error(f"Erreur: {str(e)}")
+            return self._error(f"Erreur fallback: {str(e)}")
     
     # =========================================================================
     # HELPERS
