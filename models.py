@@ -199,6 +199,86 @@ class ShortRecommendationDetail(db.Model):
         }
 
 
+class OptionRecommendation(db.Model):
+    """
+    Table des recommandations d'options (PUT/PUT SPREAD).
+    Stocke les dernières recommandations calculées.
+    """
+    __tablename__ = 'option_recommendations'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    ticker = db.Column(db.String(10), nullable=False)
+    calculation_date = db.Column(db.Date, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Données du sous-jacent
+    spot_price = db.Column(db.Float)
+    iv_pct = db.Column(db.Float)
+    
+    # Momentum
+    momentum_score = db.Column(db.Float)
+    perf_63_5 = db.Column(db.Float)
+    perf_5_0 = db.Column(db.Float)
+    
+    # Signal
+    signal = db.Column(db.String(50))
+    all_conditions_met = db.Column(db.Boolean, default=False)
+    recommended_strategy = db.Column(db.String(20))
+    rank = db.Column(db.Integer)
+    
+    # PUT simple
+    put_strike = db.Column(db.Float)
+    put_price = db.Column(db.Float)
+    put_delta = db.Column(db.Float)
+    
+    # PUT SPREAD
+    spread_strike_long = db.Column(db.Float)
+    spread_strike_short = db.Column(db.Float)
+    spread_net_debit = db.Column(db.Float)
+    spread_max_profit = db.Column(db.Float)
+    spread_breakeven = db.Column(db.Float)
+    spread_risk_reward = db.Column(db.Float)
+    spread_delta_long = db.Column(db.Float)
+    spread_delta_short = db.Column(db.Float)
+    
+    # Expiration
+    dte = db.Column(db.Integer)
+    expiration_date = db.Column(db.String(20))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'ticker': self.ticker,
+            'calculation_date': self.calculation_date.isoformat() if self.calculation_date else None,
+            'spot_price': self.spot_price,
+            'iv_pct': self.iv_pct,
+            'momentum_score': self.momentum_score,
+            'perf_63_5': self.perf_63_5,
+            'perf_5_0': self.perf_5_0,
+            'signal': self.signal,
+            'all_conditions_met': self.all_conditions_met,
+            'recommended_strategy': self.recommended_strategy,
+            'rank': self.rank,
+            'put': {
+                'strike': self.put_strike,
+                'price': self.put_price,
+                'delta': self.put_delta
+            },
+            'put_spread': {
+                'strike_long': self.spread_strike_long,
+                'strike_short': self.spread_strike_short,
+                'net_debit': self.spread_net_debit,
+                'max_profit': self.spread_max_profit,
+                'breakeven': self.spread_breakeven,
+                'risk_reward_ratio': self.spread_risk_reward,
+                'delta_long_actual': self.spread_delta_long,
+                'delta_short_actual': self.spread_delta_short
+            },
+            'dte': self.dte,
+            'expiration_date': self.expiration_date
+        }
+
+
 def init_db(app, default_panel):
     """
     Initialise la base de données et charge les valeurs par défaut.

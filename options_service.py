@@ -144,11 +144,11 @@ class OptionsService:
         # Recherche binaire pour trouver le strike
         if option_type == 'put':
             # Pour un PUT, delta est négatif, strike plus bas = delta plus négatif
-            low_strike = S * 0.5
-            high_strike = S * 1.5
+            low_strike = S * math.exp(-3 * sigma * math.sqrt(T))
+            high_strike = S
         else:
-            low_strike = S * 0.5
-            high_strike = S * 1.5
+            low_strike = S
+            high_strike = S * math.exp(3 * sigma * math.sqrt(T))
         
         for _ in range(50):  # Iterations max
             mid_strike = (low_strike + high_strike) / 2
@@ -197,7 +197,8 @@ class OptionsService:
         
         # S'assurer que strike_long > strike_short (PUT spread correct)
         if strike_long <= strike_short:
-            strike_long, strike_short = strike_short + 1, strike_long - 1
+            raise ValueError("Invalid put spread: long strike must be above short strike")
+
         
         # Calculer les prix
         price_long = self.put_price(S, strike_long, T, r, sigma)
@@ -295,7 +296,7 @@ class OptionsService:
     # =========================================================================
     
     def build_option_recommendation(self, ticker, spot_price, iv, momentum_score, 
-                                     perf_63_5, perf_5_0, dte_target=45):
+                                     perf_63_5, perf_5_0, dte_target=45, iv_rank=None):
         """
         Construit une recommandation d'option selon la stratégie.
         
@@ -307,6 +308,7 @@ class OptionsService:
             perf_63_5: Performance T-63 à T-5
             perf_5_0: Performance T-5 à T
             dte_target: Jours jusqu'à expiration cible
+            iv_rank: IV Rank (0-100), None si non disponible
         
         Returns:
             dict: Recommandation complète ou None si conditions non remplies
@@ -314,35 +316,61 @@ class OptionsService:
         T = dte_target / 365
         r = self.risk_free_rate
         
-        # Vérifier conditions minimales
-        conditions = {
-            'perf_63_5_ok': perf_63_5 <= -15,
-            'perf_5_0_ok': perf_5_0 <= 5,
-            'iv_rank_ok': True,  # À implémenter avec données réelles
+        # Conditions hiérarchisées : hard (bloquantes) vs soft (contextuelles)
+        hard_conditions = {
+            'major_downtrend': perf_63_5 <= -15,
         }
         
-        all_conditions_met = all(conditions.values())
+        # Si iv_rank n'est pas fourni, on ne peut pas le valider strictement
+        # On utilise une valeur par défaut conservatrice (100 = toujours échoue)
+        iv_rank_value = iv_rank if iv_rank is not None else 100
+        
+        soft_conditions = {
+            'no_short_squeeze': perf_5_0 <= 5,
+            'iv_rank_ok': iv_rank_value <= 60,
+        }
+        
+        # Vérification des conditions hard (toutes doivent être vraies)
+        hard_ok = all(hard_conditions.values())
+        
+        # Score des conditions soft (au moins 66% doivent être vraies)
+        soft_score = sum(soft_conditions.values()) / len(soft_conditions)
+        soft_threshold = 0.66
+        
+        # Conditions d'entrée validées
+        entry_conditions_met = hard_ok and soft_score >= soft_threshold
         
         # Calculer PUT et PUT SPREAD
         put_data = self.calculate_naked_put(spot_price, T, r, iv, delta_target=-0.30)
         spread_data = self.calculate_put_spread(spot_price, T, r, iv, 
                                                  delta_long=-0.30, delta_short=-0.10)
         
-        # Recommander PUT SPREAD si spread assez large, sinon PUT simple
-        spread_width = spread_data['strike_long'] - spread_data['strike_short']
-        recommend_spread = spread_width >= spot_price * 0.05  # Au moins 5% d'écart
+        # Lier les conditions à la stratégie PUT vs PUT SPREAD
+        # IV élevée ou momentum récent faible → PUT SPREAD (structure définie)
+        # Momentum fort et propre → PUT simple (convexité maximale)
+        if iv > 0.45 or perf_5_0 > -2:
+            recommended_strategy = 'PUT_SPREAD'
+        else:
+            recommended_strategy = 'PUT'
         
         recommendation = {
             'ticker': ticker,
-            'signal': 'SHORT_MOMENTUM_OPTION' if all_conditions_met else 'WATCH',
+            'signal': 'SHORT_MOMENTUM_OPTION' if entry_conditions_met else 'WATCH',
             'momentum_score': round(momentum_score, 2),
             'perf_63_5': round(perf_63_5, 2),
             'perf_5_0': round(perf_5_0, 2),
             'spot_price': round(spot_price, 2),
             'iv_pct': round(iv * 100, 1),
-            'conditions': conditions,
-            'all_conditions_met': all_conditions_met,
-            'recommended_strategy': 'PUT_SPREAD' if recommend_spread else 'PUT',
+            'iv_rank': round(iv_rank_value, 1) if iv_rank is not None else None,
+            'conditions': {
+                'hard_conditions': hard_conditions,
+                'soft_conditions': soft_conditions,
+                'hard_ok': hard_ok,
+                'soft_score': round(soft_score, 3),
+                'soft_threshold': soft_threshold,
+            },
+            'entry_conditions_met': entry_conditions_met,
+            'recommended_strategy': recommended_strategy,
             'put': put_data,
             'put_spread': spread_data,
             'entry_rules': {

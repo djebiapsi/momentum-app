@@ -1238,7 +1238,7 @@
                     <input type="text" class="search-input" id="search-ticker" placeholder="Rechercher..." oninput="filterStocks()">
                 </div>
                 <div id="all-stocks-list"></div>
-            </div>
+                </div>
         </div>
         
         <!-- PAGE: Short Dashboard -->
@@ -1317,11 +1317,11 @@
             
             <!-- Panel LONG -->
             <div id="panel-long-section">
-                <div class="card">
-                    <div class="card-header">
+            <div class="card">
+                <div class="card-header">
                         <span class="card-title">Génération automatique</span>
                         <span class="status-badge warning">Finviz</span>
-                    </div>
+                </div>
                     <p class="info-box" style="margin-bottom: 14px;">
                         <strong>Critères de sélection :</strong><br>
                         • MarketCap ≥ $10B (grandes capitalisations)<br>
@@ -1329,24 +1329,24 @@
                         • ADV ≥ $5M (Prix × Volume)<br><br>
                         <strong>Score :</strong> log(MarketCap) × log(ADV)<br>
                         <span style="color: var(--text-muted);">Top 50 par score décroissant</span>
-                    </p>
-                    <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
+                </p>
+                <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
                         Générer 50 tickers
-                    </button>
-                </div>
-                
-                <div class="card admin-only">
-                    <div class="card-header">
+                </button>
+            </div>
+            
+            <div class="card admin-only">
+                <div class="card-header">
                         <span class="card-title">Ajouter manuellement</span>
-                    </div>
+                </div>
                     <div style="display: flex; gap: 8px;">
                         <input type="text" class="form-input" id="input-ticker" placeholder="AAPL" style="flex: 1; text-transform: uppercase;">
-                        <button class="btn btn-primary" onclick="addTicker()">Ajouter</button>
-                    </div>
+                    <button class="btn btn-primary" onclick="addTicker()">Ajouter</button>
                 </div>
-                
-                <div class="card">
-                    <div class="card-header">
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
                         <span class="card-title">Panel actuel</span>
                         <span class="status-badge success" id="panel-count">0</span>
                     </div>
@@ -1357,9 +1357,12 @@
                         <button class="btn btn-secondary admin-only" onclick="triggerImportPanel('long')" style="flex: 1;">
                             <span style="margin-right: 4px;">↑</span> Importer
                         </button>
+                        <button class="btn btn-secondary admin-only" onclick="clearPanel('long')" style="flex: 1;">
+                            <span style="margin-right: 4px;">🗑️</span> Supprimer tout
+                        </button>
                         <input type="file" id="import-long-file" accept=".json" style="display: none;" onchange="importPanel('long', this)">
-                    </div>
-                    <div id="panel-list">
+                </div>
+                <div id="panel-list">
                         <div class="empty-state">Chargement...</div>
                     </div>
                 </div>
@@ -1408,6 +1411,9 @@
                         <button class="btn btn-secondary admin-only" onclick="triggerImportPanel('short')" style="flex: 1;">
                             <span style="margin-right: 4px;">↑</span> Importer
                         </button>
+                        <button class="btn btn-secondary admin-only" onclick="clearPanel('short')" style="flex: 1;">
+                            <span style="margin-right: 4px;">🗑️</span> Supprimer tout
+                        </button>
                         <input type="file" id="import-short-file" accept=".json" style="display: none;" onchange="importPanel('short', this)">
                     </div>
                     <div id="short-panel-list">
@@ -1431,11 +1437,11 @@
             
             <!-- Historique Long -->
             <div id="history-long-section">
-                <div class="card">
-                    <div class="card-header">
+            <div class="card">
+                <div class="card-header">
                         <span class="card-title">Calculs précédents</span>
-                    </div>
-                    <div id="history-list">
+                </div>
+                <div id="history-list">
                         <div class="empty-state">Aucun historique</div>
                     </div>
                 </div>
@@ -1673,12 +1679,14 @@
                     • Delta PUT Short: -0.10<br>
                     • Conditions: Perf 63j ≤ -15%, Perf 5j ≤ +5%
                 </p>
-                <button class="btn btn-secondary btn-block admin-only" onclick="loadOptionRecommendations()">
-                    Charger les recommandations
+                <button class="btn btn-short btn-block admin-only" onclick="generateNewOptionRecommendations()">
+                    Générer nouvelles recommandations
                 </button>
             </div>
             
-            <div id="options-recommendations-list"></div>
+            <div id="options-recommendations-list">
+                <div class="card"><div class="empty-state">Chargement...</div></div>
+            </div>
             
             <!-- Règles de la stratégie -->
             <div class="section-title" style="margin-top: 24px;">Règles de Trading</div>
@@ -2315,6 +2323,7 @@
             if (pageName === 'short') loadShortLatest();
             if (pageName === 'panel') loadPanel();
             if (pageName === 'history') loadHistory();
+            if (pageName === 'options') loadSavedOptionRecommendations();
             if (pageName === 'settings') {
                 loadSettings();
                 loadShortSettings();
@@ -2559,6 +2568,25 @@
             if (data && data.success) {
                 showToast(data.message);
                 loadPanel();
+            } else {
+                showToast(data?.error || 'Erreur', 'error');
+            }
+        }
+        
+        async function clearPanel(strategy) {
+            const panelName = strategy === 'long' ? 'panel' : 'panel Short';
+            if (!confirm(`Supprimer tous les tickers du ${panelName} ?`)) return;
+            
+            const endpoint = strategy === 'long' ? '/panel/clear' : '/short/panel/clear';
+            const data = await api(endpoint, { method: 'DELETE' });
+            
+            if (data && data.success) {
+                showToast(data.message);
+                if (strategy === 'long') {
+                    loadPanel();
+                } else {
+                    loadShortPanel();
+                }
             } else {
                 showToast(data?.error || 'Erreur', 'error');
             }
@@ -3385,9 +3413,39 @@
             document.getElementById('res-dte').textContent = result.dte || '-';
         }
         
-        async function loadOptionRecommendations() {
+        async function loadSavedOptionRecommendations() {
             const container = document.getElementById('options-recommendations-list');
             container.innerHTML = '<div class="card"><div class="empty-state">Chargement...</div></div>';
+            
+            const data = await api('/options/saved');
+            
+            if (!data || !data.success) {
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="empty-state" style="color: var(--accent-short);">
+                            ${data?.error || 'Erreur lors du chargement'}
+                        </div>
+                    </div>`;
+                return;
+            }
+            
+            if (!data.recommendations || data.recommendations.length === 0) {
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="empty-state">
+                            Aucune recommandation sauvegardée.<br>
+                            <span style="font-size: 12px;">Cliquez sur "Générer nouvelles recommandations".</span>
+                        </div>
+                    </div>`;
+                return;
+            }
+            
+            displayOptionRecommendations(data);
+        }
+        
+        async function generateNewOptionRecommendations() {
+            const container = document.getElementById('options-recommendations-list');
+            container.innerHTML = '<div class="card"><div class="empty-state">Génération en cours... (peut prendre quelques secondes)</div></div>';
             
             const data = await api('/options/bulk-recommendations');
             
@@ -3412,7 +3470,24 @@
                 return;
             }
             
-            let html = data.recommendations.map(rec => `
+            displayOptionRecommendations(data);
+            showToast(`${data.recommendations.length} recommandations générées et sauvegardées`);
+        }
+        
+        function displayOptionRecommendations(data) {
+            const container = document.getElementById('options-recommendations-list');
+            
+            let header = '';
+            if (data.calculation_date) {
+                header = `
+                    <div class="info-box" style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
+                        <span><strong>${data.recommendations.length}</strong> recommandations</span>
+                        <span style="color: var(--text-muted);">Calculé le ${data.calculation_date}</span>
+                    </div>
+                `;
+            }
+            
+            let html = header + data.recommendations.map(rec => `
                 <div class="card" style="margin-bottom: 12px;">
                     <div class="card-header">
                         <span class="card-title" style="font-size: 16px;">${rec.ticker}</span>

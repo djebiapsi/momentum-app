@@ -18,7 +18,8 @@ from config import get_config
 from models import (
     db, init_db, Settings, 
     PanelAction, RecommendationHistory, RecommendationDetail,
-    ShortPanelAction, ShortRecommendationHistory, ShortRecommendationDetail
+    ShortPanelAction, ShortRecommendationHistory, ShortRecommendationDetail,
+    OptionRecommendation
 )
 from momentum_service import MomentumService
 from email_service import EmailService
@@ -262,6 +263,21 @@ def remove_from_panel(ticker):
     db.session.commit()
     
     return jsonify({'success': True, 'message': f'{ticker} retiré du panel'})
+
+
+@app.route('/api/panel/clear', methods=['DELETE'])
+@require_admin
+def clear_panel():
+    """Supprime tous les tickers du panel Long"""
+    count = PanelAction.query.filter_by(is_active=True).count()
+    PanelAction.query.filter_by(is_active=True).update({PanelAction.is_active: False})
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'{count} ticker(s) retiré(s) du panel',
+        'count': count
+    })
 
 
 @app.route('/api/panel/export', methods=['GET'])
@@ -786,6 +802,21 @@ def remove_from_short_panel(ticker):
     return jsonify({'success': True, 'message': f'{ticker} retiré du panel Short'})
 
 
+@app.route('/api/short/panel/clear', methods=['DELETE'])
+@require_admin
+def clear_short_panel():
+    """Supprime tous les tickers du panel Short"""
+    count = ShortPanelAction.query.filter_by(is_active=True).count()
+    ShortPanelAction.query.filter_by(is_active=True).update({ShortPanelAction.is_active: False})
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'{count} ticker(s) retiré(s) du panel Short',
+        'count': count
+    })
+
+
 # =============================================================================
 # ROUTES - API SHORT MOMENTUM
 # =============================================================================
@@ -1278,10 +1309,40 @@ def get_option_recommendation(ticker):
     })
 
 
+@app.route('/api/options/saved', methods=['GET'])
+def get_saved_option_recommendations():
+    """
+    Récupère les dernières recommandations d'options sauvegardées.
+    """
+    recommendations = OptionRecommendation.query.order_by(
+        OptionRecommendation.rank
+    ).all()
+    
+    if not recommendations:
+        return jsonify({
+            'success': True,
+            'recommendations': [],
+            'count': 0,
+            'message': 'Aucune recommandation sauvegardée'
+        })
+    
+    # Date du dernier calcul
+    calc_date = recommendations[0].calculation_date if recommendations else None
+    
+    return jsonify({
+        'success': True,
+        'calculation_date': calc_date.isoformat() if calc_date else None,
+        'recommendations': [r.to_dict() for r in recommendations],
+        'count': len(recommendations)
+    })
+
+
 @app.route('/api/options/bulk-recommendations', methods=['GET'])
+@require_admin
 def get_bulk_option_recommendations():
     """
     Génère des recommandations d'options pour tous les tickers Short signalés.
+    Sauvegarde les résultats en base de données.
     """
     # Récupérer le dernier calcul Short
     latest = ShortRecommendationHistory.query.order_by(
@@ -1306,6 +1367,9 @@ def get_bulk_option_recommendations():
     recommendations = []
     errors = []
     
+    # Supprimer les anciennes recommandations
+    OptionRecommendation.query.delete()
+    
     for detail in details:
         ticker = detail.ticker
         
@@ -1322,7 +1386,7 @@ def get_bulk_option_recommendations():
             
             # Performances (adaptatif selon les données disponibles)
             n = len(df)
-            lookback = min(63, n - 6)  # Maximum 63 jours, sinon ce qu'on a
+            lookback = min(63, n - 6)
             skip = 5
             
             if n >= lookback + skip + 1:
@@ -1332,9 +1396,8 @@ def get_bulk_option_recommendations():
                 
                 perf_63_5 = ((prix_skip - prix_lookback) / prix_lookback) * 100
                 perf_5_0 = ((prix_0 - prix_skip) / prix_skip) * 100
-                momentum_score = perf_63_5  # Momentum = perf sur la période (sans soustraction)
+                momentum_score = perf_63_5
             else:
-                # Fallback si pas assez de données
                 perf_63_5 = 0
                 perf_5_0 = 0
                 momentum_score = detail.momentum
@@ -1352,8 +1415,39 @@ def get_bulk_option_recommendations():
             rec['rank'] = detail.rank
             recommendations.append(rec)
             
+            # Sauvegarder en base de données
+            option_rec = OptionRecommendation(
+                ticker=ticker,
+                calculation_date=latest.calculation_date,
+                spot_price=spot_price,
+                iv_pct=round(iv * 100, 1),
+                momentum_score=round(momentum_score, 2),
+                perf_63_5=round(perf_63_5, 2),
+                perf_5_0=round(perf_5_0, 2),
+                signal=rec.get('signal', ''),
+                all_conditions_met=rec.get('all_conditions_met', False),
+                recommended_strategy=rec.get('recommended_strategy', ''),
+                rank=detail.rank,
+                put_strike=rec.get('put', {}).get('strike'),
+                put_price=rec.get('put', {}).get('price'),
+                put_delta=rec.get('put', {}).get('delta'),
+                spread_strike_long=rec.get('put_spread', {}).get('strike_long'),
+                spread_strike_short=rec.get('put_spread', {}).get('strike_short'),
+                spread_net_debit=rec.get('put_spread', {}).get('net_debit'),
+                spread_max_profit=rec.get('put_spread', {}).get('max_profit'),
+                spread_breakeven=rec.get('put_spread', {}).get('breakeven'),
+                spread_risk_reward=rec.get('put_spread', {}).get('risk_reward_ratio'),
+                spread_delta_long=rec.get('put_spread', {}).get('delta_long_actual'),
+                spread_delta_short=rec.get('put_spread', {}).get('delta_short_actual'),
+                dte=rec.get('put_spread', {}).get('dte'),
+                expiration_date=rec.get('put_spread', {}).get('expiration_date', options_service.get_expiration_date(45))
+            )
+            db.session.add(option_rec)
+            
         except Exception as e:
             errors.append({'ticker': ticker, 'error': str(e)})
+    
+    db.session.commit()
     
     return jsonify({
         'success': True,
