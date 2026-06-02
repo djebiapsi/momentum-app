@@ -7,7 +7,7 @@ import threading
 import time
 
 from cryptography.fernet import Fernet
-from ib_insync import IB
+from ib_async import IB
 
 logger = logging.getLogger(__name__)
 
