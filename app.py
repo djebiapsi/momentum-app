@@ -27,6 +27,7 @@ from screener_service import ScreenerService
 from short_screener_service import ShortScreenerService
 from finviz_screener_service import FinvizScreenerService
 from options_service import OptionsService, estimate_historical_volatility
+from ibkr_service import IBKRService, encrypt_credential, decrypt_credential
 
 
 def require_admin(f):
@@ -85,6 +86,12 @@ email_service = None
 screener_service = None
 short_screener_service = None
 finviz_screener_service = None
+
+# Service IBKR — démarre une boucle asyncio dans un thread dédié
+ibkr_service = IBKRService(
+    host=app.config.get('IB_GATEWAY_HOST', 'ib-gateway'),
+    port=app.config.get('IB_GATEWAY_PORT', 4001),
+)
 
 
 def get_momentum_service():
@@ -1557,6 +1564,86 @@ def quick_option_calc():
     })
 
 
+# =============================================================================
+# ROUTES - IBKR / INTERACTIVE BROKERS
+# =============================================================================
+
+@app.route('/api/ibkr/status', methods=['GET'])
+def ibkr_status():
+    """Retourne le statut de connexion à IB Gateway."""
+    return jsonify(ibkr_service.get_status())
+
+
+@app.route('/api/ibkr/connect', methods=['POST'])
+@require_admin
+def ibkr_connect():
+    """Tente une connexion (ou reconnexion) à IB Gateway."""
+    result = ibkr_service.connect()
+    return jsonify(result), 200 if result['success'] else 503
+
+
+@app.route('/api/ibkr/credentials', methods=['POST'])
+@require_admin
+def ibkr_save_credentials():
+    """
+    Sauvegarde les identifiants IBKR chiffrés dans la base.
+    Body JSON: { username, password, trading_mode }
+    """
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    trading_mode = data.get('trading_mode', 'paper')
+
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'username et password requis'}), 400
+
+    secret = app.config.get('SECRET_KEY', '')
+    Settings.set('ibkr_username_enc', encrypt_credential(username, secret))
+    Settings.set('ibkr_password_enc', encrypt_credential(password, secret))
+    Settings.set('ibkr_trading_mode', trading_mode)
+
+    return jsonify({'success': True, 'message': 'Identifiants IBKR sauvegardés'})
+
+
+@app.route('/api/ibkr/positions', methods=['GET'])
+@require_admin
+def ibkr_positions():
+    """Retourne les positions ouvertes depuis IB Gateway."""
+    try:
+        positions = ibkr_service.get_positions()
+        return jsonify({'success': True, 'positions': positions, 'count': len(positions)})
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================================================
+# TÂCHE PLANIFIÉE - POSITIONS IBKR (toutes les 2h, heures de marché US)
+# =============================================================================
+
+def job_positions_ibkr():
+    """Récupère les positions IBKR et envoie un email de suivi."""
+    with app.app_context():
+        print(f"[{datetime.now()}] 📊 Envoi email positions IBKR...")
+        try:
+            positions = ibkr_service.get_positions()
+            if not positions:
+                print("⚠️ Aucune position ouverte, email non envoyé")
+                return
+            email_svc = get_email_service()
+            if not email_svc.is_configured():
+                print("⚠️ Service email non configuré")
+                return
+            result = email_svc.envoyer_positions(positions)
+            if result['success']:
+                print(f"✅ Email positions envoyé ({len(positions)} positions)")
+            else:
+                print(f"❌ Erreur email positions: {result['message']}")
+        except Exception as e:
+            print(f"❌ job_positions_ibkr: {e}")
+
+
 # Initialiser le scheduler
 scheduler = BackgroundScheduler()
 
@@ -1569,9 +1656,19 @@ scheduler.add_job(
     replace_existing=True
 )
 
+# Positions IBKR : 9h30, 11h30, 13h30, 15h30 ET (Lun-Ven)
+scheduler.add_job(
+    job_positions_ibkr,
+    CronTrigger(hour='9,11,13,15', minute=30, day_of_week='mon-fri', timezone='America/New_York'),
+    id='ibkr_positions',
+    name='Positions IBKR toutes les 2h (heures marché US)',
+    replace_existing=True
+)
+
 # Démarrer le scheduler (fonctionne avec gunicorn en production)
 scheduler.start()
 print("📅 Scheduler démarré - Mise à jour automatique le 1er de chaque mois à 8h00 UTC")
+print("📊 Scheduler IBKR - Positions envoyées à 9h30, 11h30, 13h30, 15h30 ET (Lun-Ven)")
 
 
 # =============================================================================

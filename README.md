@@ -1,192 +1,188 @@
-# 📈 Momentum Strategy App
+# Momentum Strategy App
 
-Application PWA pour suivre une stratégie momentum mensuelle (12-1) sur un panel d'actions.
+Application PWA pour suivre une stratégie momentum mensuelle (12-1) sur un panel d'actions, avec intégration IBKR pour le suivi des positions en temps réel.
 
-## ✨ Fonctionnalités
+## Fonctionnalités
 
-- 🔄 **Calcul du momentum** : Rendement 12-1 automatique via API Tiingo
-- 📊 **Panel personnalisable** : Ajoutez/retirez des actions facilement
-- 📧 **Notifications email** : Recevez les recommandations chaque mois
-- 📅 **Historique** : Consultez les recommandations passées
-- ⚙️ **Paramètres flexibles** : Nombre de top actions, date de calcul
-- 📱 **PWA** : Installable sur iPhone comme une app native
-
----
-
-## 🚀 Déploiement sur Render (Gratuit)
-
-### Étape 1 : Créer un compte GitHub et Render
-
-1. Créez un compte sur [GitHub](https://github.com) si vous n'en avez pas
-2. Créez un compte sur [Render](https://render.com) (connexion avec GitHub)
-
-### Étape 2 : Créer le repository GitHub
-
-1. Créez un nouveau repository sur GitHub (ex: `momentum-strategy`)
-2. Uploadez tous les fichiers du dossier `momentum-app`
-
-**En ligne de commande :**
-```bash
-cd momentum-app
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/VOTRE_USERNAME/momentum-strategy.git
-git push -u origin main
-```
-
-### Étape 3 : Déployer sur Render
-
-1. Allez sur [Render Dashboard](https://dashboard.render.com)
-2. Cliquez sur **"New +"** → **"Blueprint"**
-3. Connectez votre repo GitHub
-4. Render va automatiquement détecter le fichier `render.yaml`
-5. Cliquez sur **"Apply"**
-
-### Étape 4 : Configurer les variables d'environnement
-
-Dans le dashboard Render, allez dans votre service et configurez :
-
-| Variable | Description | Où l'obtenir |
-|----------|-------------|--------------|
-| `TIINGO_API_KEY` | Clé API Tiingo | [tiingo.com](https://www.tiingo.com/) |
-| `RESEND_API_KEY` | Clé API Resend | [resend.com](https://resend.com) |
-| `EMAIL_FROM` | Email expéditeur | `onboarding@resend.dev` (par défaut) |
-| `EMAIL_TO` | Votre email | Votre adresse email personnelle |
-
-### Étape 5 : Installer sur iPhone
-
-1. Ouvrez Safari sur iPhone
-2. Allez sur `https://votre-app.onrender.com`
-3. Appuyez sur le bouton **Partager** (carré avec flèche)
-4. Sélectionnez **"Sur l'écran d'accueil"**
-5. L'app apparaît comme une vraie application ! 🎉
+- **Momentum 12-1** : calcul automatique via API Tiingo, recommandations mensuelles par email
+- **Stratégie Short** : momentum 63-5 avec détection Death Cross via Finviz
+- **Options** : calculateur Black-Scholes PUT / PUT SPREAD
+- **IBKR** : connexion IB Gateway, positions en temps réel, email de suivi toutes les 2h (heures de marché US)
+- **PWA** : installable sur iPhone / Android
 
 ---
 
-## 🔑 Obtenir les clés API
+## Déploiement sur Hetzner (Docker)
 
-### Tiingo API (Gratuit)
+### Prérequis serveur
 
-1. Créez un compte sur [tiingo.com](https://www.tiingo.com/)
-2. Allez dans **Account** → **API** → **Token**
-3. Copiez votre token
+- VPS Hetzner Ubuntu 22.04+ (2 vCPU / 4 GB minimum)
+- Docker + Compose plugin (`apt install docker.io docker-compose-plugin`)
+- Domaine pointé sur l'IP du serveur
 
-### Resend API (Gratuit - 100 emails/jour)
-
-1. Créez un compte sur [resend.com](https://resend.com)
-2. Allez dans **API Keys** → **Create API Key**
-3. Copiez la clé (commence par `re_`)
-
-> **Note** : Par défaut, utilisez `onboarding@resend.dev` comme EMAIL_FROM.
-> Pour utiliser votre propre domaine, vérifiez-le dans Resend.
-
----
-
-## 💻 Développement local
-
-### Prérequis
-
-- Python 3.9+
-- pip
-
-### Installation
+### Première installation (une seule fois sur le serveur)
 
 ```bash
-# Cloner le projet
-git clone https://github.com/VOTRE_USERNAME/momentum-strategy.git
-cd momentum-strategy
+# Réseau partagé Traefik (une seule fois par serveur, commun à tous les projets)
+docker network create traefik_proxy
 
-# Créer l'environnement virtuel
-python -m venv venv
+# Dossier du projet
+mkdir -p /opt/momentum-app/letsencrypt
+cd /opt/momentum-app
 
-# Activer (Windows)
-venv\Scripts\activate
+# Fichier requis par Traefik pour Let's Encrypt
+touch letsencrypt/acme.json
+chmod 600 letsencrypt/acme.json
 
-# Activer (Mac/Linux)
-source venv/bin/activate
-
-# Installer les dépendances
-pip install -r requirements.txt
-```
-
-### Configuration
-
-1. Copiez `env-example.txt` en `.env`
-2. Remplissez avec vos vraies valeurs
-
-```bash
-# Windows
-copy env-example.txt .env
-
-# Mac/Linux
+# Copier docker-compose.yml et créer le .env
+cp docker-compose.yml /opt/momentum-app/
 cp env-example.txt .env
+# → éditer .env avec les vraies valeurs
 ```
 
-### Lancement
+### Variables d'environnement (`.env` sur le serveur)
+
+| Variable | Description | Requis |
+|---|---|---|
+| `DOMAIN` | Nom de domaine (ex: `momentum.mondomaine.com`) | Oui |
+| `ACME_EMAIL` | Email pour Let's Encrypt | Oui |
+| `DB_PASSWORD` | Mot de passe PostgreSQL | Oui |
+| `SECRET_KEY` | Clé secrète Flask (aléatoire, longue) | Oui |
+| `ADMIN_PASSWORD` | PIN numérique d'accès admin | Non |
+| `TIINGO_API_KEY` | Clé API Tiingo pour les données de marché | Oui |
+| `RESEND_API_KEY` | Clé API Resend pour les emails | Non |
+| `EMAIL_FROM` | Email expéditeur (domaine vérifié Resend) | Non |
+| `EMAIL_TO` | Email destinataire des alertes | Non |
+| `IB_USERNAME` | Identifiant IBKR | Non |
+| `IB_PASSWORD` | Mot de passe IBKR | Non |
+| `IB_TRADING_MODE` | `paper` ou `live` (défaut : `paper`) | Non |
+| `VNC_PASSWORD` | Mot de passe VNC IB Gateway (debug) | Non |
+| `IB_GATEWAY_PORT` | Port TWS API (4001 live, 4002 paper) | Non |
+
+### Démarrage
 
 ```bash
-python app.py
+cd /opt/momentum-app
+docker compose up -d
 ```
 
-Ouvrez http://localhost:5000
+### Pour les autres projets sur le même serveur
+
+Chaque projet a son propre `docker-compose.yml` qui s'appuie sur le réseau `traefik_proxy` externe. Traefik est défini dans le compose du premier projet lancé — les suivants retirent le bloc `traefik` et utilisent uniquement les labels.
 
 ---
 
-## 📱 Utilisation
+## CI/CD automatique (GitHub Actions)
 
-### Dashboard
+Le pipeline est défini dans `.github/workflows/deploy.yml` :
 
-- **Mettre à jour** : Calcule le momentum actuel
-- **Mettre à jour + Email** : Calcule et envoie par email
+1. `push` sur `main` → build de l'image Docker
+2. Push vers GitHub Container Registry (`ghcr.io/djebiapsi/momentum-app`)
+3. SSH sur le serveur Hetzner → `docker compose pull app && docker compose up -d app`
 
-### Panel
+### Secrets GitHub à configurer
 
-- Ajoutez des tickers (ex: AAPL, MSFT)
-- Supprimez ceux que vous ne voulez plus suivre
-
-### Paramètres
-
-- **Nombre de Top Actions** : Combien sélectionner (défaut: 5)
-- **Date de calcul** : Vide = aujourd'hui, ou date spécifique
-
-### Automatisation
-
-L'app calcule automatiquement le momentum le **1er de chaque mois à 8h00 UTC** et envoie un email.
+| Secret | Description |
+|---|---|
+| `HETZNER_HOST` | IP du serveur |
+| `HETZNER_USER` | Utilisateur SSH (ex: `ubuntu`) |
+| `HETZNER_SSH_KEY` | Clé privée SSH (format PEM) |
 
 ---
 
-## 🛠️ Structure du projet
+## IBKR / Interactive Brokers
+
+### Architecture
+
+```
+Flask app ──ib_insync──► IB Gateway container (gnzsnz/ib-gateway)
+                              │
+                        auto-login via TWS_USERID / TWS_PASSWORD
+                        port 4001 (live) / 4002 (paper)
+```
+
+- L'IB Gateway container gère l'authentification IBKR automatiquement au démarrage
+- La connexion est en `readonly=True` (lecture seule)
+- Les identifiants peuvent aussi être saisis via l'interface (Settings → IBKR) — stockés chiffrés AES-256 en base
+
+> **Important** : changer `SECRET_KEY` invalide les identifiants chiffrés stockés en base. Re-saisir les identifiants IBKR dans l'interface après toute rotation de `SECRET_KEY`.
+
+### Cron positions automatique
+
+Email envoyé à **9h30, 11h30, 13h30, 15h30 ET** (lun-ven) avec le récapitulatif des positions ouvertes.
+
+### Endpoints API IBKR
+
+| Méthode | Route | Auth | Description |
+|---|---|---|---|
+| GET | `/api/ibkr/status` | Non | Statut de connexion |
+| POST | `/api/ibkr/connect` | Admin | Connexion / reconnexion |
+| POST | `/api/ibkr/credentials` | Admin | Sauvegarde identifiants |
+| GET | `/api/ibkr/positions` | Admin | Positions temps réel |
+
+---
+
+## Développement local
+
+```bash
+# Setup
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # Mac/Linux
+pip install -r requirements.txt
+cp env-example.txt .env      # remplir les clés API
+
+# Lancer
+flask run                    # ou: python app.py
+# → http://localhost:5000
+
+# Tests
+python -m pytest test_options_service.py -v
+```
+
+En local, l'IB Gateway n'est pas disponible — les routes `/api/ibkr/*` renvoient une erreur de connexion attendue.
+
+---
+
+## Structure du projet
 
 ```
 momentum-app/
-├── app.py                 # Application Flask principale
-├── config.py              # Configuration et secrets
-├── models.py              # Modèles de base de données
-├── momentum_service.py    # Logique métier (calcul momentum)
-├── email_service.py       # Service d'envoi d'emails
-├── requirements.txt       # Dépendances Python
-├── render.yaml            # Configuration Render
-├── static/
-│   ├── manifest.json      # Config PWA
-│   ├── sw.js              # Service Worker
-│   └── icons/             # Icônes de l'app
-└── templates/
-    └── index.html         # Interface utilisateur
+├── app.py                    # Flask : 37+ routes API, APScheduler
+├── config.py                 # Configuration et variables d'environnement
+├── models.py                 # Modèles SQLAlchemy (Long, Short, Options, Settings)
+├── momentum_service.py       # Calcul momentum 12-1 via Tiingo
+├── email_service.py          # Emails via Resend (recommandations + positions IBKR)
+├── ibkr_service.py           # Connexion IB Gateway, récupération positions
+├── screener_service.py       # Screener Long via Tiingo IEX
+├── short_screener_service.py # Screener Short legacy
+├── finviz_screener_service.py# Screener Long/Short via Finviz
+├── options_service.py        # Black-Scholes PUT / PUT SPREAD
+├── cache_utils.py            # Cache mémoire
+├── Dockerfile                # Image Docker (python:3.11-slim + gunicorn)
+├── docker-compose.yml        # Stack : app + PostgreSQL + IB Gateway + Traefik
+├── .github/workflows/
+│   └── deploy.yml            # CI/CD : build → GHCR → SSH Hetzner
+├── requirements.txt
+├── static/                   # PWA manifest, service worker, icônes
+├── templates/
+│   └── index.html            # Vue.js SPA (4700+ lignes)
+└── docs/                     # Documentation de recherche (stratégies, méthodologie)
 ```
 
 ---
 
-## ⚠️ Avertissement
+## Automatisation
+
+| Job | Fréquence | Description |
+|---|---|---|
+| `monthly_momentum` | 1er du mois à 8h00 UTC | Calcul momentum + email recommandations |
+| `ibkr_positions` | 9h30/11h30/13h30/15h30 ET (lun-ven) | Email récapitulatif positions IBKR |
+
+---
+
+## Avertissement
 
 **Ceci n'est pas un conseil financier.**
 
 Cette application est un outil de suivi personnel. Les performances passées ne garantissent pas les résultats futurs. Faites vos propres recherches avant d'investir.
-
----
-
-## 📄 Licence
-
-MIT License - Utilisez librement pour votre usage personnel.
-

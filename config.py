@@ -62,6 +62,16 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # ==========================================================================
+    # IBKR / IB GATEWAY
+    # ==========================================================================
+
+    # Hôte du conteneur IB Gateway (nom du service Docker)
+    IB_GATEWAY_HOST = os.environ.get('IB_GATEWAY_HOST', 'ib-gateway')
+
+    # Port TWS API : 4001 = live, 4002 = paper (selon TRADING_MODE)
+    IB_GATEWAY_PORT = int(os.environ.get('IB_GATEWAY_PORT', 4001))
+
+    # ==========================================================================
     # PARAMÈTRES PAR DÉFAUT DE LA STRATÉGIE
     # ==========================================================================
     

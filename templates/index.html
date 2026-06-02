@@ -1865,6 +1865,65 @@
                 </button>
             </div>
             
+            <!-- IBKR -->
+            <div class="section-title" style="margin-top: 24px;">IBKR / Interactive Brokers</div>
+
+            <!-- Statut connexion (visible à tous) -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Connexion IB Gateway</span>
+                    <span class="status-badge" id="ibkr-status-badge" style="background:var(--bg-hover);color:var(--text-muted)">Chargement...</span>
+                </div>
+                <div id="ibkr-status-detail" style="font-size:13px;color:var(--text-muted);margin-top:8px;">—</div>
+                <button class="btn btn-secondary admin-only" style="margin-top:12px;" onclick="ibkrConnect()">
+                    Reconnecter
+                </button>
+            </div>
+
+            <!-- Identifiants (admin uniquement) -->
+            <div class="card admin-only" style="margin-top:12px;">
+                <div class="card-header">
+                    <span class="card-title">Identifiants IBKR</span>
+                    <span class="status-badge" style="background:#1d1d3b;color:#818cf8;font-size:10px;">AES-256</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+                    Stockés chiffrés en base. Rotation du <code>SECRET_KEY</code> = re-saisir obligatoire.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">Nom d'utilisateur IBKR</label>
+                    <input type="text" class="form-input" id="ibkr-username" placeholder="votre_username" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Mot de passe IBKR</label>
+                    <input type="password" class="form-input" id="ibkr-password" placeholder="••••••••" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Mode de trading</label>
+                    <select class="form-input" id="ibkr-trading-mode">
+                        <option value="paper">Paper (simulation)</option>
+                        <option value="live">Live (réel)</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary btn-block" onclick="saveIBKRCredentials()">
+                    Sauvegarder les identifiants
+                </button>
+            </div>
+
+            <!-- Positions actuelles (admin uniquement) -->
+            <div class="card admin-only" style="margin-top:12px;">
+                <div class="card-header">
+                    <span class="card-title">Positions actuelles</span>
+                    <button class="btn btn-secondary" style="padding:4px 12px;font-size:12px;" onclick="loadIBKRPositions()">
+                        Actualiser
+                    </button>
+                </div>
+                <div id="ibkr-positions-content">
+                    <p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px;">
+                        Cliquez sur Actualiser pour charger les positions
+                    </p>
+                </div>
+            </div>
+
             <!-- Méthodologie -->
             <div class="section-title" style="margin-top: 24px;">Méthodologie</div>
             <div class="card">
@@ -2787,6 +2846,7 @@
             if (pageName === 'settings') {
                 loadSettings();
                 loadShortSettings();
+                loadIBKRStatus();
             }
         }
         
@@ -3591,6 +3651,92 @@
             }
         }
         
+        // =================================================================
+        // IBKR
+        // =================================================================
+
+        async function loadIBKRStatus() {
+            const data = await api('/ibkr/status');
+            if (!data) return;
+            const badge = document.getElementById('ibkr-status-badge');
+            const detail = document.getElementById('ibkr-status-detail');
+            if (data.connected) {
+                badge.style.cssText = 'background:#14532d;color:#4ade80';
+                badge.textContent = '✓ Connecté';
+                const since = data.connected_at
+                    ? new Date(data.connected_at * 1000).toLocaleString('fr-FR')
+                    : '—';
+                detail.textContent = `Connecté depuis ${since}`;
+            } else {
+                badge.style.cssText = 'background:#450a0a;color:#f87171';
+                badge.textContent = '✗ Déconnecté';
+                detail.textContent = data.last_error ? `Dernière erreur : ${data.last_error}` : 'Non connecté à IB Gateway';
+            }
+        }
+
+        async function ibkrConnect() {
+            showToast('Connexion en cours...', 'info');
+            const data = await api('/ibkr/connect', { method: 'POST' });
+            if (!data) return;
+            showToast(data.success ? 'IBKR connecté !' : `Erreur : ${data.error}`, data.success ? 'success' : 'error');
+            await loadIBKRStatus();
+        }
+
+        async function saveIBKRCredentials() {
+            const username = document.getElementById('ibkr-username').value.trim();
+            const password = document.getElementById('ibkr-password').value;
+            const trading_mode = document.getElementById('ibkr-trading-mode').value;
+            if (!username || !password) { showToast('Remplissez tous les champs', 'error'); return; }
+            const data = await api('/ibkr/credentials', {
+                method: 'POST',
+                body: JSON.stringify({ username, password, trading_mode })
+            });
+            if (!data) return;
+            showToast(data.success ? 'Identifiants sauvegardés' : data.error, data.success ? 'success' : 'error');
+            if (data.success) document.getElementById('ibkr-password').value = '';
+        }
+
+        async function loadIBKRPositions() {
+            const container = document.getElementById('ibkr-positions-content');
+            container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px;">Chargement...</p>';
+            const data = await api('/ibkr/positions');
+            if (!data || !data.success) {
+                container.innerHTML = `<p style="color:#f87171;font-size:13px;text-align:center;padding:16px;">${data?.error || 'Erreur de connexion'}</p>`;
+                return;
+            }
+            if (!data.positions.length) {
+                container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px;">Aucune position ouverte</p>';
+                return;
+            }
+            const rows = data.positions.map(p => {
+                const upl = p.unrealized_pnl;
+                const uplColor = (upl != null && upl >= 0) ? 'var(--accent-long)' : '#f87171';
+                const uplStr = upl != null ? `<span style="color:${uplColor}">${upl >= 0 ? '+' : ''}${upl.toFixed(2)}</span>` : '—';
+                return `<tr>
+                    <td style="padding:8px 12px;border-bottom:1px solid var(--border-subtle);font-family:monospace;font-weight:600">${p.ticker}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid var(--border-subtle);text-align:right">${p.qty}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid var(--border-subtle);text-align:right">${p.avg_cost ? '$'+p.avg_cost.toFixed(2) : '—'}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid var(--border-subtle);text-align:right">${p.market_price ? '$'+p.market_price.toFixed(2) : '—'}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid var(--border-subtle);text-align:right">${p.market_value ? '$'+Math.round(p.market_value).toLocaleString() : '—'}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid var(--border-subtle);text-align:right">${uplStr}</td>
+                </tr>`;
+            }).join('');
+            container.innerHTML = `
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">${data.count} position(s) · ${new Date().toLocaleTimeString('fr-FR')}</p>
+                <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead><tr style="background:var(--bg-hover);">
+                        <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-muted);text-transform:uppercase">Ticker</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase">Qty</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase">Avg Cost</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase">Prix</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase">Valeur</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase">P&L</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>`;
+        }
+
         // =================================================================
         // SHORT - PANEL TABS
         // =================================================================

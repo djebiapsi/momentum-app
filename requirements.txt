@@ -39,6 +39,10 @@ gunicorn
 # Screener Finviz pour stratégie Short
 finvizfinance
 
+# IBKR / Interactive Brokers
+ib_insync
+cryptography
+
 # Tests
 pytest
 

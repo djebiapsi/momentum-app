@@ -218,6 +218,109 @@ Stratégie Momentum 12-1
         
         return texte
     
+    def envoyer_positions(self, positions: list) -> dict:
+        """
+        Envoie un email récapitulatif des positions IBKR ouvertes.
+
+        Args:
+            positions: liste de dicts (ticker, qty, avg_cost, market_price,
+                       market_value, unrealized_pnl, realized_pnl, currency)
+        """
+        if not self.is_configured():
+            return {'success': False, 'message': 'Service email non configuré'}
+        if not positions:
+            return {'success': False, 'message': 'Aucune position à envoyer'}
+
+        try:
+            now = datetime.now()
+            date_str = now.strftime('%Y-%m-%d %H:%M ET')
+
+            total_value = sum(p.get('market_value') or 0 for p in positions)
+            total_upl = sum(p.get('unrealized_pnl') or 0 for p in positions)
+            upl_color = '#22c55e' if total_upl >= 0 else '#ef4444'
+
+            lignes = ''
+            for p in positions:
+                upl = p.get('unrealized_pnl')
+                upl_c = '#22c55e' if (upl is not None and upl >= 0) else '#ef4444'
+                upl_str = f'<span style="color:{upl_c}">{upl:+,.2f}</span>' if upl is not None else '—'
+                rpl = p.get('realized_pnl')
+                rpl_str = f'{rpl:+,.2f}' if rpl is not None else '—'
+                mv = p.get('market_value') or 0
+                lignes += f"""
+                <tr>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;font-weight:600;font-family:monospace">{p['ticker']}</td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;text-align:right">{p.get('qty', '—')}</td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;text-align:right">${p['avg_cost']:,.4f}</td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;text-align:right">${p['market_price']:,.4f}</td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;text-align:right">${mv:,.2f}</td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;text-align:right">{upl_str}</td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #27272a;text-align:right">{rpl_str}</td>
+                </tr>"""
+
+            html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+             color:#fafafa;background:#09090b;max-width:700px;margin:0 auto;padding:20px;">
+  <div style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);color:white;padding:28px;
+              border-radius:12px;text-align:center;margin-bottom:24px;">
+    <h1 style="margin:0;font-size:22px;">📊 Positions IBKR</h1>
+    <p style="margin:10px 0 0;opacity:0.9;font-size:14px;">{date_str}</p>
+  </div>
+  <div style="background:#18181b;padding:16px;border-radius:8px;margin-bottom:20px;
+              display:flex;gap:24px;flex-wrap:wrap;">
+    <div><div style="color:#a1a1aa;font-size:12px;">Valeur totale</div>
+         <div style="font-size:20px;font-weight:700;">${total_value:,.2f}</div></div>
+    <div><div style="color:#a1a1aa;font-size:12px;">P&amp;L non réalisé</div>
+         <div style="font-size:20px;font-weight:700;color:{upl_color}">{total_upl:+,.2f}</div></div>
+    <div><div style="color:#a1a1aa;font-size:12px;">Positions</div>
+         <div style="font-size:20px;font-weight:700;">{len(positions)}</div></div>
+  </div>
+  <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:8px;overflow:hidden;">
+    <thead><tr style="background:#27272a;">
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a1a1aa;text-transform:uppercase">Ticker</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase">Qty</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase">Avg Cost</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase">Prix</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase">Valeur</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase">P&amp;L non réalisé</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase">P&amp;L réalisé</th>
+    </tr></thead>
+    <tbody>{lignes}</tbody>
+  </table>
+  <div style="margin-top:24px;text-align:center;color:#71717a;font-size:12px;">
+    <p>Positions IBKR · Généré automatiquement · Momentum Strategy App</p>
+    <p>⚠️ Ceci n'est pas un conseil financier</p>
+  </div>
+</body></html>"""
+
+            text_content = f"POSITIONS IBKR — {date_str}\n" + "=" * 60 + "\n"
+            for p in positions:
+                upl = p.get('unrealized_pnl')
+                text_content += (
+                    f"{p['ticker']:<8} qty={p.get('qty','—'):>8}  "
+                    f"valeur=${p.get('market_value') or 0:>10,.2f}  "
+                    f"P&L={upl:+,.2f}\n" if upl is not None
+                    else f"{p['ticker']:<8} qty={p.get('qty','—'):>8}\n"
+                )
+
+            params = {
+                "from": self.from_email,
+                "to": [self.to_email],
+                "subject": f"📊 Positions IBKR — {now.strftime('%Y-%m-%d %H:%M')} ET",
+                "html": html_content,
+                "text": text_content,
+            }
+            response = resend.Emails.send(params)
+            return {
+                'success': True,
+                'message': f'Email positions envoyé à {self.to_email}',
+                'email_id': response.get('id') if isinstance(response, dict) else str(response),
+            }
+
+        except Exception as e:
+            return {'success': False, 'message': f'Erreur: {str(e)}'}
+
     def envoyer_test(self):
         """
         Envoie un email de test pour vérifier la configuration.

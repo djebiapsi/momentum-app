@@ -1,0 +1,78 @@
+services:
+  app:
+    image: ghcr.io/djebiapsi/momentum-app:latest
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: momentum
+      POSTGRES_USER: momentum
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U momentum"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # IB Gateway — activé via le profil "ibkr" : docker compose --profile ibkr up -d
+  # Nécessite IB_USERNAME et IB_PASSWORD dans le .env
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: unless-stopped
+    profiles: ["ibkr"]
+    environment:
+      TWS_USERID: ${IB_USERNAME:-}
+      TWS_PASSWORD: ${IB_PASSWORD:-}
+      TRADING_MODE: ${IB_TRADING_MODE:-paper}
+      TWS_SETTINGS_PATH: /home/ibgateway/Jts
+      VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-changeme}
+    ports:
+      - "127.0.0.1:5900:5900"
+    networks:
+      - internal
+
+  # Traefik — activé via le profil "traefik" quand un domaine est disponible
+  # docker compose --profile traefik up -d
+  traefik:
+    image: traefik:v3
+    restart: unless-stopped
+    profiles: ["traefik"]
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+
+networks:
+  internal:
+    driver: bridge
