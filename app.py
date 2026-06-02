@@ -763,18 +763,35 @@ def generate_panel_finviz():
     screener = get_finviz_screener_service()
     
     result = screener.screen_long()
-    
+
     if not result['success']:
         return jsonify({
             'success': False,
             'error': result['error'],
             'stats': result.get('stats', {})
         }), 500
-    
+
+    # Inclure les tickers du portefeuille IBKR (toujours en concurrence)
+    portfolio_tickers = []
+    try:
+        if ibkr_service.get_status()['connected']:
+            positions = ibkr_service.get_positions()
+            portfolio_tickers = [p['ticker'] for p in positions if p.get('ticker')]
+    except Exception:
+        pass
+
+    # Fusionner : portefeuille en premier, puis screener jusqu'à 50
+    screener_tickers = result['tickers']
+    merged = list(dict.fromkeys(portfolio_tickers + screener_tickers))[:50]
+
+    stats = result['stats']
+    stats['portfolio_tickers_added'] = len([t for t in portfolio_tickers if t not in screener_tickers])
+
     return jsonify({
         'success': True,
-        'tickers': result['tickers'],
-        'stats': result['stats']
+        'tickers': merged,
+        'stats': stats,
+        'portfolio_tickers': portfolio_tickers,
     })
 
 
@@ -1603,6 +1620,12 @@ def ibkr_save_credentials():
     Settings.set('ibkr_password_enc', encrypt_credential(password, secret))
     Settings.set('ibkr_trading_mode', trading_mode)
 
+    # Notifier l'utilisateur avant la 2FA
+    try:
+        get_email_service().envoyer_notification_gateway()
+    except Exception:
+        pass
+
     # Mettre à jour le .env sur le serveur et redémarrer IB Gateway
     _ibkr_update_env_and_restart(username, password, trading_mode)
 
@@ -1676,6 +1699,47 @@ def ibkr_positions():
     try:
         positions = ibkr_service.get_positions()
         return jsonify({'success': True, 'positions': positions, 'count': len(positions)})
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ibkr/portfolio-stats', methods=['GET'])
+@require_admin
+def ibkr_portfolio_stats():
+    """Stats complètes du portefeuille : positions, P&L, allocation, rendement."""
+    try:
+        stats = ibkr_service.get_portfolio_stats()
+        return jsonify({'success': True, **stats})
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ibkr/rebalance', methods=['POST'])
+@require_admin
+def ibkr_rebalance():
+    """
+    Passe des ordres de rééquilibrage via IB Gateway.
+    Body JSON: { targets: [{ticker, target_pct, currency?}], dry_run: bool }
+    dry_run=true (défaut) → aperçu sans exécution.
+    """
+    data = request.get_json() or {}
+    targets = data.get('targets', [])
+    dry_run = data.get('dry_run', True)
+
+    if not targets:
+        return jsonify({'success': False, 'error': 'targets requis'}), 400
+    try:
+        orders = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run)
+        return jsonify({
+            'success': True,
+            'dry_run': dry_run,
+            'orders': orders,
+            'count': len(orders),
+        })
     except ConnectionError as e:
         return jsonify({'success': False, 'error': str(e)}), 503
     except Exception as e:

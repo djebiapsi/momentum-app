@@ -105,6 +105,88 @@ class IBKRService:
             })
         return result
 
+    def get_portfolio_stats(self) -> dict:
+        """Retourne les stats du portefeuille : positions, P&L, allocation, valeur totale."""
+        positions = self.get_positions()
+        total_value = sum(p['market_value'] or 0 for p in positions)
+        total_cost  = sum((p['avg_cost'] or 0) * abs(p['qty'] or 0) for p in positions)
+        total_unrl  = sum(p['unrealized_pnl'] or 0 for p in positions)
+        total_real  = sum(p['realized_pnl']   or 0 for p in positions)
+        winners     = [p for p in positions if (p['unrealized_pnl'] or 0) > 0]
+
+        for p in positions:
+            mv = p['market_value'] or 0
+            p['allocation_pct'] = round(mv / total_value * 100, 1) if total_value else 0
+            cost = (p['avg_cost'] or 0) * abs(p['qty'] or 0)
+            p['return_pct'] = round((mv - cost) / cost * 100, 1) if cost else 0
+
+        return {
+            'positions': positions,
+            'total_value': round(total_value, 2),
+            'total_cost':  round(total_cost, 2),
+            'total_unrealized_pnl': round(total_unrl, 2),
+            'total_realized_pnl':   round(total_real, 2),
+            'total_pnl': round(total_unrl + total_real, 2),
+            'return_pct': round((total_value - total_cost) / total_cost * 100, 1) if total_cost else 0,
+            'positions_count': len(positions),
+            'winning_count': len(winners),
+        }
+
+    def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> dict:
+        """
+        Passe des ordres de rééquilibrage.
+        targets = [{'ticker': str, 'target_pct': float, 'currency': str}]
+        Utilise des ordres en montant USD (cashQty) pour les fractional shares.
+        """
+        if not self._ib.isConnected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        async def _do():
+            from ib_async import Stock, Order
+            stats = self.get_portfolio_stats()
+            total_value = stats['total_value']
+            current = {p['ticker']: p for p in stats['positions']}
+            orders_preview = []
+
+            for t in targets:
+                ticker = t['ticker'].upper()
+                target_pct = float(t.get('target_pct', 0))
+                currency = t.get('currency', 'USD')
+                target_value = total_value * target_pct / 100
+                current_value = current.get(ticker, {}).get('market_value', 0) or 0
+                diff = target_value - current_value
+
+                if abs(diff) < 10:  # ignorer les petits écarts < 10 USD
+                    continue
+
+                action = 'BUY' if diff > 0 else 'SELL'
+                cash_qty = abs(round(diff, 2))
+
+                orders_preview.append({
+                    'ticker': ticker,
+                    'action': action,
+                    'cash_qty_usd': cash_qty,
+                    'current_value': round(current_value, 2),
+                    'target_value': round(target_value, 2),
+                })
+
+                if not dry_run:
+                    contract = Stock(ticker, 'SMART', currency)
+                    await self._ib.qualifyContractsAsync(contract)
+                    order = Order(
+                        action=action,
+                        orderType='MKT',
+                        totalQuantity=0,
+                        cashQty=cash_qty,
+                        tif='DAY',
+                    )
+                    self._ib.placeOrder(contract, order)
+                    await asyncio.sleep(0.5)
+
+            return orders_preview
+
+        return self._run(_do(), timeout=120)
+
 
 # ---------------------------------------------------------------------------
 # Chiffrement des identifiants (AES-256 via Fernet)

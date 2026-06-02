@@ -321,6 +321,41 @@ Stratégie Momentum 12-1
         except Exception as e:
             return {'success': False, 'message': f'Erreur: {str(e)}'}
 
+    def envoyer_notification_gateway(self) -> dict:
+        """Notifie l'utilisateur que l'application va démarrer IB Gateway et demander la 2FA."""
+        if not self.is_configured():
+            return {'success': False, 'message': 'Email non configuré'}
+        try:
+            params = {
+                "from": self.from_email,
+                "to": [self.to_email],
+                "subject": "🔐 Momentum App — Démarrage IB Gateway (2FA requis)",
+                "html": """
+                <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;
+                            background:#09090b;color:#fafafa;border-radius:12px;">
+                    <div style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);padding:24px;
+                                border-radius:8px;text-align:center;margin-bottom:20px;">
+                        <h2 style="margin:0;color:white;">🔐 Démarrage IB Gateway</h2>
+                    </div>
+                    <p>Votre application <strong>Momentum Strategy</strong> vient de démarrer
+                    le service de connexion Interactive Brokers.</p>
+                    <p>Vous allez recevoir une demande d'authentification à deux facteurs (2FA)
+                    sur votre téléphone IBKR dans quelques secondes.</p>
+                    <div style="background:#18181b;padding:16px;border-radius:8px;border-left:4px solid #22c55e;">
+                        <strong>C'est bien votre application qui demande.</strong><br>
+                        <span style="color:#a1a1aa;font-size:13px;">Approuvez la 2FA sur votre téléphone.</span>
+                    </div>
+                    <p style="color:#71717a;font-size:12px;margin-top:16px;">
+                        Si vous n'avez pas déclenché cette action, vérifiez vos paramètres IBKR.
+                    </p>
+                </div>""",
+                "text": "Momentum App: démarrage IB Gateway. 2FA IBKR requise sur votre téléphone. C'est bien votre application."
+            }
+            resend.Emails.send(params)
+            return {'success': True}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+
     def envoyer_test(self):
         """
         Envoie un email de test pour vérifier la configuration.

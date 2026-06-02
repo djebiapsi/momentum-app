@@ -1543,11 +1543,16 @@
                 Calculer et notifier
             </button>
 
-            <button class="btn btn-block" id="btn-export-tws" onclick="exportTWSFromReco()"
-                style="margin-top: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color);
-                       color: var(--text-secondary); display: none;">
-                ⬇ Exporter ordres TWS
-            </button>
+            <div id="btn-export-tws" style="display:none;margin-top:8px;">
+                <button class="btn btn-block admin-only" onclick="exportTWSFromReco()"
+                    style="background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);">
+                    ⬇ Exporter CSV TWS
+                </button>
+                <button class="btn btn-block admin-only" onclick="rebalanceViaAPI()"
+                    style="margin-top:6px;background:linear-gradient(135deg,#1d4ed8,#7c3aed);color:white;">
+                    ⚡ Rééquilibrer via IBKR
+                </button>
+            </div>
             
             <div class="card" style="margin-top: 20px;">
                 <div class="card-header">
@@ -2190,75 +2195,75 @@
             <div class="header long" style="background: linear-gradient(135deg,#1e3a5f,#0f2027);">
                 <div class="header-label long">Analyse</div>
                 <h1>Performance</h1>
-                <p id="perf-period-label">Importez un relevé IBKR pour commencer</p>
+                <p id="perf-period-label">Positions et P&L en temps réel via IBKR</p>
             </div>
 
-            <!-- Import zone -->
-            <label class="perf-drop-zone" for="perf-file-input" id="perf-drop-zone">
-                <div class="drop-icon">📊</div>
-                <p><strong>Importer un relevé IBKR</strong></p>
-                <p>Fichier CSV · Synthèse du réalisé</p>
-            </label>
-            <input type="file" id="perf-file-input" accept=".csv" style="display:none" onchange="loadPerfCSV(this)">
+            <!-- Prompt connexion IBKR -->
+            <div id="perf-connect-prompt" style="display:none;text-align:center;padding:40px 20px;">
+                <div style="font-size:40px;margin-bottom:12px;">📡</div>
+                <p style="color:var(--text-muted);margin-bottom:16px;">Connexion IBKR requise pour afficher les stats</p>
+                <button class="btn btn-primary" onclick="ibkrConnect().then(()=>setTimeout(loadPerfData,6000))">
+                    Connecter IBKR
+                </button>
+            </div>
 
-            <!-- Contenu (caché jusqu'à import) -->
+            <!-- Loading -->
+            <div id="perf-loading" style="text-align:center;padding:48px;">
+                <span class="spinner" style="width:36px;height:36px;border-width:3px;"></span>
+            </div>
+
+            <!-- Contenu -->
             <div id="perf-content" style="display:none;">
 
-                <!-- KPIs -->
+                <!-- KPIs ligne 1 -->
                 <div class="perf-kpi-grid">
                     <div class="perf-kpi">
-                        <div class="perf-kpi-label">Ma perf (TWR)</div>
-                        <div class="perf-kpi-value" id="kpi-twr">—</div>
-                        <div id="kpi-vs-spy"></div>
-                    </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">SPY même période</div>
-                        <div class="perf-kpi-value" id="kpi-spy">—</div>
-                        <div class="perf-kpi-sub" id="kpi-spy-dates">—</div>
-                    </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">P&amp;L total</div>
-                        <div class="perf-kpi-value" id="kpi-pnl">—</div>
-                        <div class="perf-kpi-sub">Réalisé + Non réalisé</div>
-                    </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Valeur finale</div>
+                        <div class="perf-kpi-label">Valeur portefeuille</div>
                         <div class="perf-kpi-value" id="kpi-nav">—</div>
-                        <div class="perf-kpi-sub" id="kpi-deposits">—</div>
+                        <div class="perf-kpi-sub" id="kpi-positions-count">—</div>
                     </div>
-                </div>
-
-                <!-- Détail réalisé / non-réalisé -->
-                <div class="perf-kpi-grid">
                     <div class="perf-kpi">
-                        <div class="perf-kpi-label">P&amp;L réalisé</div>
-                        <div class="perf-kpi-value" id="kpi-realized">—</div>
-                        <div class="perf-kpi-sub" id="kpi-winrate">—</div>
+                        <div class="perf-kpi-label">Rendement total</div>
+                        <div class="perf-kpi-value" id="kpi-return-pct">—</div>
+                        <div class="perf-kpi-sub">vs coût d'acquisition</div>
                     </div>
                     <div class="perf-kpi">
                         <div class="perf-kpi-label">P&amp;L non réalisé</div>
                         <div class="perf-kpi-value" id="kpi-unrealized">—</div>
-                        <div class="perf-kpi-sub">Positions ouvertes</div>
+                        <div class="perf-kpi-sub" id="kpi-winrate">—</div>
+                    </div>
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">P&amp;L réalisé</div>
+                        <div class="perf-kpi-value" id="kpi-realized">—</div>
+                        <div class="perf-kpi-sub" id="kpi-pnl-total">—</div>
                     </div>
                 </div>
 
+                <!-- Bouton refresh + heure -->
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                    <button class="btn btn-secondary" style="flex:1;" onclick="loadPerfData()">
+                        Actualiser
+                    </button>
+                    <span id="perf-last-update" style="font-size:11px;color:var(--text-muted);"></span>
+                </div>
+
                 <!-- Chart P&L par ticker -->
-                <div class="perf-section-title">P&amp;L par ticker</div>
+                <div class="perf-section-title">P&amp;L non réalisé par position</div>
                 <div class="perf-chart-wrap">
                     <canvas id="chart-pnl" height="220"></canvas>
                 </div>
 
                 <!-- Allocation actuelle -->
                 <div class="perf-section-title">Allocation actuelle</div>
-                <div class="perf-chart-wrap" style="display:flex; align-items:center; gap:20px;">
-                    <canvas id="chart-alloc" style="max-width:160px; max-height:160px;"></canvas>
-                    <div id="alloc-legend" style="flex:1; font-size:12px;"></div>
+                <div class="perf-chart-wrap" style="display:flex;align-items:center;gap:20px;">
+                    <canvas id="chart-alloc" style="max-width:160px;max-height:160px;"></canvas>
+                    <div id="alloc-legend" style="flex:1;font-size:12px;"></div>
                 </div>
 
                 <!-- Tableau détaillé -->
                 <div class="perf-section-title">Détail par titre</div>
-                <div class="card" style="padding:0; overflow:hidden;">
-                    <div id="perf-ticker-table" style="padding: 4px 16px;"></div>
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div id="perf-ticker-table" style="padding:4px 16px;"></div>
                 </div>
 
             </div>
@@ -2908,6 +2913,7 @@
                 loadShortSettings();
                 loadIBKRStatus();
             }
+            if (pageName === 'perf') loadPerfData();
         }
         
         // =================================================================
@@ -3793,6 +3799,42 @@
             }
         }
         
+        // =================================================================
+        // IBKR REBALANCE VIA API
+        // =================================================================
+
+        async function rebalanceViaAPI() {
+            if (!lastRecoData || !lastRecoData.recommendations) {
+                showToast('Lancez d\'abord un calcul momentum', 'error'); return;
+            }
+            const targets = lastRecoData.recommendations
+                .filter(r => r.signal === 'Investir' && r.allocation > 0)
+                .map(r => ({ ticker: r.ticker, target_pct: r.allocation }));
+
+            if (!targets.length) { showToast('Aucune position à acheter', 'error'); return; }
+
+            // Aperçu d'abord
+            showToast('Calcul des ordres...', 'info');
+            const preview = await api('/ibkr/rebalance', { method: 'POST', body: JSON.stringify({ targets, dry_run: true }) });
+            if (!preview || !preview.success) { showToast(preview?.error || 'Erreur IBKR', 'error'); return; }
+
+            if (!preview.orders.length) { showToast('Aucun ordre nécessaire (portefeuille déjà équilibré)', 'success'); return; }
+
+            const summary = preview.orders.map(o =>
+                `${o.action} ${o.ticker}: $${o.cash_qty_usd} (actuel: $${o.current_value} → cible: $${o.target_value})`
+            ).join('\n');
+
+            if (!confirm(`${preview.count} ordre(s) à passer :\n\n${summary}\n\nConfirmer l'exécution ?`)) return;
+
+            showToast('Passage des ordres...', 'info');
+            const result = await api('/ibkr/rebalance', { method: 'POST', body: JSON.stringify({ targets, dry_run: false }) });
+            if (result && result.success) {
+                showToast(`${result.count} ordre(s) passé(s) avec succès`, 'success');
+            } else {
+                showToast(result?.error || 'Erreur lors du passage des ordres', 'error');
+            }
+        }
+
         // =================================================================
         // IBKR
         // =================================================================
@@ -4711,48 +4753,124 @@
         }
 
         // =================================================================
-        // PERFORMANCE DASHBOARD
+        // PERFORMANCE DASHBOARD (live IBKR data)
         // =================================================================
 
         let _chartPnl = null;
         let _chartAlloc = null;
 
-        const MOIS_FR = {
-            'janvier':'01','février':'02','mars':'03','avril':'04',
-            'mai':'05','juin':'06','juillet':'07','août':'08',
-            'septembre':'09','octobre':'10','novembre':'11','décembre':'12'
-        };
-
-        function parseCsvLine(line) {
-            const out = []; let cur = ''; let inQ = false;
-            for (const ch of line) {
-                if (ch === '"') { inQ = !inQ; }
-                else if (ch === ',' && !inQ) { out.push(cur.trim()); cur = ''; }
-                else { cur += ch; }
-            }
-            out.push(cur.trim());
-            return out;
-        }
-
-        function parseFrDate(str) {
-            // "Décembre 1, 2025" → "2025-12-01"
-            const m = str.trim().match(/^(\S+)\s+(\d+),?\s+(\d{4})$/i);
-            if (!m) return null;
-            const month = MOIS_FR[m[1].toLowerCase()];
-            if (!month) return null;
-            return `${m[3]}-${month}-${m[2].padStart(2,'0')}`;
-        }
-
-        function fmtPct(v) {
-            const sign = v >= 0 ? '+' : '';
-            return sign + v.toFixed(2) + '%';
-        }
-        function fmtUsd(v) {
-            const sign = v >= 0 ? '+$' : '-$';
-            return sign + Math.abs(v).toFixed(2);
-        }
+        function fmtPct(v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
+        function fmtUsd(v) { return (v >= 0 ? '+$' : '-$') + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
         function colorClass(v) { return v >= 0 ? 'perf-pos' : 'perf-neg'; }
 
+        async function loadPerfData() {
+            const content = document.getElementById('perf-content');
+            const loading = document.getElementById('perf-loading');
+            const prompt  = document.getElementById('perf-connect-prompt');
+            content.style.display = 'none';
+            prompt.style.display  = 'none';
+            loading.style.display = '';
+
+            const status = await api('/ibkr/status');
+            if (!status || !status.connected) {
+                loading.style.display = 'none';
+                prompt.style.display = '';
+                return;
+            }
+
+            const data = await api('/ibkr/portfolio-stats');
+            loading.style.display = 'none';
+            if (!data || !data.success) {
+                prompt.style.display = '';
+                return;
+            }
+
+            const positions = data.positions || [];
+
+            // KPIs
+            document.getElementById('kpi-nav').textContent = '$' + (data.total_value||0).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0});
+            document.getElementById('kpi-positions-count').textContent = `${data.positions_count} position(s) · ${data.winning_count} gagnantes`;
+
+            const retEl = document.getElementById('kpi-return-pct');
+            retEl.textContent = fmtPct(data.return_pct || 0);
+            retEl.className = 'perf-kpi-value ' + colorClass(data.return_pct || 0);
+
+            const urlEl = document.getElementById('kpi-unrealized');
+            urlEl.textContent = fmtUsd(data.total_unrealized_pnl || 0);
+            urlEl.className = 'perf-kpi-value ' + colorClass(data.total_unrealized_pnl || 0);
+            const wr = data.positions_count > 0 ? Math.round(data.winning_count / data.positions_count * 100) : 0;
+            document.getElementById('kpi-winrate').textContent = `Win rate : ${wr}%`;
+
+            const rlEl = document.getElementById('kpi-realized');
+            rlEl.textContent = fmtUsd(data.total_realized_pnl || 0);
+            rlEl.className = 'perf-kpi-value ' + colorClass(data.total_realized_pnl || 0);
+            document.getElementById('kpi-pnl-total').textContent = 'Total P&L : ' + fmtUsd(data.total_pnl || 0);
+
+            document.getElementById('perf-last-update').textContent = 'Mis à jour à ' + new Date().toLocaleTimeString('fr-FR');
+
+            // Chart P&L non réalisé par ticker
+            const sorted = [...positions].sort((a,b) => (b.unrealized_pnl||0) - (a.unrealized_pnl||0));
+            const pnlLabels = sorted.map(p => p.ticker);
+            const pnlValues = sorted.map(p => parseFloat((p.unrealized_pnl||0).toFixed(2)));
+            const pnlColors = pnlValues.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
+
+            if (_chartPnl) _chartPnl.destroy();
+            _chartPnl = new Chart(document.getElementById('chart-pnl'), {
+                type: 'bar',
+                data: { labels: pnlLabels, datasets: [{ label: 'P&L non réalisé ($)', data: pnlValues, backgroundColor: pnlColors, borderRadius: 4 }] },
+                options: {
+                    indexAxis: 'y', responsive: true,
+                    plugins: { legend: {display:false}, tooltip: { callbacks: { label: ctx => ' $'+ctx.parsed.x.toFixed(2) } } },
+                    scales: {
+                        x: { grid: {color:'rgba(255,255,255,.05)'}, ticks: {color:'#888', callback: v => '$'+v} },
+                        y: { grid: {display:false}, ticks: {color:'#ccc', font: {family:'IBM Plex Mono',size:11}} }
+                    }
+                }
+            });
+
+            // Chart allocation (doughnut)
+            const COLORS = ['#22c55e','#3b82f6','#f59e0b','#8b5cf6','#06b6d4','#f43f5e','#84cc16','#fb923c','#e879f9','#38bdf8'];
+            const allocSorted = [...positions].sort((a,b) => (b.market_value||0) - (a.market_value||0));
+            const allocLabels = allocSorted.map(p => p.ticker);
+            const allocValues = allocSorted.map(p => p.market_value||0);
+
+            if (_chartAlloc) _chartAlloc.destroy();
+            _chartAlloc = new Chart(document.getElementById('chart-alloc'), {
+                type: 'doughnut',
+                data: { labels: allocLabels, datasets: [{ data: allocValues, backgroundColor: COLORS.slice(0,allocLabels.length), borderWidth: 0 }] },
+                options: { responsive:true, cutout:'65%', plugins: { legend:{display:false}, tooltip: { callbacks: { label: ctx => ` ${ctx.label}: $${ctx.parsed.toFixed(0)} (${allocSorted[ctx.dataIndex].allocation_pct}%)` } } } }
+            });
+
+            const totalAlloc = allocValues.reduce((s,v) => s+v, 0);
+            document.getElementById('alloc-legend').innerHTML = allocSorted.map((p,i) => `
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                    <span style="width:10px;height:10px;border-radius:2px;background:${COLORS[i]||'#666'};flex-shrink:0;"></span>
+                    <span style="color:#ccc;flex:1;">${p.ticker}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;color:#fff;font-size:12px;">$${(p.market_value||0).toFixed(0)}</span>
+                    <span style="color:#888;font-size:11px;">${p.allocation_pct}%</span>
+                </div>`).join('');
+
+            // Tableau détaillé
+            const maxAbs = Math.max(...positions.map(p => Math.abs(p.unrealized_pnl||0)), 1);
+            document.getElementById('perf-ticker-table').innerHTML = sorted.map(p => {
+                const upl = p.unrealized_pnl || 0;
+                const barW = Math.abs(upl) / maxAbs * 100;
+                const color = upl >= 0 ? '#22c55e' : '#ef4444';
+                return `<div class="perf-ticker-row">
+                    <span class="perf-ticker-name">${p.ticker}</span>
+                    <div class="perf-ticker-bar-wrap">
+                        <div class="perf-ticker-bar" style="width:${barW}%;background:${color};"></div>
+                    </div>
+                    <span class="perf-ticker-amount" style="color:${color};">${fmtUsd(upl)}</span>
+                    <span style="font-size:11px;color:#666;min-width:80px;text-align:right;">${p.return_pct >= 0 ? '+' : ''}${p.return_pct}%</span>
+                </div>`;
+            }).join('');
+
+            content.style.display = '';
+            animIn(document.getElementById('perf-content'));
+        }
+
+        // Garde l'ancienne fonction pour compatibilité (si référencée ailleurs)
         async function loadPerfCSV(input) {
             const file = input.files[0];
             if (!file) return;
