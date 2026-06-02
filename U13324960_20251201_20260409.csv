@@ -1,0 +1,206 @@
+﻿Statement,Header,Nom champ,Valeur champ
+Statement,Data,BrokerName,Interactive Brokers Ireland Limited
+Statement,Data,BrokerAddress,
+Statement,Data,Title,Synthèse du réalisé
+Statement,Data,Period,"Décembre 1, 2025 - Avril 9, 2026"
+Statement,Data,WhenGenerated,"2026-04-10, 04:06:58 EDT"
+Informations du compte,Header,Nom champ,Valeur champ
+Informations du compte,Data,Nom,Bryan R KOUATE DJEBIAPSI
+Informations du compte,Data,Compte,U13324960
+Informations du compte,Data,Type de compte,Individuel
+Informations du compte,Data,Type de client,Individuel
+Informations du compte,Data,Capacités du compte,Marge
+Informations du compte,Data,Devise de base,USD
+Actif net,Header,Classe d'actif,Total précédent,Actuel long,Actuel short,Total actuel,Variation
+Actif net,Data,Trésorerie,813.96798141,7.122703394,0,7.122703394,-806.845278016
+Actif net,Data,Action,558.87,2303.17,0,2303.17,1744.3
+Actif net,Data,Dividendes cumulés,0,0.13,0,0.13,0.13
+Actif net,Data,Total,1372.83798141,2310.422703394,0,2310.422703394,937.584721984
+Actif net,Header,Taux de rentabilité pondéré dans le temps
+Actif net,Data,3.946247355%
+Changements de l'actif net,Header,Nom champ,Valeur champ
+Changements de l'actif net,Data,Valeur de départ,1372.83798141
+Changements de l'actif net,Data,Détails non disponibles,
+Changements de l'actif net,Data,Valeur en fin de période,2310.422703394
+Synthèse de la performance réalisée et non-réalisée,Header,Catégorie d'actifs,Symbole,Aj. coût,Realisé Profit C/T,Realisé Perte C/T,Realisé Profit L/T,Realisé Perte L/T,Realisé Total,Non réalisé Profit C/T,Non réalisé Perte C/T,Non réalisé Profit L/T,Non réalisé Perte L/T,Non réalisé Total,Total,Code
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,AAPL,0,0,0,40.5186473,0,40.5186473,0,0,0,0,0,40.5186473,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,CRDO,0,0,-63.88678139,0,0,-63.88678139,0,0,0,0,0,-63.88678139,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,GEV,0,0,0,0,0,0,15.415027,0,0,0,15.415027,15.415027,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,HOOD,0,0,-99.08730782,0,0,-99.08730782,0,0,0,0,0,-99.08730782,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,INTC,0,30.6861641,0,0,0,30.6861641,0,0,0,0,0,30.6861641,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,KGC,0,28.56102398,0,0,0,28.56102398,0,0,0,0,0,28.56102398,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,LRCX,0,0,0,0,0,0,25.953725,0,0,0,25.953725,25.953725,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,MU,0,6.49038847,0,0,0,6.49038847,134.565451,0,0,0,134.565451,141.05583947,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,NEM,0,42.11865325,0,0,0,42.11865325,0,0,0,0,0,42.11865325,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,PLTR,0,0,-64.31785293,0,0,-64.31785293,0,0,0,0,0,-64.31785293,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,SNDK,0,0,0,0,0,0,15.81945,0,0,0,15.81945,15.81945,
+Synthèse de la performance réalisée et non-réalisée,Data,Actions,STX,0,0,0,0,0,0,7.912671,0,0,0,7.912671,7.912671,
+Synthèse de la performance réalisée et non-réalisée,Data,Total,,0,107.8562298,-227.29194214,40.5186473,0,-78.91706504,199.666324,0,0,0,199.666324,120.74925896,
+Synthèse de la performance réalisée et non-réalisée,Data,Forex,EUR,0,0.041414,-5.733869,0,0,-5.692455,0,0,0,0,0,-5.692455,
+Synthèse de la performance réalisée et non-réalisée,Data,Total,,0,0.041414,-5.733869,0,0,-5.692455,0,0,0,0,0,-5.692455,
+Synthèse de la performance réalisée et non-réalisée,Data,Total (Tous les actifs),,0,107.8976438,-233.02581114,40.5186473,0,-84.60952004,199.666324,0,0,0,199.666324,115.05680396,
+Positions ouvertes,Header,DataDiscriminator,Catégorie d'actifs,Devise,Symbole,Quantité,Mult,Coût,Coût d'acquisition,Cours de clôture,Valeur,P/L non réalisé,Code
+Positions ouvertes,Data,Summary,Actions,USD,GEV,0.727,1,946.815643741,688.334973,968.02,703.75,15.415027,
+Positions ouvertes,Data,Summary,Actions,USD,LRCX,2.2273,1,247.109179275,550.386275,258.76,576.34,25.953725,
+Positions ouvertes,Data,Summary,Actions,USD,MU,0.9479,1,279.549054753,264.984549,421.51,399.55,134.565451,
+Positions ouvertes,Data,Summary,Actions,USD,SNDK,0.2049,1,774.380429478,158.67055,851.57,174.49,15.81945,
+Positions ouvertes,Data,Summary,Actions,USD,STX,0.8967,1,491.945276012,441.127329,500.77,449.04,7.912671,
+Positions ouvertes,Total,,Actions,USD,,,,,2103.503676,,2303.17,199.666324,
+Transactions,Header,DataDiscriminator,Catégorie d'actifs,Devise,Symbole,Date/Heure,Quantité,Prix trans.,Produit,Comm/Tarif,Base,P/L réalisé,Code
+Transactions,Data,Order,Actions,USD,AAPL,"2025-12-23, 09:41:28",-2.0042,270.680020956,542.496898,-1.000332697,-500.977918,40.518647,C;FPA;P
+Transactions,SubTotal,,Actions,USD,AAPL,,-2.0042,,542.496898,-1.000332697,-500.977918,40.518647,
+Transactions,Data,Order,Actions,USD,CRDO,"2025-12-23, 09:44:30",1.7864,145.539184953,-259.9912,-1,260.9912,0,FPA;O;P
+Transactions,Data,Order,Actions,USD,CRDO,"2026-04-08, 10:32:12",-1.7864,110.898369906,198.108848,-1.00442939,-260.9912,-63.886782,C;FPA;P
+Transactions,SubTotal,,Actions,USD,CRDO,,0,,-61.882352,-2.00442939,0,-63.886782,
+Transactions,Data,Order,Actions,USD,GEV,"2026-04-08, 10:32:44",0.727,945.440127923,-687.334973,-1,688.334973,0,FP;O;P;RP
+Transactions,SubTotal,,Actions,USD,GEV,,0.727,,-687.334973,-1,688.334973,0,
+Transactions,Data,Order,Actions,USD,HOOD,"2026-01-09, 12:19:40",2.3483,114.972966401,-269.991017,-1,270.991017,0,FPA;O;P
+Transactions,Data,Order,Actions,USD,HOOD,"2026-04-08, 10:37:47",-2.3483,73.631022016,172.907729,-1.004019817,-270.991017,-99.087308,C;FPA;IM;P
+Transactions,SubTotal,,Actions,USD,HOOD,,0,,-97.083288,-2.004019817,0,-99.087308,
+Transactions,Data,Order,Actions,USD,INTC,"2026-01-15, 15:41:22",3.7002,48.645,-179.996229,-1,180.996229,0,O;P;RPA
+Transactions,Data,Order,Actions,USD,INTC,"2026-04-08, 10:32:13",-3.7002,57.48,212.687496,-1.005102901,-180.996229,30.686164,C;FPA;P
+Transactions,SubTotal,,Actions,USD,INTC,,0,,32.691267,-2.005102901,0,30.686164,
+Transactions,Data,Order,Actions,USD,KGC,"2025-12-23, 09:43:14",8.7957,29.559727139,-259.998492,-1,260.998492,0,FPA;IM;O;P
+Transactions,Data,Order,Actions,USD,KGC,"2026-03-27, 12:00:14",0.0104,28.65,-0.29796,-0.00029796,0.29825796,0,O;R
+Transactions,Data,Order,Actions,USD,KGC,"2026-04-08, 10:38:46",-8.8061,33.03,290.865483,-1.007709018,-261.29675,28.561023,C;FPA;P
+Transactions,SubTotal,,Actions,USD,KGC,,0,,30.569031,-2.008006978,-0.00000004,28.561023,
+Transactions,Data,Order,Actions,USD,LRCX,"2026-04-08, 10:32:57",2.2273,246.660205181,-549.386275,-1,550.386275,0,FPA;O;P
+Transactions,SubTotal,,Actions,USD,LRCX,,2.2273,,-549.386275,-1,550.386275,0,
+Transactions,Data,Order,Actions,USD,MU,"2025-12-23, 09:43:54",1,278.535,-278.535,-1,279.535,0,O
+Transactions,Data,Order,Actions,USD,MU,"2026-01-15, 09:30:02",0.0002,345.8,-0.06916,-0.00006916,0.06922916,0,O;R
+Transactions,Data,Order,Actions,USD,MU,"2026-04-08, 10:32:12",-0.0523,407.72,21.323756,-0.213687028,-14.619681,6.490388,C;FP
+Transactions,SubTotal,,Actions,USD,MU,,0.9479,,-257.280404,-1.213756188,264.98454816,6.490388,
+Transactions,Data,Order,Actions,USD,NEM,"2025-12-23, 09:46:37",2.484,104.668309179,-259.99608,-1,260.99608,0,FPA;O;P
+Transactions,Data,Order,Actions,USD,NEM,"2026-01-13, 09:34:53",2.3782,113.531152132,-269.999786,-1,270.999786,0,FPA;O;P;RPA
+Transactions,Data,Order,Actions,USD,NEM,"2026-03-27, 12:00:17",0.0104,102.43,-1.065272,-0.001065272,1.066337272,0,O;R
+Transactions,Data,Order,Actions,USD,NEM,"2026-04-08, 10:32:16",-4.8726,118.25179083,576.193676,-1.012819747,-533.062203,42.118653,C;FPA;P
+Transactions,SubTotal,,Actions,USD,NEM,,-0,,45.132538,-3.013885019,0.000000272,42.118653,
+Transactions,Data,Order,Actions,USD,PLTR,"2025-12-23, 09:45:38",1.3372,194.43,-259.991796,-1,260.991796,0,FPA;O;P
+Transactions,Data,Order,Actions,USD,PLTR,"2026-04-08, 10:32:15",-1.3372,147.83,197.678276,-1.004332926,-260.991796,-64.317853,C;FPA;P
+Transactions,SubTotal,,Actions,USD,PLTR,,0,,-62.31352,-2.004332926,0,-64.317853,
+Transactions,Data,Order,Actions,USD,SNDK,"2026-04-08, 10:47:01",0.2049,769.5,-157.67055,-1,158.67055,0,FP;O
+Transactions,SubTotal,,Actions,USD,SNDK,,0.2049,,-157.67055,-1,158.67055,0,
+Transactions,Data,Order,Actions,USD,STX,"2026-04-08, 10:47:53",0.8967,490.830075834,-440.127329,-1,441.127329,0,FP;O;P;RP
+Transactions,SubTotal,,Actions,USD,STX,,0.8967,,-440.127329,-1,441.127329,0,
+Transactions,Total,,Actions,USD,,,,,-1662.188957,-19.253865916,1602.525757392,-78.917068, 
+Transactions,Header,DataDiscriminator,Catégorie d'actifs,Devise,Symbole,Date/Heure,Quantité,Prix trans.,Produit,Comm en USD,,,Code
+Transactions,Data,Order,Forex,USD,EUR.USD,"2026-01-09, 12:18:24",-600,1.16285,697.71,-2,,,
+Transactions,Data,Order,Forex,USD,EUR.USD,"2026-01-28, 09:30:37",-150,1.196316966,179.4475449,-2,,,P
+Transactions,SubTotal,,Forex,USD,EUR.USD,,-750,,877.1575449,-4,,,
+Transactions,Total,,Forex,USD,,,,,877.1575449,-4,,, 
+Détail Pertes et profits Forex,Header,Catégorie d'actifs,Devise,Description,Date/Heure,Devise FX,Quantité,Produit en USD,Base en USD,Pertes et profits réalisés en USD,Code
+Détail Pertes et profits Forex,Data,Forex,USD,Activité nette de trésorerie,2026-01-08,EUR,600,699.54,-699.54,0,O
+Détail Pertes et profits Forex,Data,Forex,USD,Forex -600 EUR.USD,"2026-01-09, 12:18:24",EUR,-600,695.71,-699.54,-3.83,C
+Détail Pertes et profits Forex,Data,Forex,USD,Activité nette de trésorerie,2026-01-28,EUR,150,179.31,-179.31,0,O
+Détail Pertes et profits Forex,Data,Forex,USD,Forex -104.49 EUR.USD,"2026-01-28, 09:30:37",EUR,-104.49,123.003477,-124.907346,-1.903869,C
+Détail Pertes et profits Forex,Data,Forex,USD,Forex -45.51 EUR.USD,"2026-01-28, 09:30:39",EUR,-45.51,54.444068,-54.402654,0.041414,C
+Détail Pertes et profits Forex,Data,Total,,,,,,1752.007545,-1757.7,-5.692455,
+Dépôts et retraits,Header,Devise,Date de règlement,Description,Montant
+Dépôts et retraits,Data,EUR,2026-01-08,Transfert électronique de fonds,600
+Dépôts et retraits,Data,EUR,2026-01-28,Transfert électronique de fonds,150
+Dépôts et retraits,Data,Total,,,750
+Dépôts et retraits,Data,Total en USD,,,878.85
+Dividendes,Header,Devise,Date,Description,Montant
+Dividendes,Data,USD,2026-01-14,MU(US5951121038) Dividende en espèces USD 0.115 par action (Dividende ordinaire),0.12
+Dividendes,Data,USD,2026-03-26,KGC(CA4969024047) Dividende en espèces USD 0.04 par action (Dividende ordinaire),0.35
+Dividendes,Data,USD,2026-03-26,NEM(US6516391066) Dividende en espèces USD 0.26 par action (Dividende ordinaire),1.26
+Dividendes,Data,Total,,,1.73
+Retenues d'impôts,Header,Devise,Date,Description,Montant,Code
+Retenues d'impôts,Data,USD,2026-01-14,MU(US5951121038) Dividende en espèces USD 0.115 par action - US Taxes,-0.02,
+Retenues d'impôts,Data,USD,2026-03-26,KGC(CA4969024047) Dividende en espèces USD 0.04 par action - CA Taxes,-0.05,
+Retenues d'impôts,Data,USD,2026-03-26,NEM(US6516391066) Dividende en espèces USD 0.26 par action - US Taxes,-0.19,
+Retenues d'impôts,Data,Total,,,-0.26,
+Intérêt,Header,Devise,Date,Description,Montant
+Intérêt,Data,USD,2026-02-04,USD Intérêts débiteurs pour Jan-2026,-0.03
+Intérêt,Data,Total,,,-0.03
+Intérêts cumulés,Header,Devise,Nom champ,Valeur champ
+Intérêts cumulés,Data,Récapitulatif en devise de base,Solde de départ cumulé,0
+Intérêts cumulés,Data,Récapitulatif en devise de base,Intérêts courus,-0.03
+Intérêts cumulés,Data,Récapitulatif en devise de base,Extourne des montants cumulés,0.03
+Intérêts cumulés,Data,Récapitulatif en devise de base,Solde cumulé de fin de période,0
+Variation des dividendes accumulés,Header,Catégorie d'actifs,Devise,Symbole,Date,Date ex,Date de paiement,Quantité,Fiscalité,Frais,Taux brut,Montant brut,Montant net,Code
+Variation des dividendes accumulés,Data,Dividendes initiaux accumulés enUSD,,,,,,,,,,,0,
+Variation des dividendes accumulés,Data,Actions,USD,KGC,2026-03-10,2026-03-11,2026-03-26,8.7957,0.05,0,0.04,0.35,0.3,Po
+Variation des dividendes accumulés,Data,Actions,USD,KGC,2026-03-26,2026-03-11,2026-03-26,8.7957,-0.05,0,0.04,-0.35,-0.3,Re
+Variation des dividendes accumulés,Data,Actions,USD,MU,2025-12-26,2025-12-29,2026-01-14,1,0.02,0,0.115,0.12,0.1,Po
+Variation des dividendes accumulés,Data,Actions,USD,MU,2026-01-14,2025-12-29,2026-01-14,1,-0.02,0,0.115,-0.12,-0.1,Re
+Variation des dividendes accumulés,Data,Actions,USD,MU,2026-03-27,2026-03-30,2026-04-15,1.0002,0.02,0,0.15,0.15,0.13,Po
+Variation des dividendes accumulés,Data,Actions,USD,NEM,2026-03-02,2026-03-03,2026-03-26,4,0.16,0,0.26,1.04,0.88,Po
+Variation des dividendes accumulés,Data,Actions,USD,NEM,2026-03-02,2026-03-03,2026-03-26,4.8622,0.19,0,0.26,1.26,1.07,Po
+Variation des dividendes accumulés,Data,Actions,USD,NEM,2026-03-02,2026-03-03,2026-03-26,4,-0.16,0,0.26,-1.04,-0.88,Re
+Variation des dividendes accumulés,Data,Actions,USD,NEM,2026-03-26,2026-03-03,2026-03-26,4.8622,-0.19,0,0.26,-1.26,-1.07,Re
+Variation des dividendes accumulés,Data,Total,,,,,,,0.02,0,,0.15,0.13,
+Variation des dividendes accumulés,Data,Dividendes finaux accumulés enUSD,,,,,,,,,,,0.13,
+Codes,Header,Code,Signification,Code (Cont.),Signification (Cont.)
+Codes,Data,A,Assignation
+Codes,Data,ADR,Accumuluation de frais ADR
+Codes,Data,AEx,Exercice automatique pour les recommandations liées aux dividendes.
+Codes,Data,AFx,AutoFX conversion resulting from trading
+Codes,Data,Adj,Ajustement
+Codes,Data,Al,Allocation
+Codes,Data,Aw,Transaction éxécutée à l'externe
+Codes,Data,B,Rachat automatique
+Codes,Data,Bo,Emprunt direct
+Codes,Data,C,Fermeture de position
+Codes,Data,CD,Livraison espèces
+Codes,Data,CP,Position complexe
+Codes,Data,Ca,Annulé
+Codes,Data,Co,Transaction corrigée
+Codes,Data,Cx,"Une partie ou la totalité de cette transaction a été exécutée comme une opération de crossing menée par IB en qualité d'agent pour les deux contreparties, qui sont des clients IB."
+Codes,Data,DT,Discounted Trade
+Codes,Data,De,Delivery or Conversion Action
+Codes,Data,ETF,Création ou sortie d'ETF
+Codes,Data,Ep,Résulte d'une position ayant expiré
+Codes,Data,Ex,Exercice
+Codes,Data,FP,The fractional portion of this trade was executed against IB or an affiliate.
+Codes,Data,FPA,The fractional portion of this trade was executed against IB or an affiliate. IB acted as agent for the whole share portion of this trade.
+Codes,Data,G,Trader sur le segment de compte garanti
+Codes,Data,GEA,Exercice ou attribution résultant de la compensation de positions
+Codes,Data,HC,Choix de l'assiette imposable sur les coûts les plus élevés
+Codes,Data,HFI,Investissement transféré vers un Hedge Fund
+Codes,Data,HFR,Remboursement Hedge Fund
+Codes,Data,I,Transfert interne
+Codes,Data,IA,The transaction was executed against IB or an affiliate
+Codes,Data,IM,A portion of the order was executed against IB or an affiliate; IB acted as agent on a portion.
+Codes,Data,INV,Transfert d'investissement en provenance de l'investisseur
+Codes,Data,IPO,Cette transaction a été exécutée dans le cadre d'une introduction en Bourse dans laquelle IB faisait partie du groupe vendeur et est considérée comme une transaction principale.
+Codes,Data,L,Effectuée par IB (Violation de marge)
+Codes,Data,LD,Ajusté pour perte non admissible de vente fictive
+Codes,Data,LF,Liquidation of fractional position by IB
+Codes,Data,LI,"Dernier Entré, Premier Sorti (LIFO)"
+Codes,Data,LT,P/L à long terme
+Codes,Data,Lo,Prêt direct
+Codes,Data,M,Entrée manuelle par IB
+Codes,Data,MEx,Exercice manuel pour les recommandations liées aux dividendes.
+Codes,Data,ML,Maximiser les pertes à des fins d'imposition
+Codes,Data,MLG,Choix de la méthode d'imposition Augmentation des gains à long terme
+Codes,Data,MLL,Choix de la méthode d'imposition Augmentation des pertes à long terme
+Codes,Data,MSG,Choix de la méthode d'imposition Augmentation des gains à court terme
+Codes,Data,MSL,Choix de la méthode d'imposition Augmentation des pertes à court terme
+Codes,Data,O,Ouverture de position
+Codes,Data,Off,Yes and No contracts offset to $1.00 cash settlement
+Codes,Data,P,Exécution partielle
+Codes,Data,PE,Perpetual Investment
+Codes,Data,PI,Amélioration de prix
+Codes,Data,PTA,Post Trade Allocation
+Codes,Data,Po,Ajout à intérêts ou dividendes accumulés
+Codes,Data,Pr,Une partie ou la totalité de cette transaction a été exécutée par la Bourse comme une opération de crossing menée par IB auprès d'une filiale IB. IB est donc considéré comme donneur d'ordre pour la transaction et non comme agent.
+Codes,Data,R,Réinvestissement des dividendes
+Codes,Data,RED,Remboursement à l'investisseur
+Codes,Data,RI,Investissement récurrent
+Codes,Data,RP,"IB a git en tant qu'agent pour la partie en fractions d'actions de cette transaction, qui a été exécutée par une société affiliée d'IB en tant qu'opérateur de capital sans risque."
+Codes,Data,RPA,IB a agit en tant qu'agent pour le partie en fractions d'actions et la partie en actions entières de cette transaction ; la partie en fractions d'actions a été exécutée par une société affiliée d'IB en tant qu'opérateur de capital sans risque.
+Codes,Data,Rb,Rebill
+Codes,Data,Re,Extourne des intérêts ou dividendes cumulés
+Codes,Data,Ri,Remboursement
+Codes,Data,S0,Contract settled to zero value
+Codes,Data,S1,Contract settled to $1.00
+Codes,Data,SF,Trade is subject to IBKR Lite Surcharge Fee if volume of such trades exceeds 10% of the total monthly Lite trade volume
+Codes,Data,SI,Cet ordre a été sollicité par Interactive Brokers.
+Codes,Data,SL,Choix de l'unité pour le récapitulatif fiscal
+Codes,Data,SO,Cet ordre a été marqué comme sollicité par votre courtier introducteur.
+Codes,Data,SS,"Le client a demandé un règlement anticipé pour cet ordre, qui sera donc exécuté à un prix supérieur au cours actuel."
+Codes,Data,ST,P/L à court terme
+Codes,Data,T,Transfert
+Codes,Data,Un,"Actions dont les droits ne sont pas acquis, du programme d'attribution d'actions"
+Codes,Data,XCH,Mutual Fund Exchange Transaction

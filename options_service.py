@@ -162,10 +162,11 @@ class OptionsService:
                     low_strike = mid_strike
             else:
                 current_delta = self.delta_call(S, mid_strike, T, r, sigma)
+                # CALL: strike plus haut = delta plus bas (plus OTM)
                 if current_delta > target_delta:
-                    high_strike = mid_strike
+                    low_strike = mid_strike   # delta trop haut → monter le strike
                 else:
-                    low_strike = mid_strike
+                    high_strike = mid_strike  # delta trop bas → descendre le strike
             
             if abs(current_delta - target_delta) < 0.001:
                 break

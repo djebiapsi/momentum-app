@@ -10,6 +10,9 @@
     
     <title>Momentum</title>
     
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
     <!-- PWA Manifest -->
     <link rel="manifest" href="/static/manifest.json">
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
@@ -323,6 +326,125 @@
         .stock-signal.short-signal {
             color: var(--accent-short);
         }
+
+        .stock-signal.cash {
+            color: var(--accent-blue);
+        }
+
+        .regime-banner {
+            padding: 10px 14px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .regime-banner.bear {
+            background: var(--accent-short-dim);
+            color: var(--accent-short);
+            border: 1px solid rgba(244, 63, 94, 0.25);
+        }
+
+        .regime-banner.bull {
+            background: var(--accent-long-dim);
+            color: var(--accent-long);
+        }
+
+        .perf-recent {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            margin-top: 2px;
+            opacity: 0.85;
+        }
+        .perf-recent.positive { color: var(--accent-long); }
+        .perf-recent.negative { color: var(--accent-short); }
+
+        /* Rééquilibrage */
+        .rb-position-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .rb-position-ticker {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            width: 72px;
+        }
+        .rb-position-value {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 13px;
+            padding: 3px 0;
+            outline: none;
+            text-align: right;
+        }
+        .rb-position-value:focus { border-color: var(--accent-long); }
+        .rb-remove-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 2px 6px;
+            border-radius: var(--radius-sm);
+            transition: color 0.15s;
+        }
+        .rb-remove-btn:hover { color: var(--accent-short); }
+
+        .rb-action-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .rb-action-badge {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            padding: 3px 8px;
+            border-radius: var(--radius-sm);
+            min-width: 60px;
+            text-align: center;
+        }
+        .rb-action-badge.buy  { background: var(--accent-long-dim);  color: var(--accent-long); }
+        .rb-action-badge.sell { background: var(--accent-short-dim); color: var(--accent-short); }
+        .rb-action-badge.hold { background: var(--bg-hover);         color: var(--text-muted); }
+        .rb-action-body { flex: 1; }
+        .rb-action-ticker { font-weight: 600; font-size: 13px; }
+        .rb-action-detail { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        .rb-action-amount {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 14px;
+            font-weight: 600;
+            text-align: right;
+        }
+        .rb-action-amount.buy  { color: var(--accent-long); }
+        .rb-action-amount.sell { color: var(--accent-short); }
+        .rb-action-amount.hold { color: var(--text-muted); }
+
+        .rb-summary {
+            margin-top: 14px;
+            padding: 12px 14px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.8;
+        }
+        .rb-summary strong { color: var(--text-primary); font-family: 'IBM Plex Mono', monospace; }
         
         .stock-momentum {
             text-align: right;
@@ -989,8 +1111,95 @@
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 12px;
         }
+
+        /* Carte état du marché */
+        .market-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 16px 20px;
+            margin-bottom: 12px;
+        }
+        .market-card.bear { border-color: rgba(244, 63, 94, 0.35); }
+        .market-card.bull { border-color: rgba(16, 185, 129, 0.25); }
+
+        .market-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+        .market-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .market-badge {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: var(--radius-sm);
+        }
+        .market-badge.bull { background: var(--accent-long-dim); color: var(--accent-long); }
+        .market-badge.bear { background: var(--accent-short-dim); color: var(--accent-short); }
+
+        .market-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .market-metric { text-align: center; flex: 1; }
+        .market-metric-value {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .market-metric-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .market-gauge {
+            height: 5px;
+            background: var(--bg-hover);
+            border-radius: 99px;
+            margin: 10px 0;
+            position: relative;
+            overflow: visible;
+        }
+        .market-gauge-fill {
+            height: 100%;
+            border-radius: 99px;
+            transition: width 0.5s ease;
+        }
+        .market-gauge-marker {
+            position: absolute;
+            top: -3px;
+            width: 2px;
+            height: 11px;
+            background: var(--text-muted);
+            border-radius: 1px;
+            transform: translateX(-50%);
+        }
+
+        .market-explication {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            border-top: 1px solid var(--border-subtle);
+            padding-top: 12px;
+            margin-top: 4px;
+        }
+        .market-explication strong { color: var(--text-primary); }
         
         .stat-card {
             background: var(--bg-secondary);
@@ -1104,6 +1313,43 @@
             color: var(--text-muted);
             line-height: 1.6;
         }
+        /* ── Performance dashboard ── */
+        .perf-drop-zone {
+            border: 2px dashed var(--border-color);
+            border-radius: var(--radius);
+            padding: 32px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color .2s, background .2s;
+            margin-bottom: 20px;
+        }
+        .perf-drop-zone:hover { border-color: var(--accent-long); background: rgba(34,197,94,.04); }
+        .perf-drop-zone .drop-icon { font-size: 32px; margin-bottom: 8px; }
+        .perf-drop-zone p { font-size: 13px; color: var(--text-muted); margin: 0; }
+        .perf-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+        .perf-kpi { background: var(--bg-secondary); border-radius: var(--radius-sm);
+                    padding: 14px; border: 1px solid var(--border-subtle); }
+        .perf-kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+                          letter-spacing: .05em; margin-bottom: 4px; }
+        .perf-kpi-value { font-size: 22px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+        .perf-kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        .perf-pos { color: var(--accent-long); }
+        .perf-neg { color: var(--accent-short); }
+        .perf-vs-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+                         padding: 2px 8px; border-radius: 99px; margin-top: 4px; }
+        .perf-vs-badge.above { background: rgba(34,197,94,.12); color: var(--accent-long); }
+        .perf-vs-badge.below { background: rgba(239,68,68,.12); color: var(--accent-short); }
+        .perf-section-title { font-size: 12px; font-weight: 600; color: var(--text-secondary);
+                               text-transform: uppercase; letter-spacing: .05em; margin: 20px 0 10px; }
+        .perf-chart-wrap { background: var(--bg-secondary); border-radius: var(--radius-sm);
+                           border: 1px solid var(--border-subtle); padding: 16px; margin-bottom: 16px; }
+        .perf-ticker-row { display: flex; align-items: center; gap: 8px; padding: 8px 0;
+                           border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+        .perf-ticker-row:last-child { border-bottom: none; }
+        .perf-ticker-name { font-weight: 600; width: 56px; font-family: 'IBM Plex Mono', monospace; }
+        .perf-ticker-bar-wrap { flex: 1; height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
+        .perf-ticker-bar { height: 100%; border-radius: 3px; }
+        .perf-ticker-amount { font-family: 'IBM Plex Mono', monospace; font-size: 12px; min-width: 70px; text-align: right; }
     </style>
 </head>
 <body>
@@ -1190,16 +1436,57 @@
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="stat-allocation">—</div>
-                    <div class="stat-label">Allocation</div>
+                    <div class="stat-label">Alloc. moy.</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-momentum-avg">—</div>
+                    <div class="stat-label">Momentum moy.</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-vol-avg">—</div>
+                    <div class="stat-label">Vol. moy.</div>
                 </div>
             </div>
-            
+
+            <!-- Carte état du marché (masquée jusqu'au premier calcul) -->
+            <div id="market-card" class="market-card" style="display:none;">
+                <div class="market-header">
+                    <span class="market-title">État du marché</span>
+                    <span id="market-regime-badge" class="market-badge">—</span>
+                </div>
+                <div class="market-row">
+                    <div class="market-metric">
+                        <div class="market-metric-value" id="market-spy-price">—</div>
+                        <div class="market-metric-label">SPY</div>
+                    </div>
+                    <div class="market-metric">
+                        <div class="market-metric-value" id="market-sma200">—</div>
+                        <div class="market-metric-label">SMA 200</div>
+                    </div>
+                    <div class="market-metric">
+                        <div class="market-metric-value" id="market-gap">—</div>
+                        <div class="market-metric-label">Écart</div>
+                    </div>
+                </div>
+                <div class="market-gauge">
+                    <div class="market-gauge-fill" id="market-gauge-fill"></div>
+                    <div class="market-gauge-marker" id="market-gauge-marker" style="left:50%"></div>
+                </div>
+                <div class="market-explication" id="market-explication"></div>
+            </div>
+
             <button class="btn btn-primary btn-block admin-only" id="btn-refresh" onclick="calculateMomentum()">
                 Calculer le momentum
             </button>
-            
+
             <button class="btn btn-secondary btn-block admin-only" style="margin-top: 8px;" onclick="calculateAndNotify()">
                 Calculer et notifier
+            </button>
+
+            <button class="btn btn-block" id="btn-export-tws" onclick="exportTWSFromReco()"
+                style="margin-top: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color);
+                       color: var(--text-secondary); display: none;">
+                ⬇ Exporter ordres TWS
             </button>
             
             <div class="card" style="margin-top: 20px;">
@@ -1239,8 +1526,72 @@
                 </div>
                 <div id="all-stocks-list"></div>
                 </div>
+
+            <!-- Rééquilibrage de portefeuille -->
+            <div class="card" id="rebalance-card" style="margin-top: 20px;">
+                <div class="card-header">
+                    <span class="card-title">Rééquilibrage</span>
+                    <span class="status-badge warning">Bêta</span>
+                </div>
+                <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.6;">
+                    Entrez votre portefeuille actuel. L'outil calcule exactement ce qu'il faut acheter ou vendre pour atteindre les pondérations recommandées.
+                </p>
+
+                <!-- Import IBKR -->
+                <div style="margin-bottom: 14px;">
+                    <label for="ibkr-file-input"
+                        style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+                               background: var(--bg-secondary); border: 1px dashed var(--border-color);
+                               border-radius: var(--radius-sm); padding: 9px 16px; font-size: 13px;
+                               color: var(--text-secondary); transition: border-color 0.2s;"
+                        onmouseover="this.style.borderColor='var(--accent-long)'; this.style.color='var(--text-primary)'"
+                        onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-secondary)'">
+                        <span>📂</span> Importer relevé IBKR (.csv)
+                    </label>
+                    <input type="file" id="ibkr-file-input" accept=".csv"
+                        style="display: none;" onchange="importIBKR(this)">
+                    <span id="ibkr-import-status" style="font-size: 12px; color: var(--text-muted); margin-left: 10px;"></span>
+                </div>
+
+                <!-- Positions actuelles -->
+                <div id="rebalance-positions-list"></div>
+
+                <!-- Ligne d'ajout -->
+                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                    <input type="text" id="rb-ticker-input" placeholder="Ticker"
+                        style="width: 90px; background: var(--bg-secondary); border: 1px solid var(--border-color);
+                               border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text-primary);
+                               font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-transform: uppercase;"
+                        onkeypress="if(event.key==='Enter')addRebalanceRow()">
+                    <input type="number" id="rb-value-input" placeholder="Valeur ($)" min="0"
+                        style="flex:1; background: var(--bg-secondary); border: 1px solid var(--border-color);
+                               border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text-primary);
+                               font-size: 13px;"
+                        onkeypress="if(event.key==='Enter')addRebalanceRow()">
+                    <button onclick="addRebalanceRow()"
+                        style="background: var(--bg-hover); border: 1px solid var(--border-color);
+                               border-radius: var(--radius-sm); padding: 9px 14px; color: var(--text-primary);
+                               cursor: pointer; font-size: 18px; line-height: 1;">+</button>
+                </div>
+
+                <!-- Cash -->
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+                            background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 10px 14px;">
+                    <span style="font-size: 13px; color: var(--text-secondary); flex: 1;">Cash disponible ($)</span>
+                    <input type="number" id="rb-cash" placeholder="0" min="0"
+                        style="width: 130px; background: transparent; border: none; border-bottom: 1px solid var(--border-color);
+                               color: var(--accent-long); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+                               font-weight: 600; text-align: right; outline: none; padding: 4px 0;">
+                </div>
+
+                <button class="btn btn-primary btn-block" onclick="calculateRebalance()">
+                    Calculer le rééquilibrage
+                </button>
+
+                <div id="rebalance-results" style="margin-top: 16px;"></div>
+            </div>
         </div>
-        
+
         <!-- PAGE: Short Dashboard -->
         <div id="page-short" class="page">
             <div class="header short">
@@ -1715,8 +2066,87 @@
             </div>
         </div>
         
+        <!-- PAGE: Performance -->
+        <div id="page-perf" class="page">
+            <div class="header long" style="background: linear-gradient(135deg,#1e3a5f,#0f2027);">
+                <div class="header-label long">Analyse</div>
+                <h1>Performance</h1>
+                <p id="perf-period-label">Importez un relevé IBKR pour commencer</p>
+            </div>
+
+            <!-- Import zone -->
+            <label class="perf-drop-zone" for="perf-file-input" id="perf-drop-zone">
+                <div class="drop-icon">📊</div>
+                <p><strong>Importer un relevé IBKR</strong></p>
+                <p>Fichier CSV · Synthèse du réalisé</p>
+            </label>
+            <input type="file" id="perf-file-input" accept=".csv" style="display:none" onchange="loadPerfCSV(this)">
+
+            <!-- Contenu (caché jusqu'à import) -->
+            <div id="perf-content" style="display:none;">
+
+                <!-- KPIs -->
+                <div class="perf-kpi-grid">
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">Ma perf (TWR)</div>
+                        <div class="perf-kpi-value" id="kpi-twr">—</div>
+                        <div id="kpi-vs-spy"></div>
+                    </div>
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">SPY même période</div>
+                        <div class="perf-kpi-value" id="kpi-spy">—</div>
+                        <div class="perf-kpi-sub" id="kpi-spy-dates">—</div>
+                    </div>
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">P&amp;L total</div>
+                        <div class="perf-kpi-value" id="kpi-pnl">—</div>
+                        <div class="perf-kpi-sub">Réalisé + Non réalisé</div>
+                    </div>
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">Valeur finale</div>
+                        <div class="perf-kpi-value" id="kpi-nav">—</div>
+                        <div class="perf-kpi-sub" id="kpi-deposits">—</div>
+                    </div>
+                </div>
+
+                <!-- Détail réalisé / non-réalisé -->
+                <div class="perf-kpi-grid">
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">P&amp;L réalisé</div>
+                        <div class="perf-kpi-value" id="kpi-realized">—</div>
+                        <div class="perf-kpi-sub" id="kpi-winrate">—</div>
+                    </div>
+                    <div class="perf-kpi">
+                        <div class="perf-kpi-label">P&amp;L non réalisé</div>
+                        <div class="perf-kpi-value" id="kpi-unrealized">—</div>
+                        <div class="perf-kpi-sub">Positions ouvertes</div>
+                    </div>
+                </div>
+
+                <!-- Chart P&L par ticker -->
+                <div class="perf-section-title">P&amp;L par ticker</div>
+                <div class="perf-chart-wrap">
+                    <canvas id="chart-pnl" height="220"></canvas>
+                </div>
+
+                <!-- Allocation actuelle -->
+                <div class="perf-section-title">Allocation actuelle</div>
+                <div class="perf-chart-wrap" style="display:flex; align-items:center; gap:20px;">
+                    <canvas id="chart-alloc" style="max-width:160px; max-height:160px;"></canvas>
+                    <div id="alloc-legend" style="flex:1; font-size:12px;"></div>
+                </div>
+
+                <!-- Tableau détaillé -->
+                <div class="perf-section-title">Détail par titre</div>
+                <div class="card" style="padding:0; overflow:hidden;">
+                    <div id="perf-ticker-table" style="padding: 4px 16px;"></div>
+                </div>
+
+            </div>
+        </div>
+
     </main>
-    
+
     <!-- Navigation -->
     <nav class="nav-tabs">
         <button class="nav-tab active" onclick="showPage('dashboard')">
@@ -1734,6 +2164,10 @@
         <button class="nav-tab" onclick="showPage('options')">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
             Options
+        </button>
+        <button class="nav-tab" onclick="showPage('perf')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+            Perf
         </button>
         <button class="nav-tab" onclick="showPage('settings')">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
@@ -1894,18 +2328,36 @@
             const details = rec.details_mensuels || [];
             const momentumClass = rec.momentum >= 0 ? 'positive' : 'negative';
             
+            const signalColor = rec.signal === 'Investir' ? 'var(--accent-long)'
+                              : rec.signal === 'Cash'    ? 'var(--accent-blue)'
+                              : 'var(--text-muted)';
+            const perfRecentStat = rec.perf_recent_1m != null ? `
+                    <div class="detail-stat">
+                        <div class="detail-stat-value ${rec.perf_recent_1m >= 0 ? 'positive' : 'negative'}">
+                            ${rec.perf_recent_1m >= 0 ? '+' : ''}${rec.perf_recent_1m}%
+                        </div>
+                        <div class="detail-stat-label">Mois récent</div>
+                    </div>` : '';
+            const volStat = rec.vol_annualisee != null ? `
+                    <div class="detail-stat">
+                        <div class="detail-stat-value" style="color:var(--text-secondary)">${rec.vol_annualisee}%</div>
+                        <div class="detail-stat-label">Vol annuelle</div>
+                    </div>` : '';
+
             let html = `
                 <div class="detail-summary">
                     <div class="detail-stat">
                         <div class="detail-stat-value ${momentumClass}">${rec.momentum >= 0 ? '+' : ''}${rec.momentum.toFixed(2)}%</div>
                         <div class="detail-stat-label">Momentum 12-1</div>
                     </div>
+                    ${perfRecentStat}
+                    ${volStat}
                     <div class="detail-stat">
                         <div class="detail-stat-value">#${rec.rank}</div>
                         <div class="detail-stat-label">Classement</div>
                     </div>
                     <div class="detail-stat">
-                        <div class="detail-stat-value" style="color: ${rec.signal === 'Investir' ? 'var(--accent-long)' : 'var(--text-muted)'}">${rec.signal}</div>
+                        <div class="detail-stat-value" style="color: ${signalColor}">${rec.signal}</div>
                         <div class="detail-stat-label">Signal</div>
                     </div>
                     <div class="detail-stat">
@@ -2286,23 +2738,31 @@
                 return;
             }
             
-            list.innerHTML = filtered.map(r => `
+            list.innerHTML = filtered.map(r => {
+                const signalClass = r.signal === 'Investir' ? 'buy' : r.signal === 'Cash' ? 'cash' : 'sell';
+                const signalLabel = r.signal === 'Investir' ? 'Acheter' : r.signal === 'Cash' ? 'Cash' : 'Éviter';
+                const perfRecent = r.perf_recent_1m != null
+                    ? `<div class="perf-recent ${r.perf_recent_1m >= 0 ? 'positive' : 'negative'}"
+                            title="Perf mois récent (exclu du momentum)">1m: ${r.perf_recent_1m >= 0 ? '+' : ''}${r.perf_recent_1m}%</div>`
+                    : '';
+                return `
                 <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
                     <div class="stock-rank ${r.signal === 'Investir' ? 'top' : ''}">${r.rank}</div>
                     <div class="stock-info">
                         <div class="stock-ticker">
                             <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                         </div>
-                        <div class="stock-signal ${r.signal === 'Investir' ? 'buy' : 'sell'}">${r.signal === 'Investir' ? 'Acheter' : 'Éviter'}</div>
+                        <div class="stock-signal ${signalClass}">${signalLabel}</div>
                     </div>
                     <div class="stock-momentum">
                         <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                             ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                         </div>
+                        ${perfRecent}
                         ${r.allocation > 0 ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
         
         // =================================================================
@@ -2384,9 +2844,16 @@
         // =================================================================
         
         async function loadLatest() {
-            const data = await api('/history/latest');
+            const [data, regime] = await Promise.all([
+                api('/history/latest'),
+                api('/market-regime')
+            ]);
             if (data && data.details) {
+                if (regime) data.market_regime = regime;
                 displayRecommendations(data);
+            } else if (regime) {
+                // Pas encore de calcul : afficher quand même la carte marché
+                displayRecommendations({ recommandations: [], market_regime: regime });
             }
         }
         
@@ -2433,56 +2900,151 @@
         function displayRecommendations(data) {
             const investList = document.getElementById('invest-list');
             const sellList = document.getElementById('sell-list');
-            
+
             const recs = data.recommandations || data.details || [];
             const invest = recs.filter(r => r.signal === 'Investir');
-            const sell = recs.filter(r => r.signal === 'Sortir');
-            
-            // Stocker pour la recherche et les détails
+            const cash   = recs.filter(r => r.signal === 'Cash');
+            const sell   = recs.filter(r => r.signal === 'Sortir');
+
             currentRecommendations = recs;
-            
-            // Update stats
+
+            // Stocker pour export TWS et afficher le bouton si positions Investir
+            lastRecoData = { recommendations: recs.map(r => ({ ticker: r.ticker, signal: r.signal, allocation: r.allocation })) };
+            const btnExport = document.getElementById('btn-export-tws');
+            if (btnExport) btnExport.style.display = invest.length > 0 ? '' : 'none';
+
+            // --- Stats (4 cartes) ---
             document.getElementById('stat-top').textContent = invest.length;
-            document.getElementById('stat-allocation').textContent = invest.length > 0 ? 
-                (100 / invest.length).toFixed(1) + '%' : '-';
-            
+            document.getElementById('stat-allocation').textContent = invest.length > 0
+                ? invest[0].allocation + '%' : '—';
+
+            const avgMomentum = invest.length > 0
+                ? (invest.reduce((s, r) => s + r.momentum, 0) / invest.length).toFixed(1)
+                : null;
+            document.getElementById('stat-momentum-avg').textContent =
+                avgMomentum != null ? (avgMomentum >= 0 ? '+' : '') + avgMomentum + '%' : '—';
+
+            const vols = invest.filter(r => r.vol_annualisee != null).map(r => r.vol_annualisee);
+            const avgVol = vols.length > 0
+                ? (vols.reduce((s, v) => s + v, 0) / vols.length).toFixed(1)
+                : null;
+            document.getElementById('stat-vol-avg').textContent =
+                avgVol != null ? avgVol + '%' : '—';
+
+            // Couleur momentum moyen
+            const statMom = document.getElementById('stat-momentum-avg');
+            statMom.style.color = avgMomentum != null
+                ? (parseFloat(avgMomentum) >= 0 ? 'var(--accent-long)' : 'var(--accent-short)')
+                : '';
+
             // Update date
             const dateStr = data.calculation_date || data.date_calcul;
             document.getElementById('last-update').textContent = 'Dernière MAJ: ' + dateStr;
-            
-            // Afficher le toggle si on a des données
-            if (recs.length > 0) {
-                document.getElementById('toggle-all').style.display = 'flex';
+
+            if (recs.length > 0) document.getElementById('toggle-all').style.display = 'flex';
+
+            // --- Carte état du marché ---
+            const marketCard = document.getElementById('market-card');
+            const regime = data.market_regime;
+            if (regime && regime.regime !== 'UNKNOWN' && regime.spy_price != null) {
+                const isBear = regime.regime === 'BEAR';
+                const sign = regime.pct_vs_sma200 >= 0 ? '+' : '';
+                const gapColor = isBear ? 'var(--accent-short)' : 'var(--accent-long)';
+
+                // Badge
+                const badge = document.getElementById('market-regime-badge');
+                badge.className = 'market-badge ' + (isBear ? 'bear' : 'bull');
+                badge.textContent = isBear ? '⚠ BEAR' : '↑ BULL';
+
+                // Métriques
+                document.getElementById('market-spy-price').textContent = '$' + regime.spy_price;
+                document.getElementById('market-sma200').textContent    = '$' + regime.sma200;
+                const gapEl = document.getElementById('market-gap');
+                gapEl.textContent = sign + regime.pct_vs_sma200 + '%';
+                gapEl.style.color = gapColor;
+
+                // Jauge : SPY vs SMA200
+                // On mappe l'écart [-15%, +15%] sur [0%, 100%] (50% = neutre = SMA200)
+                const pct = regime.pct_vs_sma200;
+                const clampedPct = Math.max(-15, Math.min(15, pct));
+                const fillPct = 50 + (clampedPct / 15) * 50;          // 0→100
+                const markerLeft = 50;                                  // SMA200 toujours au centre
+
+                const fill = document.getElementById('market-gauge-fill');
+                if (isBear) {
+                    // Barre de gauche (rouge) : de fillPct jusqu'au centre
+                    fill.style.width  = (50 - fillPct) + '%';
+                    fill.style.marginLeft = fillPct + '%';
+                    fill.style.background = 'var(--accent-short)';
+                } else {
+                    // Barre de droite (verte) : du centre jusqu'à fillPct
+                    fill.style.width      = (fillPct - 50) + '%';
+                    fill.style.marginLeft = '50%';
+                    fill.style.background = 'var(--accent-long)';
+                }
+                document.getElementById('market-gauge-marker').style.left = markerLeft + '%';
+
+                // Explication contextuelle
+                const explications = {
+                    bull_strong:  `<strong>Tendance haussière confirmée</strong> — SPY nettement au-dessus de sa SMA200 (+${pct}%). Le momentum 12-1 est statistiquement plus fiable dans ce régime. Les signaux <em>Acheter</em> ont une probabilité de succès historiquement plus élevée.`,
+                    bull_weak:    `<strong>Tendance haussière modérée</strong> — SPY légèrement au-dessus de sa SMA200 (+${pct}%). Signal positif, mais surveiller un éventuel retournement vers la SMA200.`,
+                    bear_weak:    `<strong>Attention — marché légèrement baissier</strong> (${pct}% sous SMA200). Les drawdowns sont plus fréquents. Envisager de réduire la taille des positions.`,
+                    bear_strong:  `<strong>Marché baissier — prudence maximale</strong> (${pct}% sous SMA200). Historiquement, le momentum génère plus de faux signaux en bear market et les pertes peuvent être sévères. Considérer de rester en cash sur une partie du portefeuille.`
+                };
+                let key;
+                if (!isBear) key = pct >= 5 ? 'bull_strong' : 'bull_weak';
+                else         key = pct <= -5 ? 'bear_strong' : 'bear_weak';
+
+                document.getElementById('market-explication').innerHTML = explications[key];
+
+                // Bordure de la carte selon régime
+                marketCard.className = 'market-card ' + (isBear ? 'bear' : 'bull');
+                marketCard.style.display = 'block';
+            } else {
+                marketCard.style.display = 'none';
             }
-            
-            // Render invest list (cliquable pour voir les détails)
-            if (invest.length > 0) {
-                investList.innerHTML = invest.map((r, i) => `
+
+            // Helper : affiche la perf du mois récent (exclu du momentum 12-1)
+            function perfRecentHtml(r) {
+                if (r.perf_recent_1m == null) return '';
+                const cls = r.perf_recent_1m >= 0 ? 'positive' : 'negative';
+                const sign = r.perf_recent_1m >= 0 ? '+' : '';
+                return `<div class="perf-recent ${cls}" title="Perf mois récent (exclu du momentum 12-1)">1m récent: ${sign}${r.perf_recent_1m}%</div>`;
+            }
+
+            // --- Render invest list ---
+            const investAndCash = [...invest, ...cash];
+            if (investAndCash.length > 0) {
+                investList.innerHTML = investAndCash.map((r, i) => {
+                    const isCash = r.signal === 'Cash';
+                    return `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                        <div class="stock-rank top">${i + 1}</div>
+                        <div class="stock-rank ${isCash ? '' : 'top'}">${i + 1}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
-                            <div class="stock-signal buy">Acheter</div>
+                            <div class="stock-signal ${isCash ? 'cash' : 'buy'}">${isCash ? 'Cash (momentum <0)' : 'Acheter'}</div>
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                                 ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                             </div>
-                            <div class="allocation-badge">${r.allocation}%</div>
+                            ${perfRecentHtml(r)}
+                            ${r.vol_annualisee != null ? `<div class="perf-recent" style="opacity:0.6;" title="Volatilité annualisée (pondération inverse-vol)">vol: ${r.vol_annualisee}%</div>` : ''}
+                            ${!isCash ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
                         </div>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             } else {
                 investList.innerHTML = '<div class="empty-state"><p>Aucune action sélectionnée</p></div>';
             }
-            
-            // Render sell list (top 5 visibles, cliquables)
+
+            // --- Render sell list (top 5 visibles) ---
             if (sell.length > 0) {
                 sellList.innerHTML = sell.slice(0, 5).map((r, i) => `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                        <div class="stock-rank">${invest.length + i + 1}</div>
+                        <div class="stock-rank">${investAndCash.length + i + 1}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
@@ -2493,18 +3055,18 @@
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
                                 ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                             </div>
+                            ${perfRecentHtml(r)}
                         </div>
                     </div>
                 `).join('');
-                
-                // Afficher combien d'autres sont cachés
+
                 if (sell.length > 5) {
                     sellList.innerHTML += `<p style="text-align: center; color: var(--text-muted); font-size: 12px; padding: 8px;">+ ${sell.length - 5} autres actions</p>`;
                 }
             } else {
                 sellList.innerHTML = '<div class="empty-state"><p>--</p></div>';
             }
-            
+
             // Si le toggle est ouvert, mettre à jour la liste
             if (showAllStocks) {
                 renderAllStocks();
@@ -2512,9 +3074,296 @@
         }
         
         // =================================================================
+        // RÉÉQUILIBRAGE
+        // =================================================================
+
+        let rebalanceRows = []; // [{ticker, value}]
+        let lastRebalanceActions = []; // sauvegarde pour export TWS
+        let lastRebalanceTotalValue = 0;
+
+        function renderRebalancePositions() {
+            const list = document.getElementById('rebalance-positions-list');
+            if (rebalanceRows.length === 0) {
+                list.innerHTML = '';
+                return;
+            }
+            list.innerHTML = rebalanceRows.map((row, i) => `
+                <div class="rb-position-row">
+                    <span class="rb-position-ticker">${row.ticker}</span>
+                    <span style="font-size:11px; color:var(--text-muted); flex:0.6;">Valeur actuelle</span>
+                    <input type="number" class="rb-position-value" min="0"
+                        value="${row.value || ''}" placeholder="0"
+                        oninput="rebalanceRows[${i}].value = parseFloat(this.value)||0">
+                    <button class="rb-remove-btn" onclick="removeRebalanceRow(${i})">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function addRebalanceRow() {
+            const tickerInput = document.getElementById('rb-ticker-input');
+            const valueInput  = document.getElementById('rb-value-input');
+            const ticker = tickerInput.value.trim().toUpperCase();
+            const value  = parseFloat(valueInput.value) || 0;
+            if (!ticker) { showToast('Entrez un ticker', 'error'); return; }
+            if (rebalanceRows.find(r => r.ticker === ticker)) {
+                showToast(ticker + ' déjà dans la liste', 'error'); return;
+            }
+            rebalanceRows.push({ ticker, value });
+            tickerInput.value = '';
+            valueInput.value  = '';
+            tickerInput.focus();
+            renderRebalancePositions();
+        }
+
+        function removeRebalanceRow(i) {
+            rebalanceRows.splice(i, 1);
+            renderRebalancePositions();
+        }
+
+        function fmt(n) {
+            return n.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        }
+
+        // Export TWS depuis les recommandations directement (sans portfolio)
+        let lastRecoData = null;
+
+        function exportTWSFromReco() {
+            if (!lastRecoData || !lastRecoData.recommendations) {
+                alert('Aucune recommandation disponible.');
+                return;
+            }
+            const invest = lastRecoData.recommendations.filter(r => r.signal === 'Investir');
+            if (invest.length === 0) {
+                alert('Aucune position "Investir" à exporter.');
+                return;
+            }
+            const CASH_BUFFER_PCT = 1.0; // 1% de marge par ticker gardé en cash
+            const lines = invest.map(r => {
+                const pct = Math.max(0, r.allocation - CASH_BUFFER_PCT);
+                return `DES,${r.ticker},STK,SMART/AMEX,,,,,,${pct.toFixed(6)}`;
+            });
+            const csv  = lines.join('\n') + '\n';
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url  = URL.createObjectURL(blob);
+            const el   = document.createElement('a');
+            el.href    = url;
+            el.download = 'tws_rebalance.csv';
+            el.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportTWS() {
+            if (!lastRebalanceActions || lastRebalanceActions.length === 0) {
+                alert('Calculez d\'abord le rééquilibrage.');
+                return;
+            }
+            if (!lastRebalanceTotalValue || lastRebalanceTotalValue <= 0) return;
+
+            // Toutes les positions avec une cible > 0 (on exclut les liquidations totales)
+            const CASH_BUFFER_PCT = 1.0; // 1% de marge par ticker gardé en cash
+            const lines = [];
+            for (const a of lastRebalanceActions) {
+                if (a.target <= 0) continue;
+                const pct = Math.max(0, a.target / lastRebalanceTotalValue * 100 - CASH_BUFFER_PCT);
+                lines.push(`DES,${a.ticker},STK,SMART/AMEX,,,,,,${pct.toFixed(6)}`);
+            }
+
+            if (lines.length === 0) {
+                alert('Aucune position cible à exporter.');
+                return;
+            }
+
+            const csv = lines.join('\n') + '\n';
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url  = URL.createObjectURL(blob);
+            const el   = document.createElement('a');
+            el.href    = url;
+            el.download = 'tws_rebalance.csv';
+            el.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function importIBKR(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const status = document.getElementById('ibkr-import-status');
+            status.textContent = 'Lecture…';
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const lines = e.target.result.split('\n');
+                    let positions = [];
+                    let cash = null;
+
+                    for (const line of lines) {
+                        const cols = line.split(',');
+
+                        // Positions: "Positions ouvertes,Data,Summary,Actions,USD,TICKER,QTY,...,CLOSE,VALUE,..."
+                        if (cols[0] === 'Positions ouvertes' && cols[1] === 'Data' && cols[2] === 'Summary' && cols[3] === 'Actions') {
+                            const ticker = (cols[5] || '').trim();
+                            const qty    = parseFloat((cols[6] || '').trim());
+                            const price  = parseFloat((cols[10] || '').trim());
+                            const value  = parseFloat((cols[11] || '').trim());
+                            if (ticker && !isNaN(value) && value > 0) {
+                                positions.push({ ticker, value, price: (!isNaN(price) && price > 0) ? price : null });
+                            }
+                        }
+
+                        // Cash: "Actif net,Data,Trésorerie,VALUE,..."
+                        if (cols[0] === 'Actif net' && cols[1] === 'Data' && (cols[2] || '').trim().startsWith('Trésorerie')) {
+                            const v = parseFloat((cols[3] || '').trim());
+                            if (!isNaN(v)) cash = v;
+                        }
+                    }
+
+                    if (positions.length === 0 && cash === null) {
+                        status.textContent = '❌ Aucune donnée trouvée. Vérifiez le fichier.';
+                        return;
+                    }
+
+                    // Clear & repopulate
+                    rebalanceRows = [];
+                    for (const p of positions) {
+                        if (!rebalanceRows.find(r => r.ticker === p.ticker)) {
+                            rebalanceRows.push({ ticker: p.ticker, value: p.value, price: p.price });
+                        }
+                    }
+                    renderRebalancePositions();
+
+                    if (cash !== null) {
+                        document.getElementById('rb-cash').value = cash.toFixed(2);
+                    }
+
+                    status.textContent = `✅ ${positions.length} position(s) importée(s)` + (cash !== null ? ` + cash $${cash.toFixed(2)}` : '');
+                    // Reset file input so same file can be re-imported
+                    input.value = '';
+                } catch(err) {
+                    status.textContent = '❌ Erreur de lecture: ' + err.message;
+                }
+            };
+            reader.readAsText(file, 'UTF-8');
+        }
+
+        function calculateRebalance() {
+            const invest = currentRecommendations.filter(r => r.signal === 'Investir');
+            if (invest.length === 0) {
+                showToast('Lancez d\'abord un calcul pour obtenir des recommandations', 'error');
+                return;
+            }
+
+            // Lire les valeurs depuis les inputs (au cas où l'user a modifié sans déclencher oninput)
+            document.querySelectorAll('.rb-position-value').forEach((el, i) => {
+                rebalanceRows[i].value = parseFloat(el.value) || 0;
+            });
+
+            const cash = parseFloat(document.getElementById('rb-cash').value) || 0;
+            const portfolioMap = {};
+            for (const row of rebalanceRows) portfolioMap[row.ticker] = row.value;
+
+            const totalValue = Object.values(portfolioMap).reduce((s, v) => s + v, 0) + cash;
+            if (totalValue <= 0) {
+                showToast('Entrez au moins une valeur dans votre portefeuille', 'error');
+                return;
+            }
+
+            const THRESHOLD_PCT = 2; // ignorer les écarts < 2% de la cible (évite micro-trades)
+            const actions = [];
+
+            // Positions recommandées : calculer la cible et l'écart
+            for (const rec of invest) {
+                const target  = totalValue * rec.allocation / 100;
+                const current = portfolioMap[rec.ticker] || 0;
+                const diff    = target - current;
+                const threshold = target * THRESHOLD_PCT / 100;
+                actions.push({
+                    ticker:  rec.ticker,
+                    current: current,
+                    target:  target,
+                    diff:    diff,
+                    type:    Math.abs(diff) <= threshold ? 'hold' : (diff > 0 ? 'buy' : 'sell'),
+                    alloc:   rec.allocation
+                });
+            }
+
+            // Positions actuelles non recommandées → vendre entièrement
+            for (const [ticker, value] of Object.entries(portfolioMap)) {
+                if (value > 0 && !invest.find(r => r.ticker === ticker)) {
+                    actions.push({
+                        ticker:  ticker,
+                        current: value,
+                        target:  0,
+                        diff:    -value,
+                        type:    'sell',
+                        alloc:   0
+                    });
+                }
+            }
+
+            // Trier : ventes d'abord (libèrent du cash), puis achats, puis garder
+            const order = { sell: 0, buy: 1, hold: 2 };
+            actions.sort((a, b) => order[a.type] - order[b.type] || Math.abs(b.diff) - Math.abs(a.diff));
+
+            // Cash résultant théorique après opérations
+            const cashChange = actions.reduce((s, a) => s + (a.type === 'sell' ? -a.diff : a.type === 'buy' ? -a.diff : 0), 0);
+            const cashAfter  = cash + cashChange;
+
+            lastRebalanceActions = actions;
+            lastRebalanceTotalValue = totalValue;
+            renderRebalanceResults(actions, totalValue, cashAfter);
+        }
+
+        function renderRebalanceResults(actions, totalValue, cashAfter) {
+            const sells = actions.filter(a => a.type === 'sell');
+            const buys  = actions.filter(a => a.type === 'buy');
+            const holds = actions.filter(a => a.type === 'hold');
+
+            const labels = { buy: 'ACHETER', sell: 'VENDRE', hold: 'GARDER' };
+
+            const rowHtml = (a) => {
+                const sign = a.diff > 0 ? '+' : '';
+                const amountStr = a.type === 'hold'
+                    ? '$' + fmt(a.current)
+                    : (a.type === 'buy' ? '+$' + fmt(a.diff) : '-$' + fmt(Math.abs(a.diff)));
+                const detail = a.type === 'hold'
+                    ? `Actuel $${fmt(a.current)} · Cible $${fmt(a.target)} · écart &lt; 2%`
+                    : `Actuel $${fmt(a.current)} → Cible $${fmt(a.target)}${a.alloc > 0 ? ' (' + a.alloc + '%)' : ''}`;
+                return `
+                <div class="rb-action-row">
+                    <span class="rb-action-badge ${a.type}">${labels[a.type]}</span>
+                    <div class="rb-action-body">
+                        <div class="rb-action-ticker">${a.ticker}</div>
+                        <div class="rb-action-detail">${detail}</div>
+                    </div>
+                    <div class="rb-action-amount ${a.type}">${amountStr}</div>
+                </div>`;
+            };
+
+            const allRows = [...sells, ...buys, ...holds].map(rowHtml).join('');
+
+            const cashColor = cashAfter >= 0 ? 'var(--accent-long)' : 'var(--accent-short)';
+
+            document.getElementById('rebalance-results').innerHTML = `
+                <div style="border-top: 1px solid var(--border-subtle); padding-top: 4px;">
+                    ${allRows}
+                </div>
+                <div class="rb-summary">
+                    Portefeuille total : <strong>$${fmt(totalValue)}</strong><br>
+                    Ventes : <strong style="color:var(--accent-short)">${sells.length} positions</strong>
+                    &nbsp;·&nbsp; Achats : <strong style="color:var(--accent-long)">${buys.length} positions</strong>
+                    &nbsp;·&nbsp; Inchangé : <strong>${holds.length}</strong><br>
+                    Cash théorique après opérations : <strong style="color:${cashColor}">$${fmt(cashAfter)}</strong>
+                </div>
+                <button class="btn btn-primary btn-block" onclick="exportTWS()"
+                    style="margin-top: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color);
+                           color: var(--text-primary);">
+                    ⬇ Exporter pour TWS (BasketTrader)
+                </button>`;
+        }
+
+        // =================================================================
         // PANEL
         // =================================================================
-        
+
         async function loadPanel() {
             const data = await api('/panel');
             if (data) {
@@ -3571,6 +4420,246 @@
         // Register service worker for PWA
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/static/sw.js');
+        }
+
+        // =================================================================
+        // PERFORMANCE DASHBOARD
+        // =================================================================
+
+        let _chartPnl = null;
+        let _chartAlloc = null;
+
+        const MOIS_FR = {
+            'janvier':'01','février':'02','mars':'03','avril':'04',
+            'mai':'05','juin':'06','juillet':'07','août':'08',
+            'septembre':'09','octobre':'10','novembre':'11','décembre':'12'
+        };
+
+        function parseCsvLine(line) {
+            const out = []; let cur = ''; let inQ = false;
+            for (const ch of line) {
+                if (ch === '"') { inQ = !inQ; }
+                else if (ch === ',' && !inQ) { out.push(cur.trim()); cur = ''; }
+                else { cur += ch; }
+            }
+            out.push(cur.trim());
+            return out;
+        }
+
+        function parseFrDate(str) {
+            // "Décembre 1, 2025" → "2025-12-01"
+            const m = str.trim().match(/^(\S+)\s+(\d+),?\s+(\d{4})$/i);
+            if (!m) return null;
+            const month = MOIS_FR[m[1].toLowerCase()];
+            if (!month) return null;
+            return `${m[3]}-${month}-${m[2].padStart(2,'0')}`;
+        }
+
+        function fmtPct(v) {
+            const sign = v >= 0 ? '+' : '';
+            return sign + v.toFixed(2) + '%';
+        }
+        function fmtUsd(v) {
+            const sign = v >= 0 ? '+$' : '-$';
+            return sign + Math.abs(v).toFixed(2);
+        }
+        function colorClass(v) { return v >= 0 ? 'perf-pos' : 'perf-neg'; }
+
+        async function loadPerfCSV(input) {
+            const file = input.files[0];
+            if (!file) return;
+            input.value = '';
+            const text = await file.text();
+            const lines = text.split('\n').map(l => l.replace(/\r$/, ''));
+
+            let periodStart = null, periodEnd = null;
+            let twr = null, navStart = null, navEnd = null, deposits = null;
+            const tickers = {}; // ticker → {realized, unrealized, total}
+            const openPos = []; // {ticker, value}
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                const c = parseCsvLine(line);
+
+                // Période
+                if (c[0]==='Statement' && c[1]==='Data' && c[2]==='Period') {
+                    const parts = (c[3]||'').split(' - ');
+                    if (parts.length === 2) {
+                        periodStart = parseFrDate(parts[0]);
+                        periodEnd   = parseFrDate(parts[1]);
+                    }
+                }
+
+                // TWR
+                if (c[0]==='Actif net' && c[1]==='Data' && /^\d+\.\d+%$/.test(c[2]||'')) {
+                    twr = parseFloat(c[2]);
+                }
+
+                // NAV total
+                if (c[0]==='Actif net' && c[1]==='Data' && c[2]==='Total') {
+                    navStart = parseFloat(c[3]) || null;
+                    navEnd   = parseFloat(c[6] || c[4]) || null;
+                }
+
+                // Dépôts total USD
+                if (c[0]==='Dépôts et retraits' && c[1]==='Data' && c[2]==='Total en USD') {
+                    deposits = parseFloat(c[5] || c[3]) || null;
+                }
+
+                // P&L par ticker
+                if (c[0]==='Synthèse de la performance réalisée et non-réalisée' && c[1]==='Data' && c[2]==='Actions' && c[3] && c[3]!=='Total') {
+                    const ticker = c[3];
+                    const realized   = parseFloat(c[9])  || 0;
+                    const unrealized = parseFloat(c[14]) || 0;
+                    const total      = parseFloat(c[15]) || 0;
+                    tickers[ticker] = { realized, unrealized, total };
+                }
+
+                // Positions ouvertes
+                if (c[0]==='Positions ouvertes' && c[1]==='Data' && c[2]==='Summary' && c[3]==='Actions') {
+                    const ticker = c[5];
+                    const value  = parseFloat(c[11]) || 0;
+                    if (ticker && value > 0) openPos.push({ ticker, value });
+                }
+            }
+
+            // Afficher la période
+            document.getElementById('perf-period-label').textContent =
+                periodStart && periodEnd ? `${periodStart} → ${periodEnd}` : 'Période inconnue';
+
+            // Calculs
+            const totalPnl = Object.values(tickers).reduce((s,t) => s + t.total, 0);
+            const totalRealized   = Object.values(tickers).reduce((s,t) => s + t.realized, 0);
+            const totalUnrealized = Object.values(tickers).reduce((s,t) => s + t.unrealized, 0);
+            const winners = Object.values(tickers).filter(t => t.realized > 0).length;
+            const losers  = Object.values(tickers).filter(t => t.realized < 0).length;
+            const winRate = (winners + losers) > 0 ? Math.round(winners / (winners + losers) * 100) : null;
+
+            // KPIs
+            const twrEl = document.getElementById('kpi-twr');
+            twrEl.textContent = twr != null ? fmtPct(twr) : '—';
+            twrEl.className = 'perf-kpi-value ' + (twr >= 0 ? 'perf-pos' : 'perf-neg');
+
+            document.getElementById('kpi-pnl').textContent = fmtUsd(totalPnl);
+            document.getElementById('kpi-pnl').className = 'perf-kpi-value ' + colorClass(totalPnl);
+
+            document.getElementById('kpi-nav').textContent = navEnd != null ? '$' + navEnd.toFixed(0) : '—';
+            document.getElementById('kpi-deposits').textContent = deposits != null ? `Dépôts: $${deposits.toFixed(0)}` : '';
+
+            document.getElementById('kpi-realized').textContent = fmtUsd(totalRealized);
+            document.getElementById('kpi-realized').className = 'perf-kpi-value ' + colorClass(totalRealized);
+            document.getElementById('kpi-winrate').textContent = winRate != null ? `Taux de réussite: ${winRate}% (${winners}W / ${losers}L)` : '';
+
+            document.getElementById('kpi-unrealized').textContent = fmtUsd(totalUnrealized);
+            document.getElementById('kpi-unrealized').className = 'perf-kpi-value ' + colorClass(totalUnrealized);
+
+            // Comparaison SPY
+            document.getElementById('kpi-spy').textContent = '...';
+            document.getElementById('kpi-vs-spy').innerHTML = '';
+            if (periodStart && periodEnd) {
+                const bench = await api(`/benchmark?start=${periodStart}&end=${periodEnd}`);
+                if (bench && bench.performance_pct != null) {
+                    const spyPct = bench.performance_pct;
+                    document.getElementById('kpi-spy').textContent = fmtPct(spyPct);
+                    document.getElementById('kpi-spy').className = 'perf-kpi-value ' + colorClass(spyPct);
+                    document.getElementById('kpi-spy-dates').textContent = `${bench.start_date} → ${bench.end_date}`;
+
+                    if (twr != null) {
+                        const diff = twr - spyPct;
+                        const badge = diff >= 0
+                            ? `<span class="perf-vs-badge above">+${diff.toFixed(2)}% vs SPY</span>`
+                            : `<span class="perf-vs-badge below">${diff.toFixed(2)}% vs SPY</span>`;
+                        document.getElementById('kpi-vs-spy').innerHTML = badge;
+                    }
+                } else {
+                    document.getElementById('kpi-spy').textContent = 'N/A';
+                }
+            }
+
+            // Chart P&L par ticker
+            const tickersSorted = Object.entries(tickers)
+                .filter(([,v]) => v.total !== 0)
+                .sort((a,b) => b[1].total - a[1].total);
+
+            const pnlLabels = tickersSorted.map(([t]) => t);
+            const pnlValues = tickersSorted.map(([,v]) => parseFloat(v.total.toFixed(2)));
+            const pnlColors = pnlValues.map(v => v >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
+
+            if (_chartPnl) _chartPnl.destroy();
+            _chartPnl = new Chart(document.getElementById('chart-pnl'), {
+                type: 'bar',
+                data: {
+                    labels: pnlLabels,
+                    datasets: [{
+                        label: 'P&L ($)',
+                        data: pnlValues,
+                        backgroundColor: pnlColors,
+                        borderRadius: 4,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: ctx => ' $' + ctx.parsed.x.toFixed(2) } }
+                    },
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#888', callback: v => '$'+v } },
+                        y: { grid: { display: false }, ticks: { color: '#ccc', font: { family: 'IBM Plex Mono', size: 11 } } }
+                    }
+                }
+            });
+
+            // Chart allocation actuelle
+            if (openPos.length > 0) {
+                const allocLabels = openPos.map(p => p.ticker);
+                const allocValues = openPos.map(p => p.value);
+                const COLORS = ['#22c55e','#3b82f6','#f59e0b','#8b5cf6','#06b6d4','#f43f5e','#84cc16','#fb923c'];
+
+                if (_chartAlloc) _chartAlloc.destroy();
+                _chartAlloc = new Chart(document.getElementById('chart-alloc'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: allocLabels,
+                        datasets: [{ data: allocValues, backgroundColor: COLORS.slice(0, allocLabels.length), borderWidth: 0 }]
+                    },
+                    options: {
+                        responsive: true,
+                        cutout: '65%',
+                        plugins: { legend: { display: false }, tooltip: {
+                            callbacks: { label: ctx => ` ${ctx.label}: $${ctx.parsed.toFixed(0)}` }
+                        }}
+                    }
+                });
+
+                const totalAlloc = allocValues.reduce((s,v) => s+v, 0);
+                document.getElementById('alloc-legend').innerHTML = openPos.map((p,i) => `
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                        <span style="width:10px;height:10px;border-radius:2px;background:${COLORS[i]};flex-shrink:0;"></span>
+                        <span style="color:#ccc;flex:1;">${p.ticker}</span>
+                        <span style="font-family:'IBM Plex Mono',monospace;color:#fff;">$${p.value.toFixed(0)}</span>
+                        <span style="color:#888;font-size:11px;">${(p.value/totalAlloc*100).toFixed(1)}%</span>
+                    </div>`).join('');
+            }
+
+            // Tableau détaillé
+            const maxAbs = Math.max(...Object.values(tickers).map(t => Math.abs(t.total)), 1);
+            document.getElementById('perf-ticker-table').innerHTML = tickersSorted.map(([ticker, v]) => {
+                const barW = Math.abs(v.total) / maxAbs * 100;
+                const color = v.total >= 0 ? '#22c55e' : '#ef4444';
+                return `<div class="perf-ticker-row">
+                    <span class="perf-ticker-name">${ticker}</span>
+                    <div class="perf-ticker-bar-wrap">
+                        <div class="perf-ticker-bar" style="width:${barW}%;background:${color};"></div>
+                    </div>
+                    <span class="perf-ticker-amount" style="color:${color};">${fmtUsd(v.total)}</span>
+                    <span style="font-size:11px;color:#666;min-width:80px;text-align:right;">
+                        R:${fmtUsd(v.realized)}</span>
+                </div>`;
+            }).join('');
+
+            document.getElementById('perf-content').style.display = '';
         }
     </script>
 </body>

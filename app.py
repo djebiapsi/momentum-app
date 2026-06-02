@@ -367,123 +367,80 @@ def import_panel():
 # ROUTES - API MOMENTUM
 # =============================================================================
 
-@app.route('/api/calculate', methods=['POST'])
-@require_admin
-def calculate_momentum():
-    """Lance le calcul du momentum et génère les recommandations"""
-    
+def _run_long_calculation():
+    """
+    Logique commune : récupère le panel, calcule le momentum, sauvegarde l'historique.
+    Retourne (history, recommandations) ou lève une ValueError/RuntimeError.
+    """
     service = get_momentum_service()
     if not service:
-        return jsonify({'error': 'API Tiingo non configurée'}), 500
-    
-    # Récupérer les paramètres
+        raise RuntimeError('API Tiingo non configurée')
+
     nb_top = int(Settings.get('nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
-    date_calcul = Settings.get('date_calcul', '')
-    
-    if not date_calcul:
-        date_calcul = None  # Utiliser la date du jour
-    
-    # Récupérer le panel
+    date_calcul = Settings.get('date_calcul', '') or None
+
     actions = PanelAction.query.filter_by(is_active=True).all()
     panel = [a.ticker for a in actions]
-    
-    if not panel:
-        return jsonify({'error': 'Panel vide - ajoutez des actions'}), 400
-    
-    # Calculer le momentum
-    resultats = service.analyser_panel(panel, date_calcul)
-    
-    if not resultats['success']:
-        return jsonify({
-            'error': 'Échec du calcul',
-            'erreurs': resultats['erreurs']
-        }), 500
-    
-    # Générer les recommandations
-    recommandations = service.generer_recommandations(resultats, nb_top)
-    
-    # Sauvegarder dans l'historique
-    history = RecommendationHistory(
-        calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
-        nb_top=nb_top
-    )
-    db.session.add(history)
-    db.session.flush()  # Pour obtenir l'ID
-    
-    for r in recommandations['recommandations']:
-        detail = RecommendationDetail(
-            history_id=history.id,
-            ticker=r['ticker'],
-            momentum=r['momentum'],
-            signal=r['signal'],
-            allocation=r['allocation'],
-            rank=r['rank']
-        )
-        db.session.add(detail)
-    
-    db.session.commit()
-    
-    return jsonify({
-        'success': True,
-        'history_id': history.id,
-        **recommandations
-    })
 
-
-@app.route('/api/calculate-and-notify', methods=['POST'])
-@require_admin
-def calculate_and_notify():
-    """Lance le calcul et envoie une notification email"""
-    
-    # D'abord calculer
-    service = get_momentum_service()
-    if not service:
-        return jsonify({'error': 'API Tiingo non configurée'}), 500
-    
-    nb_top = int(Settings.get('nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
-    date_calcul = Settings.get('date_calcul', '')
-    
-    if not date_calcul:
-        date_calcul = None
-    
-    actions = PanelAction.query.filter_by(is_active=True).all()
-    panel = [a.ticker for a in actions]
-    
     if not panel:
-        return jsonify({'error': 'Panel vide'}), 400
-    
+        raise ValueError('Panel vide - ajoutez des actions')
+
     resultats = service.analyser_panel(panel, date_calcul)
-    
+
     if not resultats['success']:
-        return jsonify({'error': 'Échec du calcul', 'erreurs': resultats['erreurs']}), 500
-    
+        raise RuntimeError(f"Échec du calcul: {resultats['erreurs']}")
+
     recommandations = service.generer_recommandations(resultats, nb_top)
-    
-    # Sauvegarder
+
     history = RecommendationHistory(
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
         nb_top=nb_top
     )
     db.session.add(history)
     db.session.flush()
-    
+
     for r in recommandations['recommandations']:
-        detail = RecommendationDetail(
+        db.session.add(RecommendationDetail(
             history_id=history.id,
             ticker=r['ticker'],
             momentum=r['momentum'],
             signal=r['signal'],
             allocation=r['allocation'],
             rank=r['rank']
-        )
-        db.session.add(detail)
-    
+        ))
+
     db.session.commit()
-    
-    # Envoyer l'email
+    return history, recommandations
+
+
+@app.route('/api/calculate', methods=['POST'])
+@require_admin
+def calculate_momentum():
+    """Lance le calcul du momentum et génère les recommandations"""
+    try:
+        history, recommandations = _run_long_calculation()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+
+    return jsonify({'success': True, 'history_id': history.id, **recommandations})
+
+
+@app.route('/api/calculate-and-notify', methods=['POST'])
+@require_admin
+def calculate_and_notify():
+    """Lance le calcul et envoie une notification email"""
+    try:
+        history, recommandations = _run_long_calculation()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+
     email_svc = get_email_service()
     email_result = email_svc.envoyer_recommandations(recommandations)
-    
+
     return jsonify({
         'success': True,
         'history_id': history.id,
@@ -616,6 +573,90 @@ def admin_login():
             'success': False,
             'message': 'Mot de passe incorrect'
         }), 401
+
+
+# =============================================================================
+# ROUTES - API CACHE
+# =============================================================================
+
+@app.route('/api/benchmark', methods=['GET'])
+def get_benchmark():
+    """Perf d'un indice (défaut SPY) sur une période donnée — pour comparer au portefeuille."""
+    start_str = request.args.get('start')
+    end_str   = request.args.get('end')
+    ticker    = request.args.get('ticker', 'SPY').upper()
+
+    if not start_str or not end_str:
+        return jsonify({'error': 'Paramètres start et end requis'}), 400
+
+    svc = get_momentum_service()
+    if not svc:
+        return jsonify({'error': 'Tiingo non configuré'}), 503
+
+    from datetime import date as date_cls
+    try:
+        start_date = date_cls.fromisoformat(start_str)
+        end_date   = date_cls.fromisoformat(end_str)
+    except ValueError:
+        return jsonify({'error': 'Format de date invalide (YYYY-MM-DD)'}), 400
+
+    nb_jours = (end_date - start_date).days + 10
+    df, err = svc.recuperer_prix_journaliers(ticker, nb_jours=nb_jours)
+    if df is None:
+        return jsonify({'error': err or f'Données {ticker} indisponibles'}), 503
+
+    df_filtered = df[(df.index.strftime('%Y-%m-%d') >= start_str) &
+                     (df.index.strftime('%Y-%m-%d') <= end_str)]
+    if len(df_filtered) < 2:
+        return jsonify({'error': 'Pas assez de données pour la période'}), 400
+
+    col = 'adjClose' if 'adjClose' in df_filtered.columns else 'close'
+    start_price = float(df_filtered[col].iloc[0])
+    end_price   = float(df_filtered[col].iloc[-1])
+    perf = (end_price - start_price) / start_price * 100
+
+    return jsonify({
+        'ticker': ticker,
+        'start_date': df_filtered.index[0].strftime('%Y-%m-%d'),
+        'end_date':   df_filtered.index[-1].strftime('%Y-%m-%d'),
+        'start_price': round(start_price, 2),
+        'end_price':   round(end_price, 2),
+        'performance_pct': round(perf, 2),
+    })
+
+
+@app.route('/api/market-regime', methods=['GET'])
+def get_market_regime():
+    """Régime de marché SPY/SMA200 — appelé au chargement du dashboard."""
+    service = get_momentum_service()
+    if not service:
+        return jsonify({'regime': 'UNKNOWN', 'error': 'API Tiingo non configurée'})
+    return jsonify(service.get_market_regime())
+
+
+
+@app.route('/api/cache/clear', methods=['POST'])
+@require_admin
+def clear_cache():
+    """
+    Vide le cache en mémoire des services (prix Tiingo, screener Finviz).
+    Utile pour forcer un recalcul immédiat avec des données fraîches.
+    """
+    svc = get_momentum_service()
+    if svc:
+        svc._monthly_cache.invalidate()
+        svc._daily_cache.invalidate()
+        svc._ticker_cache.invalidate()
+
+    screener = get_screener_service()
+    if screener:
+        screener._iex_cache.invalidate()
+
+    finviz = get_finviz_screener_service()
+    if finviz:
+        finviz._screener_cache.invalidate()
+
+    return jsonify({'success': True, 'message': 'Cache vidé - prochain calcul fera des appels API frais'})
 
 
 # =============================================================================

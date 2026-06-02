@@ -25,6 +25,7 @@ from datetime import datetime
 import math
 import time
 import signal
+from cache_utils import TTLCache
 
 
 class TimeoutError(Exception):
@@ -36,9 +37,11 @@ class FinvizScreenerService:
     Service unifié pour screener via Finviz (gratuit, sans API key).
     Supporte les stratégies Long et Short.
     """
-    
+
     def __init__(self):
         self.target_count = 50
+        # Cache screener : 4h (les signaux techniques Death Cross ne changent pas à l'heure)
+        self._screener_cache = TTLCache(ttl_seconds=4 * 3600)
     
     # =========================================================================
     # STRATÉGIE LONG - Basée sur MarketCap × ADV
@@ -47,19 +50,25 @@ class FinvizScreenerService:
     def screen_long(self, progress_callback=None):
         """
         Screening pour stratégie Long selon les critères quantitatifs.
-        
+        Résultat mis en cache 4h pour éviter les scrapes Finviz redondants.
+
         Critères:
         - MarketCap >= $1B
         - ADV >= $5M (Price × Volume)
         - Score = log(MarketCap) × log(ADV)
-        
+
         Returns:
             dict: {success, tickers, stats, error}
         """
         def report(pct, msg):
             if progress_callback:
                 progress_callback(pct, 100, msg)
-        
+
+        cached, hit = self._screener_cache.get("long")
+        if hit:
+            report(100, "✅ Résultats depuis le cache (< 4h)")
+            return cached
+
         try:
             # =================================================================
             # ÉTAPE 1: Récupérer les données via Finviz Overview
@@ -156,8 +165,8 @@ class FinvizScreenerService:
                 t['rank'] = i + 1
             
             report(100, f"Terminé - {len(top_50)} actions sélectionnées")
-            
-            return {
+
+            result = {
                 'success': True,
                 'tickers': top_50,
                 'stats': {
@@ -171,7 +180,9 @@ class FinvizScreenerService:
                 },
                 'error': None
             }
-            
+            self._screener_cache.set("long", result)
+            return result
+
         except Exception as e:
             return self._error(f"Erreur: {str(e)}")
     
@@ -200,7 +211,12 @@ class FinvizScreenerService:
         def report(pct, msg):
             if progress_callback:
                 progress_callback(pct, 100, msg)
-        
+
+        cached, hit = self._screener_cache.get("short")
+        if hit:
+            report(100, "✅ Résultats depuis le cache (< 4h)")
+            return cached
+
         try:
             # =================================================================
             # ÉTAPE 1: Configuration Finviz avec critères techniques
@@ -304,8 +320,8 @@ class FinvizScreenerService:
                 t['rank'] = i + 1
             
             report(100, f"Terminé - {len(top_50)} actions sélectionnées")
-            
-            return {
+
+            result = {
                 'success': True,
                 'tickers': top_50,
                 'stats': {
@@ -319,6 +335,8 @@ class FinvizScreenerService:
                 },
                 'error': None
             }
+            self._screener_cache.set("short", result)
+            return result
             
         except Exception as e:
             # En cas d'erreur, essayer le fallback

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /c/Users/POZIDEV2/Documents/momentum-app/*.md)",
+      "Bash(python -c \"import sys; sys.stdout.reconfigure\\(encoding=''utf-8''\\); from app import app; print\\(''app OK''\\)\")",
+      "Bash(python -m pytest test_options_service.py -q)",
+      "Bash(python -c \"from momentum_service import MomentumService; print\\(''momentum_service OK''\\)\")",
+      "Bash(python -c \"import sys; sys.stdout.reconfigure\\(encoding=''utf-8''\\); from momentum_service import MomentumService; s = MomentumService\\(''test''\\); print\\(''momentum OK''\\)\")",
+      "WebFetch(domain:www.interactivebrokers.eu)",
+      "WebFetch(domain:www.interactivebrokers.com)",
+      "WebSearch",
+      "WebFetch(domain:interactivebrokers.github.io)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

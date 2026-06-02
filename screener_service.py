@@ -17,6 +17,7 @@ Résultat: 1 seul appel API !
 import requests
 import math
 from datetime import datetime
+from cache_utils import TTLCache
 
 
 class ScreenerService:
@@ -24,23 +25,26 @@ class ScreenerService:
     Service pour screener et sélectionner les meilleures actions US.
     Utilise l'endpoint IEX bulk de Tiingo (1 seul appel API).
     """
-    
+
     def __init__(self, api_key):
         """
         Initialise le service avec la clé API Tiingo.
-        
+
         Args:
             api_key: Clé API Tiingo
         """
         self.api_key = api_key
         self.base_url = "https://api.tiingo.com"
-        
+
         # Critères de filtrage
         self.min_adv = 5000000  # 5 millions $ de volume journalier
         self.target_count = 50  # Nombre de tickers à sélectionner
-        
+
         # Compteur d'appels API
         self.api_calls = 0
+
+        # Cache IEX bulk : 2h (données intraday mais screener ne nécessite pas le temps réel)
+        self._iex_cache = TTLCache(ttl_seconds=2 * 3600)
     
     def _api_call(self, url, params, timeout=60):
         """
@@ -78,26 +82,31 @@ class ScreenerService:
     def get_iex_bulk_data(self):
         """
         Récupère les données IEX (prix et volume) pour TOUS les tickers en 1 appel.
-        
+        Résultat mis en cache 2h pour éviter des appels répétés au screener.
+
         Returns:
             tuple: (dict {ticker: {price, volume, adv}}, error)
         """
+        cached, hit = self._iex_cache.get("iex_bulk")
+        if hit:
+            return cached
+
         url = f"{self.base_url}/iex"
         data, error = self._api_call(url, {}, timeout=120)
-        
+
         if error:
             return None, error
-        
+
         result = {}
         for item in data:
             ticker = item.get('ticker')
             if not ticker:
                 continue
-            
+
             # Utiliser prevClose ou tngoLast comme prix
             price = item.get('prevClose') or item.get('tngoLast') or item.get('last') or 0
             volume = item.get('volume') or 0
-            
+
             if price > 0 and volume > 0:
                 adv = price * volume
                 result[ticker] = {
@@ -105,7 +114,8 @@ class ScreenerService:
                     'volume': int(volume),
                     'adv': adv
                 }
-        
+
+        self._iex_cache.set("iex_bulk", (result, None))
         return result, None
     
     def calculate_score(self, adv):
