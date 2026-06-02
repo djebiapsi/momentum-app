@@ -1099,6 +1099,62 @@
             border-left: 3px solid var(--accent-short);
         }
         
+        /* ── Progress bar ─────────────────────────────── */
+        #progress-bar {
+            position: fixed; top: 0; left: 0; height: 2px; width: 0;
+            background: linear-gradient(90deg, #6366f1, #10b981, #6366f1);
+            background-size: 200% 100%;
+            z-index: 9999; pointer-events: none; opacity: 0;
+            transition: width 0.25s ease, opacity 0.3s ease;
+        }
+        #progress-bar.running {
+            opacity: 1;
+            animation: progress-shine 1.2s linear infinite;
+        }
+        @keyframes progress-shine {
+            0%   { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* ── Skeleton loader ──────────────────────────── */
+        @keyframes skel-shimmer {
+            0%   { background-position: -300% 0; }
+            100% { background-position:  300% 0; }
+        }
+        .skel {
+            background: linear-gradient(90deg,
+                var(--bg-hover) 25%, var(--bg-elevated) 50%, var(--bg-hover) 75%);
+            background-size: 300% 100%;
+            animation: skel-shimmer 1.4s ease infinite;
+            border-radius: 6px;
+        }
+        .skel-stock {
+            display: flex; align-items: center; gap: 14px;
+            padding: 14px 0; border-bottom: 1px solid var(--border-subtle);
+        }
+        .skel-stock:last-child { border-bottom: none; }
+        .skel-circle { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; }
+        .skel-line   { height: 12px; border-radius: 6px; margin-bottom: 0; }
+
+        /* ── Staggered slide-up ───────────────────────── */
+        @keyframes slide-up {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .anim-in {
+            opacity: 0;
+            animation: slide-up 0.26s ease-out forwards;
+            animation-delay: calc(var(--i, 0) * 50ms);
+        }
+
+        /* ── Stat number pop ──────────────────────────── */
+        @keyframes stat-pop {
+            0%   { transform: scale(1);    opacity: 1; }
+            30%  { transform: scale(0.88); opacity: 0.5; }
+            100% { transform: scale(1);    opacity: 1; }
+        }
+        .stat-pop { animation: stat-pop 0.3s ease-out; }
+
         /* Empty state */
         .empty-state {
             text-align: center;
@@ -1354,6 +1410,9 @@
     </style>
 </head>
 <body>
+    <!-- Progress bar -->
+    <div id="progress-bar"></div>
+
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
     
@@ -2863,39 +2922,110 @@
         }
         
         // =================================================================
+        // ANIMATION HELPERS
+        // =================================================================
+
+        let _pending = 0, _progTimer = null;
+
+        function _progStart() {
+            _pending++;
+            const b = document.getElementById('progress-bar');
+            clearTimeout(_progTimer);
+            b.style.transition = 'width 0.25s ease, opacity 0.3s ease';
+            b.style.width = '40%';
+            b.classList.add('running');
+        }
+
+        function _progEnd() {
+            _pending = Math.max(0, _pending - 1);
+            if (_pending > 0) return;
+            const b = document.getElementById('progress-bar');
+            b.style.width = '100%';
+            _progTimer = setTimeout(() => {
+                b.style.opacity = '0';
+                setTimeout(() => {
+                    b.classList.remove('running');
+                    b.style.width = '0';
+                    b.style.opacity = '';
+                }, 300);
+            }, 180);
+        }
+
+        function skelStocks(n = 4) {
+            return Array.from({length: n}, () => `
+                <div class="skel-stock">
+                    <div class="skel skel-circle"></div>
+                    <div style="flex:1;display:flex;flex-direction:column;gap:7px;">
+                        <div class="skel skel-line" style="width:35%;"></div>
+                        <div class="skel skel-line" style="width:55%;height:10px;"></div>
+                    </div>
+                    <div class="skel skel-line" style="width:46px;"></div>
+                </div>`).join('');
+        }
+
+        function skelCards(n = 3) {
+            return Array.from({length: n}, () => `
+                <div style="background:var(--bg-card);border:1px solid var(--border-subtle);
+                            border-radius:var(--radius-lg);padding:20px;margin-bottom:12px;">
+                    <div class="skel skel-line" style="width:40%;height:14px;margin-bottom:16px;"></div>
+                    <div class="skel skel-line" style="width:100%;margin-bottom:10px;"></div>
+                    <div class="skel skel-line" style="width:70%;margin-bottom:10px;"></div>
+                    <div class="skel skel-line" style="width:50%;"></div>
+                </div>`).join('');
+        }
+
+        function animIn(container) {
+            if (!container) return;
+            Array.from(container.children).forEach((el, i) => {
+                el.style.setProperty('--i', i);
+                el.classList.add('anim-in');
+            });
+        }
+
+        function popEl(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.remove('stat-pop');
+            void el.offsetWidth;
+            el.classList.add('stat-pop');
+        }
+
+        // =================================================================
         // API CALLS
         // =================================================================
-        
+
         async function api(endpoint, options = {}) {
+            _progStart();
             try {
-                // Ajouter le token admin si disponible
                 const headers = {
                     'Content-Type': 'application/json',
                     ...options.headers
                 };
-                
+
                 if (adminToken) {
                     headers['X-Admin-Token'] = adminToken;
                 }
-                
+
                 const response = await fetch('/api' + endpoint, {
                     ...options,
                     headers
                 });
-                
+
                 const data = await response.json();
-                
-                // Si erreur d'auth, proposer de se reconnecter
+
                 if (response.status === 401 && data.auth_required) {
                     showToast('🔒 Connexion requise', 'error');
                     openLoginModal();
+                    _progEnd();
                     return null;
                 }
-                
+
+                _progEnd();
                 return data;
             } catch (error) {
                 console.error('API Error:', error);
                 showToast('Erreur de connexion', 'error');
+                _progEnd();
                 return null;
             }
         }
@@ -2905,6 +3035,8 @@
         // =================================================================
         
         async function loadLatest() {
+            document.getElementById('invest-list').innerHTML = skelStocks(4);
+            document.getElementById('sell-list').innerHTML = skelStocks(3);
             const [data, regime] = await Promise.all([
                 api('/history/latest'),
                 api('/market-regime')
@@ -2913,7 +3045,6 @@
                 if (regime) data.market_regime = regime;
                 displayRecommendations(data);
             } else if (regime) {
-                // Pas encore de calcul : afficher quand même la carte marché
                 displayRecommendations({ recommandations: [], market_regime: regime });
             }
         }
@@ -3100,6 +3231,10 @@
             } else {
                 investList.innerHTML = '<div class="empty-state"><p>Aucune action sélectionnée</p></div>';
             }
+            animIn(investList);
+
+            // --- Stat pop ---
+            ['stat-top','stat-allocation','stat-momentum','stat-vol'].forEach(popEl);
 
             // --- Render sell list (top 5 visibles) ---
             if (sell.length > 0) {
@@ -3127,6 +3262,7 @@
             } else {
                 sellList.innerHTML = '<div class="empty-state"><p>--</p></div>';
             }
+            animIn(sellList);
 
             // Si le toggle est ouvert, mettre à jour la liste
             if (showAllStocks) {
@@ -3426,12 +3562,13 @@
         // =================================================================
 
         async function loadPanel() {
+            const list = document.getElementById('panel-list');
+            list.innerHTML = skelStocks(6);
             const data = await api('/panel');
             if (data) {
                 document.getElementById('panel-count').textContent = data.count + ' actions';
-                
                 if (data.actions.length > 0) {
-                    document.getElementById('panel-list').innerHTML = data.actions.map(a => `
+                    list.innerHTML = data.actions.map(a => `
                         <div class="panel-item">
                             <span class="panel-ticker">
                                 <a href="${getTradingViewUrl(a.ticker)}" target="_blank" rel="noopener" class="ticker-link">${a.ticker}</a>
@@ -3442,8 +3579,9 @@
                         </div>
                     `).join('');
                 } else {
-                    document.getElementById('panel-list').innerHTML = '<div class="empty-state"><p>Aucune action dans le panel</p></div>';
+                    list.innerHTML = '<div class="empty-state"><p>Aucune action dans le panel</p></div>';
                 }
+                animIn(list);
             }
         }
         
@@ -3559,9 +3697,11 @@
         // =================================================================
         
         async function loadHistory() {
+            const list = document.getElementById('history-list');
+            list.innerHTML = skelCards(4);
             const data = await api('/history');
             if (data && data.history.length > 0) {
-                document.getElementById('history-list').innerHTML = data.history.map(h => {
+                list.innerHTML = data.history.map(h => {
                     const topActions = h.details.filter(d => d.signal === 'Investir');
                     return `
                         <div class="history-item long" onclick="showHistoryDetail(${h.id})">
@@ -3573,8 +3713,9 @@
                     `;
                 }).join('');
             } else {
-                document.getElementById('history-list').innerHTML = '<div class="empty-state"><p>Aucun historique disponible</p></div>';
+                list.innerHTML = '<div class="empty-state"><p>Aucun historique disponible</p></div>';
             }
+            animIn(list);
         }
         
         async function showHistoryDetail(id) {
