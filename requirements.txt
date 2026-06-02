@@ -42,6 +42,7 @@ finvizfinance
 # IBKR / Interactive Brokers
 ib_insync
 cryptography
+docker
 
 # Tests
 pytest

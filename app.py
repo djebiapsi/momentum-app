@@ -410,10 +410,10 @@ def _run_long_calculation():
         db.session.add(RecommendationDetail(
             history_id=history.id,
             ticker=r['ticker'],
-            momentum=r['momentum'],
+            momentum=float(r['momentum']),
             signal=r['signal'],
-            allocation=r['allocation'],
-            rank=r['rank']
+            allocation=float(r['allocation']),
+            rank=int(r['rank'])
         ))
 
     db.session.commit()
@@ -926,10 +926,10 @@ def calculate_short_momentum():
         detail = ShortRecommendationDetail(
             history_id=history.id,
             ticker=r['ticker'],
-            momentum=r['momentum'],
+            momentum=float(r['momentum']),
             signal=r['signal'],
-            allocation=r['allocation'],
-            rank=r['rank']
+            allocation=float(r['allocation']),
+            rank=int(r['rank'])
         )
         db.session.add(detail)
     
@@ -1206,10 +1206,10 @@ def job_mensuel():
             detail = RecommendationDetail(
                 history_id=history.id,
                 ticker=r['ticker'],
-                momentum=r['momentum'],
+                momentum=float(r['momentum']),
                 signal=r['signal'],
-                allocation=r['allocation'],
-                rank=r['rank']
+                allocation=float(r['allocation']),
+                rank=int(r['rank'])
             )
             db.session.add(detail)
         
@@ -1610,8 +1610,9 @@ def ibkr_save_credentials():
 
 
 def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str):
-    """Met à jour IB_USERNAME/PASSWORD dans le .env hôte et redémarre le gateway."""
-    import subprocess, re
+    """Met à jour IB_USERNAME/PASSWORD dans le .env hôte et redémarre le gateway via SDK Docker."""
+    import re
+    import threading
 
     env_path = '/app/.env.host'
     port = '4001' if trading_mode == 'live' else '4002'
@@ -1634,15 +1635,38 @@ def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str
 
         with open(env_path, 'w') as f:
             f.write(content)
-
-        # Redémarrer le conteneur IB Gateway
-        subprocess.Popen(
-            ['docker', 'compose', '--profile', 'ibkr', '-f',
-             '/opt/momentum-app/docker-compose.yml', 'up', '-d', '--force-recreate', 'ib-gateway'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
     except Exception as e:
-        app.logger.warning('_ibkr_update_env_and_restart: %s', e)
+        app.logger.warning('_ibkr_update_env: %s', e)
+        return
+
+    def _restart():
+        try:
+            import docker as docker_sdk
+            client = docker_sdk.from_env()
+            # Arrêter et supprimer l'ancien conteneur si existant
+            for c in client.containers.list(all=True, filters={'name': 'ib-gateway'}):
+                c.stop()
+                c.remove()
+            # Démarrer le nouveau conteneur
+            client.containers.run(
+                'ghcr.io/gnzsnz/ib-gateway:stable',
+                name='momentum-app-ib-gateway-1',
+                detach=True,
+                restart_policy={'Name': 'unless-stopped'},
+                environment={
+                    'TWS_USERID': username,
+                    'TWS_PASSWORD': password,
+                    'TRADING_MODE': trading_mode,
+                    'TWS_SETTINGS_PATH': '/home/ibgateway/Jts',
+                    'VNC_SERVER_PASSWORD': 'changeme',
+                },
+                network='momentum-app_internal',
+            )
+            app.logger.info('IB Gateway démarré via SDK Docker')
+        except Exception as e:
+            app.logger.warning('_ibkr_restart: %s', e)
+
+    threading.Thread(target=_restart, daemon=True).start()
 
 
 @app.route('/api/ibkr/positions', methods=['GET'])
