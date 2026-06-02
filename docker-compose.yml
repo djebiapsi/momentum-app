@@ -46,6 +46,8 @@ services:
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-changeme}
       TWS_ACCEPT_INCOMING: accept
       TRUSTED_IPS: ""
+    volumes:
+      - ./ib-gateway/jts.ini:/home/ibgateway/Jts/jts.ini
     ports:
       - "127.0.0.1:5900:5900"
     networks:
