@@ -1586,23 +1586,63 @@ def ibkr_connect():
 @require_admin
 def ibkr_save_credentials():
     """
-    Sauvegarde les identifiants IBKR chiffrés dans la base.
+    Sauvegarde les identifiants IBKR, met à jour le .env et redémarre IB Gateway.
     Body JSON: { username, password, trading_mode }
     """
     data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    trading_mode = data.get('trading_mode', 'paper')
+    trading_mode = data.get('trading_mode', 'live')
 
     if not username or not password:
         return jsonify({'success': False, 'error': 'username et password requis'}), 400
 
+    # Stocker chiffré en base
     secret = app.config.get('SECRET_KEY', '')
     Settings.set('ibkr_username_enc', encrypt_credential(username, secret))
     Settings.set('ibkr_password_enc', encrypt_credential(password, secret))
     Settings.set('ibkr_trading_mode', trading_mode)
 
-    return jsonify({'success': True, 'message': 'Identifiants IBKR sauvegardés'})
+    # Mettre à jour le .env sur le serveur et redémarrer IB Gateway
+    _ibkr_update_env_and_restart(username, password, trading_mode)
+
+    return jsonify({'success': True, 'message': 'Identifiants sauvegardés — IB Gateway en cours de démarrage (~90s)'})
+
+
+def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str):
+    """Met à jour IB_USERNAME/PASSWORD dans le .env hôte et redémarre le gateway."""
+    import subprocess, re
+
+    env_path = '/app/.env.host'
+    port = '4001' if trading_mode == 'live' else '4002'
+
+    try:
+        with open(env_path, 'r') as f:
+            content = f.read()
+
+        def set_var(text, key, value):
+            pattern = rf'^{key}=.*$'
+            replacement = f'{key}={value}'
+            if re.search(pattern, text, re.MULTILINE):
+                return re.sub(pattern, replacement, text, flags=re.MULTILINE)
+            return text + f'\n{key}={value}'
+
+        content = set_var(content, 'IB_USERNAME', username)
+        content = set_var(content, 'IB_PASSWORD', password)
+        content = set_var(content, 'IB_TRADING_MODE', trading_mode)
+        content = set_var(content, 'IB_GATEWAY_PORT', port)
+
+        with open(env_path, 'w') as f:
+            f.write(content)
+
+        # Redémarrer le conteneur IB Gateway
+        subprocess.Popen(
+            ['docker', 'compose', '--profile', 'ibkr', '-f',
+             '/opt/momentum-app/docker-compose.yml', 'up', '-d', '--force-recreate', 'ib-gateway'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception as e:
+        app.logger.warning('_ibkr_update_env_and_restart: %s', e)
 
 
 @app.route('/api/ibkr/positions', methods=['GET'])
