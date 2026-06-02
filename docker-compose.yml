@@ -41,9 +41,11 @@ services:
     environment:
       TWS_USERID: ${IB_USERNAME:-}
       TWS_PASSWORD: ${IB_PASSWORD:-}
-      TRADING_MODE: ${IB_TRADING_MODE:-paper}
+      TRADING_MODE: ${IB_TRADING_MODE:-live}
       TWS_SETTINGS_PATH: /home/ibgateway/Jts
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-changeme}
+      TWS_ACCEPT_INCOMING: accept
+      TRUSTED_IPS: ""
     ports:
       - "127.0.0.1:5900:5900"
     networks:
