@@ -28,8 +28,12 @@ class IBKRService:
         self._last_error = None
 
         self._loop = asyncio.new_event_loop()
-        t = threading.Thread(target=self._loop.run_forever, daemon=True)
+        t = threading.Thread(target=self._start_loop, daemon=True)
         t.start()
+
+    def _start_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
 
     def _run(self, coro, timeout=60):
         """Exécute une coroutine dans la boucle ib_insync depuis n'importe quel thread."""
