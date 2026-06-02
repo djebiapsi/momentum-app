@@ -85,12 +85,8 @@ class IBKRService:
             raise ConnectionError('Non connecté à IB Gateway')
 
         async def _do():
-            # Demander une mise à jour du portfolio et attendre les données
-            accounts = self._ib.managedAccounts()
-            acct = accounts[0] if accounts else ''
-            self._ib.reqAccountUpdates(True, acct)
-            await asyncio.sleep(3)
-            self._ib.reqAccountUpdates(False, acct)
+            # portfolio() est alimenté automatiquement après connexion
+            await asyncio.sleep(2)
             return self._ib.portfolio()
 
         portfolio = self._run(_do())
