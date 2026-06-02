@@ -68,8 +68,8 @@ class Config:
     # Hôte du conteneur IB Gateway (nom du service Docker)
     IB_GATEWAY_HOST = os.environ.get('IB_GATEWAY_HOST', 'ib-gateway')
 
-    # Port TWS API : 4001 = live, 4002 = paper (selon TRADING_MODE)
-    IB_GATEWAY_PORT = int(os.environ.get('IB_GATEWAY_PORT', 4001))
+    # Port socat du gateway gnzsnz/ib-gateway : 4003 (forwarde vers 127.0.0.1:4001 interne)
+    IB_GATEWAY_PORT = int(os.environ.get('IB_GATEWAY_PORT', 4003))
 
     # ==========================================================================
     # PARAMÈTRES PAR DÉFAUT DE LA STRATÉGIE
