@@ -12,12 +12,10 @@ jobs:
       - name: Deploy via SSH
         env:
           SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
-          SSH_USER: ${{ secrets.HETZNER_USER }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" \
+          ssh-keyscan -H 95.216.198.241 >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@95.216.198.241 \
             "cd /opt/momentum-app && git pull origin main && docker compose build app && docker compose up -d app db && docker image prune -f"
