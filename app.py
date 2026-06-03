@@ -2075,16 +2075,25 @@ def perf_dashboard():
                 if len(spy) >= 2:
                     bench_series = (spy / spy.iloc[0]) * float(nav.iloc[0])
 
-        # 3) Métriques
-        daily_ret = nav.pct_change().dropna()
+        # 3) Métriques — basées sur le TWR (Time-Weighted Return) qui neutralise
+        # les dépôts/retraits. On chaîne les rendements quotidiens en mettant à 0
+        # les jours de flux de capitaux (variation > 25% = dépôt/retrait, pas perf).
+        raw_ret = nav.pct_change()
+        FLOW_THRESHOLD = 0.25
+        twr_ret = raw_ret.where(raw_ret.abs() <= FLOW_THRESHOLD, 0.0).fillna(0.0)
+        twr_index = (1 + twr_ret).cumprod()            # base 1.0 au départ
+        twr_index = twr_index / twr_index.iloc[0]
+
+        daily_ret = twr_ret[twr_ret != 0.0]            # pour vol/sharpe (jours de marché)
         days = max(1, (nav.index[-1] - nav.index[0]).days)
-        total_ret = float(nav.iloc[-1] / nav.iloc[0] - 1)
-        cagr = float((nav.iloc[-1] / nav.iloc[0]) ** (365.0 / days) - 1) if days >= 1 else 0.0
+        total_ret = float(twr_index.iloc[-1] - 1)
+        cagr = float(twr_index.iloc[-1] ** (365.0 / days) - 1) if days >= 1 else 0.0
         vol_ann = float(daily_ret.std() * (252 ** 0.5)) if len(daily_ret) > 1 else 0.0
         rf = 0.04
         sharpe = float((cagr - rf) / vol_ann) if vol_ann > 1e-9 else 0.0
-        cummax = nav.cummax()
-        drawdown = (nav - cummax) / cummax
+        # Drawdown sur l'indice TWR (neutralise les flux)
+        cummax = twr_index.cummax()
+        drawdown = (twr_index - cummax) / cummax
         max_dd = float(drawdown.min())
 
         # Bench CAGR pour comparaison
@@ -2093,17 +2102,20 @@ def perf_dashboard():
             bd = max(1, (bench_series.index[-1] - bench_series.index[0]).days)
             bench_cagr = float((bench_series.iloc[-1] / bench_series.iloc[0]) ** (365.0 / bd) - 1)
 
-        # 4) Rendements mensuels (heatmap)
-        monthly = nav.resample('ME').last().pct_change().dropna()
+        # 4) Rendements mensuels (heatmap) — depuis l'indice TWR
+        monthly = twr_index.resample('ME').last().pct_change().dropna()
         monthly_returns = [
             {'year': idx.year, 'month': idx.month, 'return_pct': round(float(v) * 100, 2)}
             for idx, v in monthly.items()
         ]
 
-        # 5) Séries pour les graphes (sous-échantillonnées si trop longues)
+        # 5) Séries pour les graphes
         def _fmt(s):
             return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v), 2)}
                     for idx, v in s.items()]
+
+        # Courbe de drawdown (en %) depuis l'indice TWR
+        drawdown_series = drawdown
 
         # Dividendes réels sur la période (Flex)
         from models import Dividend
@@ -2136,6 +2148,9 @@ def perf_dashboard():
             'timeseries': {
                 'portfolio': _fmt(nav),
                 'benchmark': _fmt(bench_series) if bench_series is not None else [],
+                # Performance TWR en % (neutralise dépôts/retraits) pour la perf relative
+                'portfolio_twr_pct': [{'date': idx.strftime('%Y-%m-%d'), 'value': round((float(v) - 1) * 100, 2)}
+                                      for idx, v in twr_index.items()],
             },
             'drawdown': [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
                          for idx, v in drawdown.items()],

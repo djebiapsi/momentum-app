@@ -5235,10 +5235,10 @@
                              y:{grid:{color:PERF_GRID},ticks:{color:'#888',callback:v=>'$'+(v/1000).toFixed(0)+'k'}} } }
             });
 
-            // ---- Chart performance relative (% indexé) ----
-            const base0 = portfolioPts.length ? portfolioPts[0].y : 1;
+            // ---- Chart performance relative (% — TWR pour le portefeuille) ----
             const benchBase0 = benchPts.length ? benchPts[0].y : 1;
-            const portRet = portfolioPts.map(p => ({x:p.x, y:(p.y/base0-1)*100}));
+            // TWR : neutralise les dépôts/retraits (sinon la perf est faussée)
+            const portRet = (ts.portfolio_twr_pct||[]).map(p => ({x:p.date, y:p.value}));
             const benchRet = benchPts.map(p => ({x:p.x, y:(p.y/benchBase0-1)*100}));
             _destroyChart('relperf');
             _perfCharts.relperf = new Chart(document.getElementById('chart-relative-perf'), {
