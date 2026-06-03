@@ -7,32 +7,222 @@ Adapté du script strategy.py original.
 """
 
 import math
+import logging
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date as date_cls
 from dateutil.relativedelta import relativedelta
 from cache_utils import TTLCache
+
+logger = logging.getLogger(__name__)
 
 
 class MomentumService:
     """
     Service pour calculer le momentum des actions.
+
+    Récupération des prix multi-source avec persistance :
+      1. Cache en base de données (MarketPriceBar)
+      2. IBKR (reqHistoricalData, ADJUSTED_LAST) si connecté
+      3. Tiingo (fallback)
+    Les barres récupérées sont persistées en base.
     """
 
-    def __init__(self, api_key):
+    def __init__(self, api_key, ibkr_service=None):
         """
         Initialise le service avec la clé API Tiingo.
 
         Args:
             api_key: Clé API Tiingo
+            ibkr_service: instance IBKRService optionnelle (source primaire)
         """
         self.api_key = api_key
         self.base_url = "https://api.tiingo.com/tiingo/daily"
+        self.ibkr_service = ibkr_service
 
-        # Cache en mémoire pour éviter les appels Tiingo redondants (~50 req/h)
+        # Cache en mémoire pour éviter les appels redondants
         self._monthly_cache = TTLCache(ttl_seconds=6 * 3600)   # Prix mensuels : 6h
         self._daily_cache   = TTLCache(ttl_seconds=4 * 3600)   # Prix journaliers : 4h
         self._ticker_cache  = TTLCache(ttl_seconds=24 * 3600)  # Validation ticker : 24h
+
+    def set_ibkr_service(self, ibkr_service):
+        """Injecte le service IBKR après initialisation."""
+        self.ibkr_service = ibkr_service
+
+    # =========================================================================
+    # PERSISTANCE & RÉCUPÉRATION MULTI-SOURCE
+    # =========================================================================
+
+    def _load_bars_from_db(self, ticker, date_debut=None):
+        """
+        Charge les barres journalières depuis la base.
+        Returns: DataFrame indexé par date avec colonne 'adjClose', ou None.
+        """
+        try:
+            from models import MarketPriceBar
+            q = MarketPriceBar.query.filter_by(ticker=ticker.upper())
+            if date_debut:
+                q = q.filter(MarketPriceBar.bar_date >= date_debut)
+            rows = q.order_by(MarketPriceBar.bar_date).all()
+            if not rows:
+                return None
+            df = pd.DataFrame([{'date': r.bar_date, 'adjClose': r.adj_close} for r in rows])
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+            return df.sort_index()
+        except Exception as e:
+            logger.warning('Lecture DB échouée pour %s: %s', ticker, e)
+            return None
+
+    def _db_last_date(self, ticker):
+        """Date de la barre la plus récente en base pour ce ticker, ou None."""
+        try:
+            from models import MarketPriceBar
+            row = (MarketPriceBar.query
+                   .filter_by(ticker=ticker.upper())
+                   .order_by(MarketPriceBar.bar_date.desc())
+                   .first())
+            return row.bar_date if row else None
+        except Exception:
+            return None
+
+    def _save_bars_to_db(self, ticker, bars, source):
+        """
+        Persiste/met à jour les barres en base (upsert sur ticker+date).
+        bars: liste de dicts {'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float}
+        """
+        try:
+            from models import db, MarketPriceBar
+            ticker = ticker.upper()
+            existing = {
+                r.bar_date.isoformat(): r
+                for r in MarketPriceBar.query.filter_by(ticker=ticker).all()
+            }
+            for b in bars:
+                d = b['date'][:10]
+                bd = date_cls.fromisoformat(d)
+                adj = float(b['adj_close'])
+                cl = float(b.get('close') or b['adj_close'])
+                if d in existing:
+                    existing[d].adj_close = adj
+                    existing[d].close = cl
+                    existing[d].source = source
+                else:
+                    db.session.add(MarketPriceBar(
+                        ticker=ticker, bar_date=bd,
+                        adj_close=adj, close=cl, source=source,
+                    ))
+            db.session.commit()
+        except Exception as e:
+            logger.warning('Écriture DB échouée pour %s: %s', ticker, e)
+            try:
+                from models import db
+                db.session.rollback()
+            except Exception:
+                pass
+
+    def _fetch_daily_adjusted(self, ticker, nb_jours):
+        """
+        Récupère les barres journalières ajustées avec la cascade :
+          1. Base de données (si fraîche)
+          2. IBKR (ADJUSTED_LAST) si connecté
+          3. Tiingo (fallback)
+        Persiste les nouvelles barres. Returns: (DataFrame, error_str).
+        """
+        ticker = ticker.upper().strip()
+        date_debut = (datetime.now() - relativedelta(days=nb_jours + 45)).date()
+
+        # 1) Cache DB — frais si la dernière barre date de < 4 jours (week-ends/fériés)
+        last_date = self._db_last_date(ticker)
+        if last_date and (date_cls.today() - last_date).days <= 4:
+            df = self._load_bars_from_db(ticker, date_debut)
+            if df is not None and len(df) >= 13:
+                return df, None
+
+        # 2) IBKR
+        if self.ibkr_service is not None:
+            try:
+                if self.ibkr_service.ensure_connected():
+                    duration = self._jours_to_ib_duration(nb_jours + 45)
+                    bars = self.ibkr_service.get_daily_bars(ticker, duration=duration)
+                    if bars:
+                        self._save_bars_to_db(ticker, bars, source='ibkr')
+                        df = self._bars_to_df(bars, date_debut)
+                        if df is not None and len(df) >= 13:
+                            return df, None
+            except Exception as e:
+                logger.info('IBKR indisponible pour %s (%s) — fallback Tiingo', ticker, e)
+
+        # 3) Tiingo (fallback)
+        df_tiingo, err = self._fetch_daily_tiingo(ticker, nb_jours)
+        if df_tiingo is not None:
+            bars = [
+                {'date': idx.strftime('%Y-%m-%d'),
+                 'adj_close': float(row['adjClose']),
+                 'close': float(row.get('close', row['adjClose']))}
+                for idx, row in df_tiingo.iterrows()
+            ]
+            self._save_bars_to_db(ticker, bars, source='tiingo')
+            return df_tiingo[['adjClose']], None
+
+        # 4) Dernier recours : DB même si périmée
+        df = self._load_bars_from_db(ticker, date_debut)
+        if df is not None and len(df) >= 13:
+            return df, None
+
+        return None, err or 'Aucune source de données disponible'
+
+    @staticmethod
+    def _jours_to_ib_duration(nb_jours):
+        """Convertit un nombre de jours en durée IBKR ('N D' ou 'N Y')."""
+        if nb_jours <= 365:
+            return f'{max(30, nb_jours)} D'
+        annees = math.ceil(nb_jours / 365)
+        return f'{annees} Y'
+
+    @staticmethod
+    def _bars_to_df(bars, date_debut=None):
+        """Convertit une liste de barres en DataFrame indexé par date."""
+        if not bars:
+            return None
+        df = pd.DataFrame([{'date': b['date'], 'adjClose': b['adj_close']} for b in bars])
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        df = df.sort_index()
+        if date_debut:
+            df = df[df.index >= pd.Timestamp(date_debut)]
+        return df
+
+    def _fetch_daily_tiingo(self, ticker, nb_jours):
+        """Récupère les prix journaliers bruts depuis Tiingo. Returns: (df, error)."""
+        if not self.api_key:
+            return None, 'Tiingo non configuré'
+        date_fin = datetime.now()
+        date_debut = date_fin - relativedelta(days=nb_jours + 45)
+        url = f"{self.base_url}/{ticker}/prices"
+        params = {
+            "startDate": date_debut.strftime("%Y-%m-%d"),
+            "endDate": date_fin.strftime("%Y-%m-%d"),
+            "token": self.api_key,
+            "resampleFreq": "daily",
+        }
+        try:
+            response = requests.get(url, params=params,
+                                    headers={"Content-Type": "application/json"}, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if len(data) == 0:
+                    return None, "Aucune donnée disponible"
+                df = pd.DataFrame(data)
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+                return df.sort_index(), None
+            elif response.status_code == 404:
+                return None, "Ticker non trouvé"
+            else:
+                return None, f"Erreur API: {response.status_code}"
+        except Exception as e:
+            return None, str(e)
     
     def calculer_periode_analyse(self, date_calcul):
         """
@@ -60,8 +250,9 @@ class MomentumService:
     
     def recuperer_prix_tiingo(self, ticker, date_debut, date_fin):
         """
-        Récupère les prix historiques ajustés depuis l'API Tiingo.
-        Résultat mis en cache 6h (les prix mensuels ne changent pas dans la journée).
+        Récupère les prix mensuels ajustés (multi-source : DB → IBKR → Tiingo).
+        Les barres journalières sont récupérées puis resamplées en mensuel
+        (dernier cours de chaque mois) pour le momentum 12-1.
 
         Args:
             ticker: Symbole de l'action (str)
@@ -69,52 +260,39 @@ class MomentumService:
             date_fin: Date de fin au format "YYYY-MM-DD"
 
         Returns:
-            DataFrame pandas avec les prix ou None en cas d'erreur
+            tuple (DataFrame mensuel avec 'adjClose', error_str)
         """
         cache_key = f"{ticker}_{date_debut}_{date_fin}"
         cached, hit = self._monthly_cache.get(cache_key)
         if hit:
             return cached
 
-        url = f"{self.base_url}/{ticker}/prices"
-
-        params = {
-            "startDate": date_debut,
-            "endDate": date_fin,
-            "token": self.api_key,
-            "resampleFreq": "monthly"
-        }
-
-        headers = {"Content-Type": "application/json"}
-
+        # Jours nécessaires : de date_debut jusqu'à aujourd'hui
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=30)
+            dd = datetime.strptime(date_debut, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            dd = datetime.now() - relativedelta(months=14)
+        nb_jours = (datetime.now() - dd).days + 30
 
-            if response.status_code == 200:
-                data = response.json()
+        df_daily, err = self._fetch_daily_adjusted(ticker, nb_jours)
+        if df_daily is None or df_daily.empty:
+            return None, err or "Aucune donnée disponible"
 
-                if len(data) == 0:
-                    return None, f"Aucune donnée disponible"
+        # Resample en mensuel : dernier cours ajusté de chaque mois
+        df_monthly = df_daily[['adjClose']].resample('ME').last().dropna()
 
-                df = pd.DataFrame(data)
-                df['date'] = pd.to_datetime(df['date'])
-                df.set_index('date', inplace=True)
+        # Filtrer jusqu'à date_fin (mois exclu géré par le calcul 12-1)
+        try:
+            df_monthly = df_monthly[df_monthly.index <= pd.Timestamp(date_fin) + pd.offsets.MonthEnd(0)]
+        except Exception:
+            pass
 
-                result = (df, None)
-                self._monthly_cache.set(cache_key, result)
-                return result
+        if len(df_monthly) < 13:
+            return None, f"Données mensuelles insuffisantes ({len(df_monthly)} mois)"
 
-            elif response.status_code == 404:
-                return None, f"Ticker non trouvé sur Tiingo"
-            elif response.status_code == 401:
-                return None, f"Erreur d'authentification API"
-            else:
-                return None, f"Erreur API: Code {response.status_code}"
-
-        except requests.exceptions.Timeout:
-            return None, "Timeout de la requête"
-        except requests.exceptions.RequestException as e:
-            return None, f"Erreur de connexion: {str(e)}"
+        result = (df_monthly, None)
+        self._monthly_cache.set(cache_key, result)
+        return result
     
     def calculer_momentum_12_1(self, df_prix):
         """
@@ -480,43 +658,14 @@ class MomentumService:
         if hit:
             return cached
 
-        date_fin = datetime.now()
-        date_debut = date_fin - relativedelta(days=nb_jours + 30)
+        # Cascade multi-source : DB → IBKR → Tiingo (avec persistance)
+        df, err = self._fetch_daily_adjusted(ticker, nb_jours)
+        if df is None or df.empty:
+            return None, err or "Aucune donnée disponible"
 
-        url = f"{self.base_url}/{ticker}/prices"
-
-        params = {
-            "startDate": date_debut.strftime("%Y-%m-%d"),
-            "endDate": date_fin.strftime("%Y-%m-%d"),
-            "token": self.api_key,
-            "resampleFreq": "daily"
-        }
-
-        try:
-            response = requests.get(url, params=params, headers={"Content-Type": "application/json"}, timeout=30)
-
-            if response.status_code == 200:
-                data = response.json()
-
-                if len(data) == 0:
-                    return None, "Aucune donnée disponible"
-
-                df = pd.DataFrame(data)
-                df['date'] = pd.to_datetime(df['date'])
-                df.set_index('date', inplace=True)
-                df = df.sort_index()
-
-                result = (df, None)
-                self._daily_cache.set(cache_key, result)
-                return result
-
-            elif response.status_code == 404:
-                return None, "Ticker non trouvé"
-            else:
-                return None, f"Erreur API: {response.status_code}"
-
-        except Exception as e:
-            return None, str(e)
+        result = (df, None)
+        self._daily_cache.set(cache_key, result)
+        return result
     
     def analyser_panel_short(self, panel_tickers, lookback=63, skip_recent=5, date_calcul=None):
         """

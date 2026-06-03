@@ -208,6 +208,47 @@ class IBKRService:
             'winning_count':        len(winners),
         }
 
+    def get_daily_bars(self, ticker: str, duration: str = '2 Y') -> list:
+        """
+        Récupère les barres journalières ajustées (ADJUSTED_LAST) via IBKR.
+
+        Args:
+            ticker: symbole (ex: 'AAPL')
+            duration: durée IBKR (ex: '1 Y', '2 Y', '6 M')
+
+        Returns:
+            liste de dicts [{'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float}]
+
+        Raises:
+            ConnectionError si non connecté, RuntimeError si données vides.
+        """
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        async def _do():
+            contract = Stock(ticker.upper(), 'SMART', 'USD')
+            await self._ib.qualifyContractsAsync(contract)
+            bars = await self._ib.reqHistoricalDataAsync(
+                contract, endDateTime='', durationStr=duration,
+                barSizeSetting='1 day', whatToShow='ADJUSTED_LAST', useRTH=True,
+            )
+            return bars
+
+        bars = self._run_in_conn_loop(_do(), timeout=45)
+        if not bars:
+            raise RuntimeError(f'Aucune donnée historique IBKR pour {ticker}')
+
+        result = []
+        for b in bars:
+            d = b.date
+            date_str = d.isoformat() if hasattr(d, 'isoformat') else str(d)[:10]
+            result.append({
+                'date': date_str[:10],
+                'adj_close': float(b.close),
+                'close': float(b.close),
+            })
+        return result
+
     def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> list:
         if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')

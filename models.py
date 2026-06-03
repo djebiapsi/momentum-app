@@ -279,10 +279,44 @@ class OptionRecommendation(db.Model):
         }
 
 
+class MarketPriceBar(db.Model):
+    """
+    Historique des prix de marché (barres journalières ajustées).
+    Persiste les données récupérées via IBKR ou Tiingo pour éviter les
+    appels API redondants et garder un historique fiable.
+
+    On stocke les barres JOURNALIÈRES ajustées (ADJUSTED_LAST). Le momentum
+    mensuel 12-1 est calculé en resamplant ces barres côté service.
+    """
+    __tablename__ = 'market_price_bars'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticker = db.Column(db.String(12), nullable=False, index=True)
+    bar_date = db.Column(db.Date, nullable=False)
+    adj_close = db.Column(db.Float, nullable=False)
+    close = db.Column(db.Float)
+    source = db.Column(db.String(10), nullable=False)  # 'ibkr' | 'tiingo'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('ticker', 'bar_date', name='uq_ticker_bar_date'),
+        db.Index('ix_ticker_date', 'ticker', 'bar_date'),
+    )
+
+    def to_dict(self):
+        return {
+            'ticker': self.ticker,
+            'date': self.bar_date.isoformat() if self.bar_date else None,
+            'adj_close': self.adj_close,
+            'close': self.close,
+            'source': self.source,
+        }
+
+
 def init_db(app, default_panel):
     """
     Initialise la base de données et charge les valeurs par défaut.
-    
+
     Args:
         app: Instance Flask
         default_panel: Liste des tickers par défaut

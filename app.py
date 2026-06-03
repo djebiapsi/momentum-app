@@ -95,12 +95,15 @@ ibkr_service = IBKRService(
 
 
 def get_momentum_service():
-    """Récupère ou crée le service momentum"""
+    """Récupère ou crée le service momentum (Tiingo + IBKR multi-source)"""
     global momentum_service
     if momentum_service is None:
         api_key = app.config.get('TIINGO_API_KEY')
-        if api_key:
-            momentum_service = MomentumService(api_key)
+        # Créer le service si Tiingo OU IBKR disponible (IBKR peut être source primaire)
+        if api_key or ibkr_service is not None:
+            momentum_service = MomentumService(api_key, ibkr_service=ibkr_service)
+    elif momentum_service.ibkr_service is None and ibkr_service is not None:
+        momentum_service.set_ibkr_service(ibkr_service)
     return momentum_service
 
 
@@ -769,9 +772,12 @@ def generate_panel_finviz():
         tiingo_svc = get_screener_service()
         if tiingo_svc:
             try:
-                tiingo_result = tiingo_svc.screen()
+                tiingo_result = tiingo_svc.screen_universe()
                 if tiingo_result.get('success') and tiingo_result.get('tickers'):
-                    result = {'success': True, 'tickers': tiingo_result['tickers'],
+                    # screen_universe retourne des dicts {ticker, score, ...} → extraire les symboles
+                    tiingo_symbols = [t['ticker'] if isinstance(t, dict) else t
+                                      for t in tiingo_result['tickers']]
+                    result = {'success': True, 'tickers': tiingo_symbols,
                               'stats': {'source': 'Tiingo (fallback Finviz)', **tiingo_result.get('stats', {})}}
                 else:
                     return jsonify({'success': False, 'error': result['error'],
