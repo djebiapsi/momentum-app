@@ -1508,6 +1508,12 @@
                 </div>
             </div>
 
+            <!-- Exposition brute (mode volatility scaling uniquement) -->
+            <div id="exposure-banner" style="display:none;margin-bottom:16px;padding:12px 16px;border-radius:12px;background:var(--bg-secondary,#1a1a1a);border:1px solid var(--border,#333);display:none;align-items:center;justify-content:space-between;">
+                <span style="font-size:13px;color:var(--text-secondary,#888);">Exposition brute (volatility scaling)</span>
+                <span id="exposure-value" style="font-weight:600;"></span>
+            </div>
+
             <!-- Carte état du marché (masquée jusqu'au premier calcul) -->
             <div id="market-card" class="market-card" style="display:none;">
                 <div class="market-header">
@@ -1892,12 +1898,33 @@
                     <input type="date" class="form-input" id="input-date-calcul">
                     <p class="form-hint">Vide = date du jour</p>
                 </div>
-                
+
+                <div class="form-group">
+                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="input-vol-scaling" onchange="toggleVolScalingInputs()" style="width:18px;height:18px;">
+                        Volatility Scaling
+                    </label>
+                    <p class="form-hint">Mise à l'échelle des positions par la volatilité (Barroso &amp; Santa-Clara 2014). Désactivé = pondération inverse-vol normalisée à 100%.</p>
+                </div>
+
+                <div id="vol-scaling-params" style="display:none;">
+                    <div class="form-group">
+                        <label class="form-label">Volatilité cible (%)</label>
+                        <input type="number" class="form-input" id="input-vol-target" min="1" max="100" step="0.5" value="12">
+                        <p class="form-hint">Poids par action = Vol. cible / Vol. récente du titre</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Exposition maximale (%)</label>
+                        <input type="number" class="form-input" id="input-max-exposure" min="100" max="500" step="10" value="250">
+                        <p class="form-hint">Plafond d'exposition brute (levier). Sous le plafond, le reste demeure en cash.</p>
+                    </div>
+                </div>
+
                 <button class="btn btn-primary btn-block" onclick="saveSettings()">
                     Enregistrer
                 </button>
             </div>
-            
+
             <!-- Paramètres Short -->
             <div class="section-title" style="margin-top: 24px;">Stratégie Short</div>
             <div class="card admin-only">
@@ -3171,6 +3198,21 @@
             document.getElementById('stat-vol-avg').textContent =
                 avgVol != null ? avgVol + '%' : '—';
 
+            // --- Bannière exposition brute (mode volatility scaling) ---
+            const expoBanner = document.getElementById('exposure-banner');
+            if (expoBanner) {
+                if (data.vol_scaling && data.exposition_brute != null) {
+                    const brute = data.exposition_brute;
+                    const levier = brute > 100;
+                    document.getElementById('exposure-value').innerHTML =
+                        `<span style="color:${levier ? 'var(--accent-short)' : 'var(--text-primary,#fff)'}">${brute.toFixed(1)}%</span>`
+                        + (levier ? ' <span style="font-size:11px;color:var(--accent-short);">⚡ levier</span>' : '');
+                    expoBanner.style.display = 'flex';
+                } else {
+                    expoBanner.style.display = 'none';
+                }
+            }
+
             // Couleur momentum moyen
             const statMom = document.getElementById('stat-momentum-avg');
             statMom.style.color = avgMomentum != null
@@ -3271,7 +3313,7 @@
                                 ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
                             </div>
                             ${perfRecentHtml(r)}
-                            ${r.vol_annualisee != null ? `<div class="perf-recent" style="opacity:0.6;" title="Volatilité annualisée (pondération inverse-vol)">vol: ${r.vol_annualisee}%</div>` : ''}
+                            ${r.vol_annualisee != null ? `<div class="perf-recent" style="opacity:0.6;" title="Volatilité annualisée du titre">vol: ${r.vol_annualisee}%${r.multiplier != null ? ` · ×${r.multiplier}` : ''}</div>` : ''}
                             ${!isCash ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
                         </div>
                     </div>`;
@@ -3779,12 +3821,21 @@
         // SETTINGS
         // =================================================================
         
+        function toggleVolScalingInputs() {
+            const on = document.getElementById('input-vol-scaling').checked;
+            document.getElementById('vol-scaling-params').style.display = on ? 'block' : 'none';
+        }
+
         async function loadSettings() {
             const data = await api('/settings');
             if (data) {
                 document.getElementById('input-nb-top').value = data.nb_top;
                 document.getElementById('input-date-calcul').value = data.date_calcul || '';
-                
+                document.getElementById('input-vol-scaling').checked = !!data.vol_scaling_enabled;
+                if (data.vol_target != null) document.getElementById('input-vol-target').value = data.vol_target;
+                if (data.max_exposure != null) document.getElementById('input-max-exposure').value = data.max_exposure;
+                toggleVolScalingInputs();
+
                 // Email status
                 const emailDiv = document.getElementById('email-status');
                 if (data.email_configured) {
@@ -3808,12 +3859,18 @@
         async function saveSettings() {
             const nbTop = document.getElementById('input-nb-top').value;
             const dateCalcul = document.getElementById('input-date-calcul').value;
-            
+            const volScaling = document.getElementById('input-vol-scaling').checked;
+            const volTarget = parseFloat(document.getElementById('input-vol-target').value);
+            const maxExposure = parseFloat(document.getElementById('input-max-exposure').value);
+
             const data = await api('/settings', {
                 method: 'POST',
                 body: JSON.stringify({
                     nb_top: parseInt(nbTop),
-                    date_calcul: dateCalcul
+                    date_calcul: dateCalcul,
+                    vol_scaling_enabled: volScaling,
+                    vol_target: volTarget,
+                    max_exposure: maxExposure
                 })
             });
             

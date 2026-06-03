@@ -1,0 +1,1027 @@
+==== PAGE 1 ====
+Momentum has its moments 1
+Pedro Barroso 2 and Pedro Santa-Clara 3
+Forthcoming in the Journal of Financial Economics
+First version: April 2012
+This version: November 2014
+1We thank an anonymous referee, Abhay Abhyankar, Eduardo Sch wartz, David
+Lando, Denis Chaves, James Sefton, Jos´ e Filipe Corrˆ ea Guedes, Kent Daniel, Kristian
+Miltersen, Lasse Pederson, Nigel Barradale, Pasquale Dell a Corte, Robert Kosowski,
+Soeren Hvidkjaer, and numerous seminar participants at BI N orwegian Business School,
+Copenhagen Business School, CUNEF (Colegio Universitario de Estudios Financieros),
+Imperial College London, Lubraﬁn (Luso-Brazilian Finance Meeting), Nova School
+of Business and Economics, National University of Singapor e, Rotterdam School of
+Management, Universidad Carlos III de Madrid, University o f Exeter, and University
+of New South Wales for their helpful comments and suggestion s. A previous version
+of this paper circulated with the title “Managing the Risk of Momentum.” Pedro
+Santa-Clara is supported by a grant from the Funda¸ c˜ ao para a Ciˆ encia e Tecnologia
+(PTDC/EGE-GES/101414/2008).
+2University of New South Wales. E-mail: p.barroso@unsw.edu .au.
+3Millennium Chair in Finance. Nova School of Business and Eco nomics and NBER
+and CEPR. E-mail: psc@novasbe.pt.
+Corresponding author: p.barroso@unsw.edu.au.Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 2 ====
+Abstract
+Compared with the market, value, or size factors, momentum has o ﬀered investors
+the highest Sharpe ratio. However, momentum has also had the wor st crashes,
+making the strategy unappealing to investors who dislike negative sk ewness and
+kurtosis. We ﬁnd that the risk of momentum is highly variable over time and
+predictable. Managing this risk virtually eliminates crashes and nearly doubles
+the Sharpe ratio of the momentum strategy. Risk-managed momen tum is a much
+greater puzzle than the original version.
+JEL classiﬁcation: G11; G12; G17.
+Keywords: Anomalies; Momentum; Time-varying risk; Transaction c osts of momentum.
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 3 ====
+1. Introduction
+Momentum is a pervasive anomaly in asset prices. Jegadeesh and Titm an
+(1993) ﬁnd that previous winners in the US stock market outperfo rm previous
+losers by as much as 1.49% a month. The Sharpe ratio of this strateg y exceeds the
+Sharpe ratio of the market itself, as well as the size and value facto rs. Momentum
+returns are even more of a puzzle because they are negatively cor related to those
+of the market and value factors. From 1927 to 2011, momentum ha d a monthly
+excess return of 1.75%, controlling for the Fama and French facto rs.1 Moreover,
+momentum is not just a US stock market anomaly. Momentum has bee n shown
+in European equities, emerging markets, country stock indices, ind ustry portfolios,
+currency markets, commodities, and across asset classes. 2 Grinblatt and Titman
+(1989, 1993) ﬁnd most mutual fund managers incorporate momen tum of some sort
+in their investment decisions, so relative strength strategies are w idespread among
+practitioners.
+But the remarkable performance of momentum comes with occasion al large
+crashes.3 In 1932, the winners-minus-losers (WML) strategy delivered a -91 .59%
+return in just two months. 4 In 2009, momentum experienced a crash of -73.42% in
+1This result has led researchers to use momentum as an additional ris k factor (Carhart, 1997).
+2See Rouwenhorst (1998,1999) for international evidence, Asnes s, Liew, and Stevens (1997)
+for country stock indices, Moskowitz and Grinblatt (1999) for indu stry portfolios, Okunev and
+White (2003) and Menkhof, Sarno, Schmeling, and Schrimpf (2012) for currency markets, Erb
+and Harvey (2006) for commodities, and Asness, Moskowitz, and P ederson (2013) for momentum
+across asset classes.
+3See Daniel and Moskowitz (2012)
+4Unless otherwise noted, by the performance of momentum we mean the return of the winners
+minus the return of the losers. The winners portfolio consists of th ose stocks in the top decile
+according to the distribution of cumulative returns from month t-12 to t-2. The losers portfolio
+is the group of stocks in the bottom decile of the same distribution. T hese returns can be found
+at Kenneth French’s website: http://mba.tuck.dartmouth.edu/pa ges/faculty/ken.french.
+1
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 4 ====
+three months. Even the large returns of momentum do not compen sate an investor
+with reasonable risk aversion for these sudden crashes that take decades to recover
+from.
+The two most expressive momentum crashes occurred as the mark et rebounded
+following large previous declines. One explanation for this pattern is t he time-varying
+systematic risk of the momentum strategy. Grundy and Martin (20 01) show that
+momentum has signiﬁcant negative beta following bear markets. 5 They argue that
+hedging this time-varying market exposure produces stable momen tum returns,
+but Daniel and Moskowitz (2012) show that using betas in real time d oes not
+avoid the crashes.
+In this work we propose a diﬀerent method to manage the risk of the momentum
+strategy. We estimate the risk of momentum by the realized varianc e of daily
+returns and ﬁnd that it is highly predictable. An autoregression of m onthly
+realized variances yields an out-of-sample (OOS) R-square of 57.82%. This is
+19.01 percentage points higher than a similar autoregression for th e variance of
+the market portfolio, which is already famously predictable. 6
+Managing the risk of momentum leads to substantial economic gains. We
+simply scale the long-short portfolio by its realized volatility in the prev ious six
+months, targeting a strategy with constant volatility. 7 Scaling the portfolio to have
+constant volatility over time is a more natural way of implementing the strategy
+than having a constant amount in the long and short leg with varying v olatility.
+This is widely accepted in industry, and targeting ex ante volatility is mo re common
+5Following negative returns for the overall market, winners tend to be low-beta stocks and
+the reverse for losers. Therefore, the winner-minus-losers str ategy has a negative beta.
+6See Engle and Bollerslev (1986) and Schwert (1989).
+7This aproach relies only on past data and thus does not suﬀer from lo ok-ahead bias.
+2
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 5 ====
+in practice than running constant leverage. 8 The Sharpe ratio improves from 0.53
+for unmanaged momentum to 0.97 for its risk-managed version. But the most
+important beneﬁt comes from a reduction in crash risk. The excess kurtosis drops
+from 18.24 to 2.68, and the left skew improves from -2.47 to -0.42. Th e minimum
+one-month return for raw momentum is -78.96%; for risk-managed momentum,
+-28.40%. The maximum drawdown of raw momentum is -96.69% versus - 45.20%
+for its risk-managed version.
+The performance of scaled momentum is robust in subsamples and in in ternational
+data. Managing the risk of momentum not only avoids its worse crash es but also
+improves the Sharpe ratio in the months without crashes. Risk mana gement also
+improves the Sharpe ratio of momentum in all the major markets we e xamine:
+France, Germany, Japan, and the UK. When compared with plain mom entum,
+risk management achieves a reduction in excess kurtosis and a less p ronounced left
+skew in all of these markets.
+Debate is ongoing about whether plain momentum per se is economically
+exploitable after transaction costs. For example, Lesmond, Schill, and Zhou (2004)
+infer costs indirectly from observed trading behavior and ﬁnd that momentum is
+not exploitable. We do not address this debate directly, but we asse ss the impact
+of our risk management approach on transaction costs. Although the volatility
+scaling approach implies changes in leverage from month to month, we ﬁnd that
+the turnover of the risk-managed strategy is very close to the tu rnover of the raw
+momentum strategy, so the transaction costs of both strategie s are very similar.
+Given the much higher proﬁtability of our strategy, transaction co sts are less of a
+concern than for raw momentum.
+8We thank an anonymous referee for this insight.
+3
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 6 ====
+One pertinent question is: Why does managing risk with realized varian ces
+work but using time-varying betas does not? To answer this questio n we decompose
+the volatility of momentum into a component related to the market (with time-varying
+betas) and a speciﬁc component. We ﬁnd that the market compone nt is only 23%
+of total risk on average, so most of the risk of momentum is speciﬁc to the strategy.9
+This speciﬁc risk is more persistent and predictable than the market component.
+The OOS R-square of predicting the speciﬁc component is 47.06% versus 20.87 %
+for the market component. This is why hedging with time-varying bet as fails. It
+focuses on the smaller and less predictable part of risk.
+The research that is most closely related to ours is Grundy and Mart in (2001)
+and Daniel and Moskowitz (2012). But their work studies the time-v arying systematic
+risk of momentum, while we focus on momentum’s speciﬁc risk. Our res ults have
+the distinct advantage of oﬀering investors using momentum strat egies an eﬀective
+way to manage risk without forward-looking bias. The resulting risk- managed
+strategy deepens the puzzle of momentum.
+After the dismal performance of momentum in the last ten years, s ome could
+argue it is a dead anomaly. Our results indicate that momentum is not d ead. It just
+so happens that the last ten years were rich in the kind of high-risk e pisodes that
+lead to bad momentum performance. Our paper is related to the rec ent literature
+that proposes alternative versions of momentum. Blitz, Huij, and M artens (2011)
+show that sorting stocks according to their past residuals instead of gross returns
+produces a more stable version of momentum. Chaves (2012) show s that most of
+the beneﬁt in that method comes from using the market model in the regression
+9By momentum-speciﬁc risk we do not mean ﬁrm-speciﬁc risk or idiosyn cratic risk.
+Momentum is a well-diversiﬁed portfolio and all its risk is systematic.
+4
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 7 ====
+and extends the evidence for residual momentum internationally.
+Our work is also related to the literature on whether risk factors ex plain the
+risk of momentum (Griﬃn, Ji, and Martin, 2003; Cooper, Gutierrez, and Hameed,
+2004; and Fama and French, 2012).
+This paper is structured as follows. Section 2 discusses the long-ru n properties
+of momentum returns and its exposure to crashes. Section 3 show s that momentum
+risk varies substantially over time in a highly predictable manner. Sect ion 4
+explains the risk-managed momentum strategy. In Section 5, we de compose the
+risk of momentum and study the persistence of each of its compone nts separately.
+In Section 6 we check if our ﬁndings also hold internationally. In Sectio n 7, we
+assess the robustness of our ﬁndings across subsamples and brie ﬂy refer to other
+non-reported robustness results. Finally, Section 8 presents ou r conclusions.
+2. Momentum in the long run
+We compare momentum with the Fama and French factors using a long sample
+of 85 years of monthly returns from July 1926 to December 2011(s ee Appendix A
+for a description of the data). Daniel and Moskowitz (2012) use th e same sample
+period.
+Table 1 compares descriptive statistics for momentum in the long run with
+the Fama and French factors. Buying winners and shorting losers h as provided
+large returns of 14.46% per year, with a Sharpe ratio higher than th e market. The
+winners-minus-losers strategy oﬀered an impressive performanc e for investors.
+[Insert Table 1 near here]
+5
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 8 ====
+Nothing would be puzzling about momentum’s returns if they corresp onded to a
+very high exposure to risk. However, running an ordinary least squ ares (OLS)
+regression of the WML on the Fama and French factors gives ( t-statistics in
+parentheses)
+rW M L,t = 1 .752 −0.378 rRM RF,t −0.249 rSM B,t −0.677 rHM L,t
+(7.93) ( −8.72) ( −3.58) ( −10.76)
+, (1)
+so momentum has abnormal returns of 1.75% per month after cont rolling for its
+negative exposure to the Fama and French (1992) risk factors. T his amounts to a
+21% per year abnormal return, and the negative loadings on the ris k factors imply
+that momentum diversiﬁed risk in this extended sample.
+The impressive excess returns of momentum, its high Sharpe ratio, and its
+negative relation to other risk factors, particularly the value prem ium, make it
+look like a free lunch to investors. But as Daniel and Moskowitz (2012 ) show,
+momentum has a dark side. Its large gains come at the expense of a v ery high
+excess kurtosis of 18.24 combined with a pronounced left skew of -2 .47. These two
+features of the distribution of returns of the momentum strateg y imply a very fat
+left tail, that is signiﬁcant crash risk. Momentum returns can very r apidly turn
+into a free fall, wiping out decades of returns.
+Fig. 1 shows the performance of momentum in the two most turbulen t decades
+for the strategy: the 1930s and the 2000s. In July and August 19 32, momentum
+had a cumulative return of -91.59%. From March to May 2009, momen tum had
+another large crash of -73.42%. These short periods have an endu ring impact
+on cumulative returns. For example, someone investing one dollar in t he WML
+6
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 9 ====
+strategy in July 1932 would recover it only in April 1963, 31 years late r and with
+considerably less real value. This puts the risk to momentum investin g in an
+adequate long-run perspective.
+[Insert Fig. 1 near here]
+Both in 1932 and in 2009, the crashes happened as the market rebo unded after
+experiencing large losses. 10 This leads to the question of whether investors could
+have predicted the crashes in real time and hedge them away. Grun dy and Martin
+(2001) show that momentum has a substantial time-varying loading on stock
+market risk. The strategy ranks stocks according to returns du ring a formation
+period, for example, the previous 12 months. When the stock mark et performed
+well in the formation period, winners tend to be high-beta stocks an d losers
+low-beta stocks. So the momentum strategy, by shorting losers t o buy winners,
+has by construction a signiﬁcant time-varying beta: positive after bull markets
+and negative after bear markets. They argue that hedging this tim e-varying risk
+produces stable returns, even in pre world war II data, when mome ntum performed
+poorly. In particular, the hedging strategy would be long in the mark et portfolio
+whenever momentum has negative betas, hence mitigating the eﬀec ts of rebounds
+following bear markets, which is when momentum experiences the wor st returns.
+But the hedging strategy in Grundy and Martin (2001) uses forwar d–looking
+betas, estimated with information investors did not have in real time . Using betas
+estimated solely on ex ante information does not avoid the crashes, and portfolios
+hedged in real time often perform even worse than the original mom entum strategy
+(Daniel and Moskowitz, 2012; and Barroso, 2012).
+10Daniel and Moskowitz (2012) argue this is due to the option-like payo ﬀs of distressed ﬁrms
+in bear markets.
+7
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 10 ====
+3. The time-varying risk of momentum
+One possible cause for excess kurtosis is time-varying risk [see, for example,
+Engle (1982) and Bollerslev (1987)]. The very high excess kurtosis o f 18.24 of the
+momentum strategy (more than twice the market portfolio) leads u s to study the
+dynamics of its risk and compare it with the market (RMRF), value (HM L), and
+size (SMB) risk factors.
+For each month, we compute the realized variance RVt from daily returns in
+the previous 21 sessions. Let {rd}D
+d=1 be the daily returns and {dt}T
+t=1 the time
+series of the dates of the last trading sessions of each month. The n the realized
+variance of factor i in month t is:
+RVi,t =
+20∑
+j=0
+r2
+i,dt−j.11 (2)
+Fig. 2 shows the monthly realized volatility of momentum. This varies su bstantially
+over time, from a minimum of 3.04% (annualized) to a maximum of 127.87% .
+[Insert Fig. 2 near here]
+Table 2 shows the results of AR(1) regressions of the realized varia nces of WML,
+RMRF, SMB, and HML:
+RVi,t = α + ρRVi,t−1 + εt. (3)
+[Insert Table 2 near here]
+Panel A presents the results for RMRF and WML, for which we have d aily
+11Correcting for serial correlation of daily returns does not change the results signiﬁcantly.
+8
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 11 ====
+data available from 1927:03 to 2011:12. Panel B adds the results for HML and
+SMB, for which daily data are available only from 1963:07 onward.
+Momentum returns are the most volatile. From 1927:03 to 2011:12, t he average
+realized volatility of momentum is 17.29, more than the 14.34 of the mar ket
+portfolio. For 1963:07 onward, the average realized volatility of mom entum is
+16.40, also the highest when compared with RMRF, SMB, and HML.
+In the full sample period, the standard deviation of monthly realized volatilities
+is higher for momentum (13.64) than the market (9.97). Panel B con ﬁrms this
+result compared with the other factors in the 1963:07 onward samp le. So the risk
+of momentum is the most variable.
+The risk of momentum is also the most persistent. The AR(1) coeﬃcie nt of
+the realized variance of momentum in the 1963:07 sample is 0.77, which is 0.19
+more than for the market and higher than the estimates for SMB an d HML.
+To check the out-of-sample predictability of risk, we use a training s ample of
+240 months to run an initial AR(1) and then use the estimated coeﬃc ients and last
+observation of realized variance to forecast the realized variance in the following
+month. Then each month we use an expanding window of observation s to produce
+OOS forecasts and compare these with the accuracy of the histor ical mean RV i,t.
+As a measure of goodness of ﬁt, we estimate the OOS R-square as
+R2
+i,OOS = 1 −
+T −1∑
+t=S
+(ˆαt + ˆρtRVi,t − RVi,t+1)2
+T −1∑
+t=S
+(RV i,t − RVi,t+1)2
+, (4)
+where S is the initial training sample and ˆαt, ˆρt, and RV i,t are estimated with
+information available only up to time t.
+9
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 12 ====
+The last column of Table 2 shows the OOS R-squares of each autoregression.
+The AR(1) of the realized variance of momentum has an OOS R-square of 57.82%
+(full sample), which is 50% more than the market. For the period fro m 1963:07
+to 2011:12, the OOS predictability of momentum risk is twice that of th e market.
+Hence, more than half of the risk of momentum is predictable, the hig hest level
+among risk factors.
+Fig. 3 illustrates the potential of realized variance of momentum to c ondition
+exposure to the factor. We sort the months into quintiles accordin g to the level
+of realized variance in the previous six months for each factor: the market and
+momentum. Quintile 1 is the set of months with lowest risk, and Quintile 5 is
+the one with highest risk. Then we report, for each factor, the av erage realized
+volatility, return, and Sharpe ratio in the following 12 months.
+[Insert Fig. 3 near here]
+In general, higher risk in the recent past forecasts higher risk goin g forward. This
+is true both for the market and the momentum factors, but more s o in the case of
+momentum.
+For the market, no obvious trade-oﬀ exists between risk and retu rn. This
+illustrates the well-known diﬃculty in estimating this relation [see, for e xample,
+Glosten, Jagannathan, and Runkle (1993) and Ghysels, Santa-Cla ra, and Valkanov
+(2005)]. For momentum the data show a negative relation between r isk and
+return.12
+As a result, the Sharpe ratio of the momentum factor changes con siderably
+conditional on its previous risk. In the years after a calm period, th e Sharpe ratio
+12Wang and Xu (2011) and Tang and Mu (2012) ﬁnd a similar result forec asting the return of
+momentum with the volatility of the market.
+10
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 13 ====
+is 1.72 on average. By contrast, after a turbulent period the Shar pe ratio is only
+0.28 on average.
+In Section 4, we explore the combined potential of this predictability in returns
+with the predictability of risk and show their usefulness to manage th e exposure
+to momentum.
+4. Risk-managed momentum
+We use an estimate of momentum risk to scale the exposure to the st rategy to
+have constant risk over time. 13 For each month we compute a variance forecast ˆσ2
+t
+from daily returns in the previous six months. 14 Let {rW M L,t}T
+t=1 be the monthly
+returns of momentum and {rW M L,d}D
+d=1, {dt}T
+t=1 be the daily returns and the time
+series of the dates of the last trading sessions of each month.
+The variance forecast is
+ˆσ2
+W M L,t = 21
+125∑
+j=0
+r2
+W M L,dt−1−j/126. (5)
+As W M L is a zero-investment and self-ﬁnancing strategy, we can scale it
+without constraints. We use the forecasted variance to scale the returns:
+13Volatility-scaling has been used in the time series momentum literature (Moskowitz, Ooi,
+and Pederson, 2012; and Baltas and Kosowski, 2013). But there it serves a diﬀerent purpose:
+use the asset-speciﬁc volatility to prevent the results from being d ominated by high-volatility
+assets only. We do not consider asset-speciﬁc volatilities and show t hat the persistence in risk of
+the winners-minus-losers strategy is more interesting than that o f a long-only portfolio of assets,
+such as the market.
+14We also used one-month and three-month realized variances as well as exponentially weighted
+moving average (EWMA) with half-lifes of one, three, and six months . All work well with nearly
+identical results.
+11
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 14 ====
+rW M L∗,t = σtarget
+ˆσt
+rW M L,t, (6)
+where rW M L,t is the unscaled or plain momentum, rW M L∗,t is the scaled or risk–managed
+momentum, and σtarget is a constant corresponding to the target level of volatility.
+Scaling corresponds to having a weight in the long and short legs that is diﬀerent
+from one and varies over time, but the strategy is still self-ﬁnancin g. We pick a
+target corresponding to an annualized volatility of 12%. 15
+Fig. 4 shows the weights of the scaled momentum strategy over time , interpreted
+as the dollar amount in the long or short leg. These range between th e values of
+0.13 and 2.00, reaching the most signiﬁcant lows in the early 1930s, in 2 000–02,
+and in 2008–09. On average, the weight is 0.90, slightly less than full e xposure to
+momentum.
+[Insert Fig. 4 near here]
+Table 3 provides a summary of the economic performance of W M L∗ in 1927–2011.
+The risk-managed strategy has a higher average return, with a ga in of 2.04 percentage
+points per year, with substantially less standard deviation (less 10.5 8 percentage
+points per year). As a result, the Sharpe ratio of the risk-manage d strategy
+almost doubles from 0.53 to 0.97. The information ratio of W M L∗ compared
+with conventional momentum has a very high value of 0.78.
+[Insert Table 3 near here]
+The most important gains of risk management show up in the improvem ent
+in the higher–order moments. Managing the risk of momentum lowers the excess
+15The annualized standard deviation from monthly returns is higher th an 12% as volatilities
+at daily frequency are not directly comparable with those at lower fr equencies due to the small
+positive autocorrelation of daily returns.
+12
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 15 ====
+kurtosis from a very high value of 18.24 to just 2.68 and reduces the left skew from
+-2.47 to -0.42. This practically eliminates the crash risk of momentum. Fig. 5
+shows the density function of momentum and its risk-managed version. Momentum
+has a very long left tail, which is much reduced in its risk-managed vers ion.
+[Insert Fig. 5 near here]
+Also, the risk-managed strategy no longer has variable and persist ent risk, so
+risk management does work. 16
+The beneﬁts of risk management are especially important in turbulen t times.
+Fig. 6 shows the performance of risk-managed momentum in the dec ades with
+the most impressive crashes. The scaled momentum manages to pre serve the
+investment in the 1930s. This compares very favorably with the pur e momentum
+strategy which loses 90% in the same period. In the 2000s simple mome ntum loses
+28% of wealth, because of the crash in 2009. Risk-managed moment um ends the
+decade up 88% as it not only avoids the crash but also captures part of the positive
+returns of 2007–2008.
+[Insert Fig. 6 near here]
+Risk-managed momentum depends only on ex ante information, so th is strategy
+could be implemented in real time. Running a long-short strategy to h ave constant
+volatility is closer to what real investors (such as hedge funds) try to do than
+keeping a constant amount invested in the long and short legs of the strategy.
+One relevant issue is whether time-varying weights induce such an inc rease in
+turnover that eventually oﬀsets the beneﬁts of the strategy af ter transaction costs.
+16The AR(1) coeﬃcient of monthly squared returns is only 0.14 for the scaled momentum versus
+0.40 for the original momentum. Besides, the autocorrelation of ra w momentum is signiﬁcant
+up to 15 lags but it is only 1 lag for risk-managed momentum. So persist ence in risk is much
+smaller for the risk-managed strategy.
+13
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 16 ====
+To control for this, we compute the turnover of momentum and its risk-managed
+version from stock-level data on returns and ﬁrm size from 1951:0 3 to 2010:12. 17
+We ﬁnd that the turnover of momentum is 74% per month and the tur nover of
+risk-managed momentum is 75%. The increase in turnover is low becau se ˆσt, with
+an AR(1) coeﬃcient of 0.97, is highly persistent from month to month . This
+increase in turnover is not suﬃcient to oﬀset the beneﬁts of volatilit y scaling. As
+in Grundy and Martin (2001), we calculate the round–trip cutoﬀ cos t that would
+render the proﬁts of each strategy insigniﬁcant at the 5% level. We ﬁnd that cost to
+be 1.27 percentage points for W M L and 1.75 percentage points for W M L∗. So the
+transaction costs that would remove the signiﬁcance of the proﬁt s of risk-managed
+momentum are 38% higher than for conventional momentum.
+5. Anatomy of momentum risk
+A well–documented result in the momentum literature is that momentu m has
+time–varying market betas (Grundy and Martin, 2001). This is an int uitive ﬁnding
+because, after bear markets, winners are low-beta stocks and t he losers have high
+betas. But Daniel and Moskowitz (2012) show that using betas to h edge risk in real
+time does not work. This contrasts with our ﬁnding that the risk of m omentum
+is highly predictable and managing it oﬀers strong gains. Why is scaling w ith
+forecasted variances so diﬀerent from hedging with market betas ? We show it is
+because time-varying betas are not the main source of predictabilit y in momentum
+risk.
+We use the market model to decompose the risk of momentum into ma rket and
+17We explain the computation in Appendix B. The diﬀerent period conside red relative to the
+rest of the analysis is due to data availability.
+14
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 17 ====
+speciﬁc risk:
+RVwml,t = β2
+t RVrmrf,t + σ2
+e,t. (7)
+The realized variances and betas are estimated with six months of da ily returns.
+On average, the market component β2
+t RVrmrf,t accounts for only 23% of the total
+risk of momentum. Almost 80% of the momentum risk is speciﬁc to the s trategy.
+Also, the diﬀerent components do not have the same degree of pre dictability. Table
+4 shows the results of an AR(1) on each component of risk.
+[Insert Table 4 near here]
+Either in-sample or out-of-sample, β2
+t is the least predictable component of
+momentum risk. Its OOS R-square is only 5.33%. The realized variance of
+the market also has a small OOS R-square of 6.70%. When combined, both
+elements form the market risk component and show more predictab ility with an
+OOS R-square of 20.87%, but still less than the realized variance of momen tum
+with an OOS R-square of 43.82%. The most predictable component of momentum
+variance is the speciﬁc risk with an OOS R-square of 47.06%, more than double
+the predictability of the part due to the market.
+Hedging the market risk alone, as in Daniel and Moskowitz (2012), fa ils because
+most of the risk is left out. 18
+18One alternative way to decompose the risk of the winner-minus-lose rs portfolio is to consider
+the variance of the long and short leg separately and also their cova riance. We examine this
+alternative decomposition and ﬁnd the predictability of the risk of mo mentum cannot be fully
+attributed to just one of its components. They all show predictab ility and contribute to the end
+result. We omit the results for the sake of brevity.
+15
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 18 ====
+6. International evidence
+Recently, Chaves (2012) examines the properties of momentum in an international
+sample of 21 countries. We use his data set, constructed from Dat astream stock–level
+data, to check if our results also hold in international equity market s. Chaves (2012)
+requires at least 50 listed stocks in each country, selects only thos e in the top half
+according to market capitalization, and further requires that the y comprise at least
+90% of the total market capitalization of each country. This aims to ensure that
+the stocks considered are those of the largest, most represent ative, and most liquid
+shares in each market. Then he sorts stocks into quintiles accordin g to previous
+returns from month t-12 to t-2 and computes winners-minus-losers returns at daily
+and monthly frequencies for each country. These are deﬁned as t he diﬀerence
+between the return of the winner quintile and the loser quintile. 19 Only four
+countries consistently satisfy the minimum data requirements: Fra nce, Germany,
+Japan, and the UK. We choose to report results only for these fou r countries for
+which data are more reliable and, therefore, avoid possible issues wit h missing
+observations and outliers. 20
+Table 5 shows the results of the risk-managed momentum in the four countries
+considered. The risk-managed strategy uses the realized volatility in the previous
+six months to target a constant volatility of 12% (annualized).
+[Insert Table 5 near here]
+19We thank Denis Chaves for letting us use his data. See his paper for a more detailed
+description of the international data used.
+20Nevertheless, we check if managing the risk of momentum improves it s performance in the
+other 17 countries with less reliable data. We ﬁnd that it does improve the Sharpe ratio in all of
+those countries.
+16
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 19 ====
+Managing the risk of momentum improves the mean return in all marke ts while
+reducing the standard deviation in three of the four markets (Fra nce, Germany,
+and Japan). The Sharpe ratio increases in all markets. Notably in Ja pan, where
+the momentum strategy usually fails (Asness, 2011; and Chaves 20 12), we ﬁnd that
+managing the risk of momentum triples the Sharpe ratio from an insign iﬁcant 0.08
+to (a still modest) 0.24. Risk management improves the Sharpe ratio as much as
+0.68 in the UK.
+The beneﬁts of risk management are especially strong in reducing hig her-order
+risk. The excess kurtosis is smaller in all four markets after managin g risk, and
+the skewness of momentum becomes less negative or even turns po sitive. Raw
+momentum has negatively skewed returns in all markets, and risk-managed momentum
+has a positive skew in France, Germany, and the UK. The information ratio of
+risk-managed momentum ranges between 0.34 for Japan and 1.19 in t he UK. So risk
+management adds considerable value when compared with the plain mo mentum
+strategy in all countries.
+As such, we conclude that the beneﬁts of managing the risk of mome ntum are
+pervasive in international data. Because we did not have these dat a at the time of
+writing the ﬁrst version of the paper, we see this as true out-of-s ample conﬁrmation
+of our initial results.
+7. Robustness checks
+As Fig. 1 shows, managing the risk of momentum makes a crucial diﬀer ence to
+investors at times of greater uncertainty. This begs the reverse question of whether
+there are any beneﬁts of risk management in less turbulent times, t oo. Our sample
+17
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 20 ====
+has two crashes of a very large magnitude: the ﬁrst one in 1932 and the second in
+2009. Therefore, it is pertinent to ask to what extent are our ent ire results driven
+by these two singular occurrences.
+[Insert Table 6 near here]
+To address this issue, we examine the performance of both moment um and
+risk-managed momentum in diﬀerent subsamples. First, in a simple rob ustness
+exercise, we split the sample in two halves. This shows the results are not driven
+entirely by just one of the crashes. But as the two halves include a m ajor crash,
+we also examine a sample of the entire span from 1927:03 to 2011:12 bu t excluding
+the years of these two crashes. Finally, we consider the relatively b enign period
+of 1945:01 to 2005:12. This roughly corresponds to the post-war p eriod up to the
+years preceding the Great Recession, a period in which momentum pe rformed very
+well.
+In all samples, risk management reduces excess kurtosis and left s kewness.
+Excess kurtosis drops from 23.57 to 4.53 in the ﬁrst half of the samp le and from
+7.15 to 2.47 in the no-crash sample. Skewness increases from -0.91 t o -0.17 in the
+post-war sample and from -3.05 to -0.72 in the ﬁrst half of the sample . So risk
+management reduces higher-order risk, even in samples without a m ajor crash.
+The increase in Sharpe ratio is between 0.29 in the post-war sample an d 0.47
+in the second half of the sample. Even in the samples without a major c rash,
+risk-managed momentum shows a very high information ratio of at lea st 0.60. 21
+Overall, we conclude the results are robust across subsamples and are not driven
+just by rare events in the 1930s and in the 2000s.
+21We thank an anonymous referee for this suggestion.
+18
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 21 ====
+We show that the risk of momentum is highly variable and predictable. A nother
+relevant question is whether this predictability is speciﬁc to the pred ictive variable
+used (momentum’s own lagged risk). In unreported results, we ﬁnd that forecasting
+the risk of momentum with the realized variance of the market in the p revious six
+months produces very similar results. So there are alternative met hods to manage
+the risk of momentum and exploit its predictability. 22
+Another issue is to what extend our results overlap with other rese arch on
+the predictability of momentum’s risk. Most of that literature has fo cused on the
+time-varying beta of momentum. Grundy and Martin (2001) show ho w the beta
+of the momentum strategy changes over time with lagged market re turns. Cooper,
+Gutierrez, and Hameed (2004) show that momentum’s expected re turns depend
+on the state of the market. Daniel and Moskowitz (2012) show tha t momentum
+crashes follow a pattern, occurring during reversals after a bear market. We
+compare the predictive power of our conditional variable (realized v olatility of
+momentum) with a bear market state variable. We ﬁnd that the realiz ed volatility
+of momentum has an informational content forecasting risk that is much greater
+and more robust than the bear-market indicator. (We omit these r esults for the
+sake of brevity.)
+8. Conclusion
+Unconditional momentum has a distribution that is far from normal, w ith
+huge crash risk. However, we ﬁnd the risk of momentum is highly pred ictable.
+Managing this risk eliminates exposure to crashes and increases the Sharpe ratio of
+22We thank an anonymous referee for pointing this out.
+19
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 22 ====
+the strategy substantially. This presents a new challenge to any th eory attempting
+to explain momentum.
+Our results are conﬁrmed with international evidence and robust a cross subsamples.
+The transaction costs needed to remove the signiﬁcance of risk-m anaged momentum
+proﬁts are nearly 40% higher than for conventional momentum.
+20
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 23 ====
+Appendix A. Data sources
+We obtain daily and monthly returns for the market portfolio, the hig h-minus-low,
+the small-minus-big, the ten momentum-sorted portfolios, and the risk-free (one–month
+Treasury-bill return) from Kenneth French’s data library. The mo nthly data are
+from July 1926 to December 2011, and the daily data are from July 19 63 to
+December 2011.
+For the period from July 1926 to June 1963, we use daily excess retu rns on
+the market portfolio (the value-weighted return of all ﬁrms on NYS E, Amex, and
+Nasdaq) from the Center for Research in Security Prices (CRSP). We also have
+daily returns for ten value-weighted portfolios sorted on previous momentum from
+Daniel and Moskowitz (2012). This allows us to work with a long sample o f daily
+returns for the winner-minus-losers strategy from August 1926 to December 2011.
+We use these daily returns to calculate the realized variances in the p revious 21,
+63, and 126 sessions at the end of each month.
+For the momentum portfolios, all stocks in the NYSE, Amex, and Nas daq
+universe are ranked according to returns from month t-12 to t-2, then classiﬁed
+into deciles according to NYSE cutoﬀs. So, each bin has an equal num ber of
+NYSE ﬁrms. The WML strategy is to short the lowest (loser) decile an d take a
+long position in the highest (winner) decile. Individual ﬁrms are value w eighted
+in each decile. Following the convention in the literature, the formatio n period for
+month t excludes the returns in the preceding month. See Daniel and Mosko witz
+(2012) for a more detailed description of how they build momentum po rtfolios.
+The procedures (and results) are very similar to those of the Fama and French
+momentum portfolios for the 1963:07–2011:12 sample.
+21
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 24 ====
+Appendix B. Turnover
+The turnover of a leg of the momentum portfolio is
+xt = 0.5 ×
+Nt∑
+i
+⏐
+⏐wi,t − ˜wi,t−1
+⏐
+⏐ , (8)
+where wi,t is the weight of stock i in the leg of the portfolio at time t, Nt is the
+number of stocks in the leg of the portfolio at time t, r i,t is the return of asset i at
+time t, and ˜wi,t−1 is the weight in the current period right before trading
+˜wi,t−1 = wi,t−1(1 + ri,t)
+Nt∑
+i
+wi,t−1(1 + ri,t)
+. (9)
+The turnover of the W M L is simply the sum of the turnover of the short and the
+long leg. In the case of the risk-managed portfolio, we compute for each leg the
+turnover as
+xt = 0.5 ×
+Nt∑
+i
+⏐
+⏐
+⏐
+⏐
+wi,t
+Lt
+− ˜wi,t−1
+Lt−1
+⏐
+⏐
+⏐
+⏐ , (10)
+where Lt = σtarget/ˆσt. The turnover of W M L∗ is simply the sum of the turnover
+of the long with the short leg.
+22
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 25 ====
+References
+Asness, C., 2011. Momentum in Japan: the exception that proves t he rule. Journal
+of Portfolio Management 37, 67-75.
+Asness, C., Liew, J., Stevens, R., 1997. Parallels between the cross -sectional
+predictability of stock and country returns. Journal of Portfolio Management 23,
+79-87.
+Asness, C., Moskowitz, T., Pedersen, L., 2013. Value and momentum everywhere.
+Journal of Finance 58, 929-986.
+Baltas, A., Kosowski, R., 2013. Momentum strategies in futures mar kets
+and trend-following funds. European Financial Data Institute – Fr ench
+Finance Association (EUROFIDAI–AFFI) paper. Finance meeting, P aris, France,
+December 2012.
+Barroso, P., 2012. The bottom-up beta of momentum. Unpublished working paper.
+University of New South Wales, Sydney.
+Blitz, D., Huij, J., Martens, M., 2011. Residual momentum. Journal o f Empirical
+Finance 18, 506-521.
+Bollerslev, T., 1987. A conditional heteroskedastic time series mode l for speculative
+prices and rates of return. Review of Economics and Statistics 69, 542-547.
+Carhart, M., 1997. On persistence in mutual fund performance. J ournal of Finance
+52, 57-82.
+23
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 26 ====
+Chaves, D., 2012. Eureka! A momentum strategy that also works in Japan.
+Unpublished working paper. Research Aﬃliates, Newport Beach, Ca lifornia.
+Cooper, M., Gutierrez, R., Hameed, A., 2004. Market states and mo mentum.
+Journal of Finance 59, 1345-1366.
+Daniel, K., Moskowitz, T., 2012. Momentum crashes. Unpublished wor king paper.
+Columbia University, New York.
+Engle, R., 1982. Autoregressive conditional heteroscedasticity w ith estimates of
+the variance of UK inﬂation. Econometrica 50, 987-1008.
+Engle, R., Bollerslev, T., 1986. Modeling the persistence of conditiona l variances.
+Econometric Reviews 5, 1-50.
+Erb, C., Harvey, C., 2006. The strategic and tactical value of comm odity futures.
+Financial Analysts Journal 62, 69-97.
+Fama, E., French, K., 1992. The cross section of expected stock r eturns. Journal
+of Finance 47, 427-465.
+Fama, E., French, K., 2012. Size, value, and momentum in internation al stock
+returns. Journal of Financial Economics 105, 457-472.
+Ghysels, E., Santa-Clara, P., Valkanov, R., 2005. There is a risk-ret urn trade–oﬀ
+after all. Journal of Financial Economics 76, 509-548.
+Glosten, L., Jagannathan, R., Runkle, D., 1993. On the relation betw een the
+expected value and the volatility of the nominal excess return on st ocks. Journal
+of Finance 48, 1779–1801.
+24
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 27 ====
+Griﬃn, J., Ji, X., Martin, J., 2003. Momentum investing and business cy cle risk:
+evidence from pole to pole. Journal of Finance 53, 2515-2546.
+Grinblatt, M., Titman, S., 1989. Mutual fund performance: an analy sis of quarterly
+portfolio holdings. Journal of Business 62, 394-415.
+Grinblatt, M., Titman, S., 1993. Performance measurement without benchmarks:
+an examination of mutual fund returns. Journal of Business 66, 4 7-68.
+Grundy, B., Martin, J., 2001. Understanding the nature of the risk s and the source
+of the rewards to momentum investing. Review of Financial Studies 1 4, 29-78.
+Jegadeesh, N., Titman, S., 1993. Returns to buying winners and sellin g losers:
+implications for stock market eﬃciency. Journal of Finance 48, 65- 91.
+Lesmond, D., Schill, M., Zhou, C., 2004. The illusory nature of momentu m proﬁts.
+Journal of Financial Economics 71, 349-380.
+Menkhoﬀ, L., Sarno, L., Schmeling, M., Schrimpf, A., 2012. Currency momentum
+strategies. Journal of Financial Economics 106, 620-684.
+Moskowitz, T., Ooi, Y., Pedersen, L., 2012. Time series momentum. Jo urnal of
+Financial Economics 104, 228-250.
+Moskowitz, T., Grinblatt, M., 1999. Do industries explain momentum? J ournal of
+Finance 54, 1249-1290.
+Okunev, J., White, D., 2003. Do momentum-based strategies still wo rk in foreign
+currency markets? Journal of Financial and Quantitative Analysis 38, 425-447.
+25
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 28 ====
+Schwert, G., 1989. Why does stock market volatility change over tim e? Journal of
+Finance 44, 1115-1154.
+Rouwenhorst, K., 1998. International momentum strategies. Jo urnal of Finance
+53, 267-284.
+Rouwenhorst, K., 1999. Local return factors and turnover in em erging stock
+markets. Journal of Finance 54, 1439-1464.
+Tang, F., Mu, J., 2012. Market volatility and momentum. Unpublished w orking
+paper. University of Texas, Austin.
+Wang, K., Xu, W., 2011. Market volatility and momentum. Unpublished w orking
+paper. University of Toronto, Toronto.
+26
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 29 ====
+Table 1
+Descriptive statistics
+The long-run performance of momentum (WML, winners minus lo sers) is compared
+with the Fama and French risk factors: market (RMRF), size (S MB), and value
+(HML). All statistics are computed with monthly returns. Re ported are the maximum
+and minimum one-month returns observed in the sample, the me an average excess
+return (annualized), the (annualized) standard deviation of each factor, excess kurtosis,
+skewness, and (annualized) Sharpe ratio. The sample return s are from 1927:03 to
+2011:12.
+Portfolio Maximum Minimum Mean Standard Kurtosis Skewness Sharpe
+deviation ratio
+RMRF 38.27 -29.04 7.33 18.96 7.35 0.17 0.39
+SMB 39.04 -16.62 2.99 11.52 21.99 2.17 0.26
+HML 35.48 -13.45 4.50 12.38 15.63 1.84 0.36
+WML 26.18 -78.96 14.46 27.53 18.24 -2.47 0.53
+27
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 30 ====
+Table 2
+AR(1) of one-month realized variances
+The realized variances are the sum of squared daily returns i n each month. The
+AR(1) regresses the non-overlapping realized variance of e ach month on its own lagged
+value and a constant. The out-of-sample (OOS) R-square uses the ﬁrst 240 months
+to run an initial regression, so producing an OOS forecast. I t then uses an expanding
+window of observations until the end of the sample. In Panel A , the sample period is
+from 1927:03 to 2011:12. In Panel B, we repeat the regression s for RMRF (market risk
+factor) and WML (winner minus losers) and add the same inform ation for HML (high
+minus low) and SMB (small minus big). The last two columns sho w, respectively, the
+average realized volatility and its standard deviation.
+Portfolio α ρ R 2 OOS R2 σ σ σ
+(t-statistic) (t-statistic)
+Panel A: 1927:03 to 2011:12
+RMRF 0.0010 0.60 36.03 38.81 14.34 9.97
+(6.86) (23.92)
+WML 0.0012 0.70 49.10 57.82 17.29 13.64
+(5.21) (31.31)
+Panel B: 1963:07 to 2011:12
+RMRF 0.0009 0.58 33.55 25.46 13.76 8.48
+(5.65) (17.10)
+SMB 0.0004 0.33 10.68 -8.41 7.36 3.87
+(8.01) (8.32)
+HML 0.0001 0.73 53.55 53.37 6.68 4.29
+(4.88) (25.84)
+WML 0.0009 0.77 59.71 55.26 16.40 13.77
+(3.00) (29.29)
+28
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 31 ====
+Table 3
+Momentum and the economic gains from scaling
+The ﬁrst row presents as a benchmark the economic performanc e of plain momentum
+(WML) from 1927:03 to 2011:12. The second row presents the perfor mance of
+risk-managed momentum ( WML* ). The risk-managed momentum uses the realized
+variance in the previous six months to scale the exposure to m omentum. The mean,
+the standard deviation, the Sharpe ratio, and the informati on ratio are annualized. To
+obtain an information ratio that does not depend on the volat ility target we divided
+previously both ( WML) and ( WML*) by their respective standard deviations.
+Portfolio Maximum Minimum Mean Standard Kurtosis Skewness Sharpe Information
+deviation ratio ratio
+W M L 26.18 -78.96 14.46 27.53 18.24 -2.47 0.53 —
+W M L∗ 21.95 -28.40 16.50 16.95 2.68 -0.42 0.97 0.78
+Table 4
+Decomposition of the risk of momentum
+Each row shows the results of an AR(1) for six-month, non-ove rlapping periods. The
+ﬁrst row is for the realized variance of the WML (winners minu s losers); the second one,
+the realized variance of the market. The third row is squared beta, estimated as a simple
+regression of 126 daily returns of the WML on RMRF (market ris k factor). The fourth
+row is the systematic component of momentum risk; the last ro w, the speciﬁc component.
+The out of sample R-squares use an expanding window of observations after an in itial
+in-sample period of 20 years.
+Variable α ρ R 2 R2
+OOS
+(t-statistic) (t-statistic)
+σ2
+wml 0.0012 0.70 48.67 43.82
+(2.59) (12.58)
+σ2
+rmrf 0.0012 0.50 24.53 6.70
+(4.29) (7.37)
+β2 0.3544 0.21 4.59 5.33
+(6.05) (2.83)
+β2σ2
+rmrf 0.0007 0.47 21.67 20.87
+(2.73) (6.80)
+σ2
+ε 0.0007 0.72 52.21 47.06
+(2.69) (13.51)
+29
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 32 ====
+Table 5
+The international evidence
+The performance of plain momentum ( WML) and scaled momentum ( WML* )
+in the major non-US markets. Original data are from Datastre am. The returns for
+country-speciﬁc momentum portfolios are from Chaves (2012 ). The scaled momentum
+uses the realized volatility in the previous six months, obt ained from daily data. The
+information ratio of the scaled momentum takes plain moment um as the benchmark. The
+mean return, the standard deviation, the Sharpe ratio, and t he information ratio are all
+annualized. To obtain an information ratio that does not dep end on the volatility target
+we divided previously both WML and WML* by their respective standard deviations.
+The returns are from 1980:07 to 2011:10.
+Statistic France Germany Japan UK
+WML WML* WML WML* WML WML* WML WML*
+Maximum 35.43 31.88 22.04 19.34 17.21 16.61 23.23 45.98
+Minimum -28.11 -15.50 -22.56 -11.11 -29.51 -21.56 -36.47 -22.23
+Mean 13.19 17.11 18.37 21.02 1.65 4.21 18.86 40.46
+Standard deviation 19.66 16.57 18.10 15.08 19.64 17.88 17.24 22.81
+Kurtosis 6.85 5.17 4.02 1.45 4.01 1.96 11.78 4.95
+Skewnewss -0.16 0.73 -0.05 0.33 -0.83 -0.62 -1.43 0.56
+Sharpe ratio 0.67 1.03 1.02 1.39 0.08 0.24 1.09 1.77
+Information ratio — 0.90 — 0.73 — 0.34 — 1.19
+30
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 33 ====
+Table 6
+Performance of plain momentum ( WML) and scaled momentum ( WML* ) in
+diﬀerent subsamples
+The ﬁrst half of the sample is from 1927:03 to 1969:12. The sec ond is from 1970:01
+to 2011:12. The no-crash sample is from 1927:03 to 2011:12, e xcluding the years of 1932
+and 2009. The post-war sample is from 1945:01 to 2005:12. The Sharpe ratio, standard
+deviation, information ratio, and the mean returns are all a nnualized. To obtain an
+information ratio that does not depend on the volatility tar get we divided previously
+both WML and WML* by their respective standard deviations.
+Statistic First Half Second Half No-crash Post-war
+WML WML* WML WML* WML WML* WML WML*
+Maximum 24.89 19.76 26.18 21.95 26.18 21.95 26.18 21.95
+Minimum -78.96 -28.40 -45.89 -17.00 -43.94 -28.40 -42.09 -17.00
+Mean 13.12 13.96 15.83 19.08 17.34 17.39 17.30 19.61
+Standard deviation 29.33 16.29 25.59 17.58 23.61 16.74 20.02 16.97
+Kurtosis 23.57 4.53 7.62 1.19 7.15 2.47 6.01 1.20
+Skewnewss -3.05 -0.72 -1.51 -0.19 -1.13 -0.33 -0.91 -0.17
+Sharpe ratio 0.45 0.86 0.62 1.09 0.73 1.04 0.86 1.16
+Information ratio — 0.73 — 0.81 — 0.60 — 0.64
+31
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 34 ====
+1930 1932 1934 1936 1938
+0.5
+1
+1.5
+2
+Panel A: Momentum and the market: 1930:01 to 1939:12
+Cumulative returns
+$0.98
+$0.1
+2000 2002 2004 2006 2008
+1
+1.5
+2
+2.5
+3
+Panel B: Momentum and the market: 2000:01 to 2009:12
+Cumulative returns
+ 
+ 
+$1.02
+$0.72
+RMRF WML
+Fig. 1. Momentum crashes. The ﬁgure plots the cumulative return and ter minal
+value of the momentum and market portfolio strategies in its two mos t turbulent
+periods: the 1930s and the 2000s. RMRF = market risk factor; WML = winners
+minus losers.
+32
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 35 ====
+1930 1940 1950 1960 1970 1980 1990 2000 2010
+20
+40
+60
+80
+100
+120Annualized in percentage points
+Fig. 2. The realized volatility of momentum obtained from daily returns in each
+month from 1927:03 to 2011:12.
+33
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 36 ====
+1 2 3 4 5
+0
+0.5
+1
+1.5 Panel A: Risk and risk
+Quintile
+Volatility
+1 2 3 4 5
+0
+10
+20
+30 Panel B: Risk and return
+Quintile
+Annual return
+1 2 3 4 5
+0
+0.5
+1
+1.5
+2 Panel C: Risk and Sharpe ratio
+Quintile
+Sharpe ratio
+ 
+ 
+WML RMRF
+Fig. 3. The performance of the market factor (RMRF) and momentum (WM L)
+conditional on realized volatility in the previous six months. Returns a re sorted
+into quintiles according to volatility in the previous six months for each factor.
+The ﬁgure presents the following year volatility (computed from daily returns),
+the cumulative return in percentage points, and the Sharpe ratio. The returns are
+from 1927:03 to 2011:12.
+34
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 37 ====
+1930 1940 1950 1960 1970 1980 1990 2000 2010
+0.2
+0.4
+0.6
+0.8
+1
+1.2
+1.4
+1.6
+1.8
+2
+Weight on WML
+Fig. 4. Weights of the scaled momentum, 1927:03–2011:12. The risk-manag ed
+momentum uses the realized variance in the previous six months to sc ale the
+exposure to momentum ( WML).
+35
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 38 ====
+−80 −60 −40 −20 0 20 40
+0
+2
+4
+6
+8
+10 Panel A: Density of WML and WML* monthly returns
+Return
+Density
+ 
+ 
+WML
+WML*
+−80 −70 −60 −50 −40 −30 −20 −10
+0
+0.2
+0.4
+0.6
+0.8
+1 Panel B: Density of WML and WML* for returns lower than −10 percentage points
+Return
+Density
+ 
+ 
+WML
+WML*
+Fig. 5. The density of plain momentum ( WML) and risk-managed momentum
+(WML* ). The risk-managed momentum uses the realized variance in the pre vious
+six months to scale the exposure to momentum. The returns are fr om 1927:03 to
+2011:12.
+36
+Electronic copy available at: https://ssrn.com/abstract=2041429
+==== PAGE 39 ====
+1930 1932 1934 1936 1938
+0.5
+1
+1.5
+2
+Panel A: Risk−managed momentum: 1930:01 to 1939:12
+Cumulative returns
+$0.1
+$1
+2000 2002 2004 2006 2008
+1
+1.5
+2
+2.5
+3
+Panel B: Risk−managed momentum: 2000:01 to 2009:12
+Cumulative returns
+ 
+ 
+$0.72
+$1.88
+WML WML*
+Fig. 6. The beneﬁts of risk-management in the 1930s and the 2000s. The
+risk-managed momentum ( WML* ) uses the realized variance in the previous six
+months to scale the exposure to momentum ( WML).
+37
+Electronic copy available at: https://ssrn.com/abstract=2041429

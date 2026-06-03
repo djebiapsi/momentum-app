@@ -10,7 +10,9 @@
       "WebFetch(domain:www.interactivebrokers.com)",
       "WebSearch",
       "WebFetch(domain:interactivebrokers.github.io)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(python *)",
+      "Bash(pip install *)"
     ]
   }
 }

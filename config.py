@@ -77,6 +77,11 @@ class Config:
     
     # Nombre d'actions à sélectionner par défaut
     DEFAULT_NB_TOP = 5
+
+    # Volatility scaling (stratégie Long) — Barroso & Santa-Clara (2014)
+    DEFAULT_VOL_SCALING = False   # désactivé par défaut (comportement inverse-vol historique)
+    DEFAULT_VOL_TARGET = 12       # volatilité cible annualisée en % (valeur du papier)
+    DEFAULT_MAX_EXPOSURE = 250    # plafond d'exposition brute en % (garde-fou levier)
     
     # Panel d'actions par défaut
     DEFAULT_PANEL = [

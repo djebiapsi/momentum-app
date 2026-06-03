@@ -423,21 +423,69 @@ class MomentumService:
             'market_regime': market_regime
         }
     
-    def generer_recommandations(self, resultats_analyse, nb_top):
+    def _vol_realisee_126j(self, ticker):
+        """
+        Volatilité réalisée annualisée sur ~126 sessions (6 mois), méthode du papier
+        Barroso & Santa-Clara (2014), éq. 5 :
+            σ̂²_t = 21 × Σ_{j=0}^{125} r²_{t-1-j} / 126   (variance mensuelle)
+        annualisée ensuite (× 12). En pratique : variance journalière moyenne × 252.
+
+        Utilise les prix journaliers (cascade DB → IBKR → Tiingo, déjà cachés).
+
+        Args:
+            ticker: Symbole de l'action
+
+        Returns:
+            float: volatilité annualisée en décimal (ex. 0.30 pour 30%), ou None.
+        """
+        df, err = self.recuperer_prix_journaliers(ticker, nb_jours=200)
+        if df is None or err or 'adjClose' not in df:
+            return None
+
+        closes = df.sort_index()['adjClose'].values
+        if len(closes) < 21:
+            return None
+
+        # Rendements simples journaliers
+        rets = closes[1:] / closes[:-1] - 1.0
+        # Ne garder que les 126 dernières sessions (éq. 5)
+        rets = rets[-126:]
+        if len(rets) < 20:
+            return None
+
+        daily_var = float((rets ** 2).sum() / len(rets))
+        annual_vol = math.sqrt(daily_var * 252)
+        return annual_vol if annual_vol > 1e-6 else None
+
+    def generer_recommandations(self, resultats_analyse, nb_top,
+                                vol_scaling=False, vol_target_pct=12.0,
+                                max_exposure_pct=250.0):
         """
         Génère les signaux d'investissement et calcule les allocations.
-        
+
+        Deux modes d'allocation :
+          - vol_scaling=False (défaut) : pondération inverse-volatilité normalisée à 100%.
+          - vol_scaling=True : « volatility scaling » par actif (Barroso & Santa-Clara 2014,
+            footnote 13). Poids_i = σ_target / σ_asset_i (vol récente 126j de chaque titre).
+            L'exposition brute peut dépasser 100% (levier) ; elle est plafonnée à
+            max_exposure_pct. Si la somme reste sous le plafond, le reste demeure en cash.
+
         Args:
             resultats_analyse: Résultat de analyser_panel()
             nb_top: Nombre d'actions à sélectionner pour investir
-        
+            vol_scaling: active la mise à l'échelle par volatilité (Long)
+            vol_target_pct: volatilité cible annualisée en % (ex. 12)
+            max_exposure_pct: plafond d'exposition brute en % (ex. 250)
+
         Returns:
             dict: {
                 'date_calcul': str,
                 'nb_top': int,
                 'recommandations': list,
                 'total_investir': int,
-                'erreurs': list
+                'erreurs': list,
+                'vol_scaling': bool,
+                'exposition_brute': float   # somme des allocations en %
             }
         """
         if not resultats_analyse['success']:
@@ -447,7 +495,9 @@ class MomentumService:
                 'recommandations': [],
                 'total_investir': 0,
                 'erreurs': resultats_analyse['erreurs'],
-                'market_regime': resultats_analyse.get('market_regime')
+                'market_regime': resultats_analyse.get('market_regime'),
+                'vol_scaling': bool(vol_scaling),
+                'exposition_brute': 0.0
             }
         
         resultats = resultats_analyse['resultats']
@@ -479,37 +529,73 @@ class MomentumService:
             annual_vol = monthly_vol * math.sqrt(12)
             return annual_vol if annual_vol > 1e-6 else VOL_DEFAULT
 
-        # Calculer les vols uniquement pour les titres "Investir" (top N, momentum > 0)
+        # Titres "Investir" : top N avec momentum > 0
         investir_resultats = [r for r in resultats[:nb_selection] if r['momentum'] > 0]
-        vols = {
-            r['ticker']: _vol_annualisee(r.get('details_mensuels', []))
-            for r in investir_resultats
-        }
-        inv_vol_weights = {t: 1.0 / v for t, v in vols.items()}
-        total_weight = sum(inv_vol_weights.values())
 
-        # Allocations normalisées à 100%, arrondies — ajuster la dernière pour sommer pile à 100
-        if total_weight > 0 and investir_resultats:
-            raw_allocs = {
-                t: round(w / total_weight * 100, 2)
-                for t, w in inv_vol_weights.items()
-            }
-            # Correction d'arrondi sur le premier ticker (impact max ±0.0x%)
-            rounding_error = round(100.0 - sum(raw_allocs.values()), 2)
-            first_ticker = next(iter(raw_allocs))
-            raw_allocs[first_ticker] = round(raw_allocs[first_ticker] + rounding_error, 2)
-            allocations_invvol = raw_allocs
+        # ------------------------------------------------------------------
+        # Choix de la volatilité utilisée par titre :
+        #   - vol_scaling : vol réalisée 126j (éq. 5 du papier), fallback mensuel puis défaut
+        #   - sinon       : vol mensuelle annualisée (rendements déjà fetchés)
+        # ------------------------------------------------------------------
+        def _vol_titre(r):
+            if vol_scaling:
+                v = self._vol_realisee_126j(r['ticker'])
+                if v is not None:
+                    return v
+            return _vol_annualisee(r.get('details_mensuels', []))
+
+        vols = {r['ticker']: _vol_titre(r) for r in investir_resultats}
+
+        multipliers = {}
+
+        if vol_scaling:
+            # --------------------------------------------------------------
+            # Volatility scaling par actif (Barroso & Santa-Clara 2014, fn 13)
+            #   poids_i = σ_target / σ_asset_i  →  allocation_i (%) = 100 × poids_i
+            #   plafond strict sur l'exposition brute : Σ allocation_i ≤ max_exposure_pct
+            #   (si Σ < plafond, le reste demeure en cash)
+            # --------------------------------------------------------------
+            vt = vol_target_pct / 100.0
+            allocations = {}
+            for t, v in vols.items():
+                mult = vt / v if v and v > 1e-6 else 0.0
+                multipliers[t] = mult
+                allocations[t] = mult * 100.0  # en %
+
+            brut = sum(allocations.values())
+            if brut > max_exposure_pct and brut > 0:
+                facteur = max_exposure_pct / brut
+                allocations = {t: a * facteur for t, a in allocations.items()}
+                multipliers = {t: m * facteur for t, m in multipliers.items()}
+
+            allocations = {t: round(a, 2) for t, a in allocations.items()}
         else:
-            allocations_invvol = {}
+            # Pondération inverse-volatilité normalisée à 100% (comportement historique)
+            inv_vol_weights = {t: 1.0 / v for t, v in vols.items() if v and v > 1e-6}
+            total_weight = sum(inv_vol_weights.values())
+            if total_weight > 0 and investir_resultats:
+                allocations = {
+                    t: round(w / total_weight * 100, 2)
+                    for t, w in inv_vol_weights.items()
+                }
+                # Correction d'arrondi sur le premier ticker (impact max ±0.0x%)
+                rounding_error = round(100.0 - sum(allocations.values()), 2)
+                first_ticker = next(iter(allocations))
+                allocations[first_ticker] = round(allocations[first_ticker] + rounding_error, 2)
+            else:
+                allocations = {}
 
         recommandations = []
 
         for i, r in enumerate(resultats):
+            multiplier = None
             if i < nb_selection:
                 if r['momentum'] > 0:
                     signal = "Investir"
-                    allocation = allocations_invvol.get(r['ticker'], 0.0)
+                    allocation = allocations.get(r['ticker'], 0.0)
                     vol = round(vols.get(r['ticker'], VOL_DEFAULT) * 100, 1)
+                    if vol_scaling:
+                        multiplier = round(multipliers.get(r['ticker'], 0.0), 3)
                 else:
                     # Momentum négatif dans le top N → rester en cash
                     signal = "Cash"
@@ -525,6 +611,7 @@ class MomentumService:
                 'momentum': round(r['momentum'], 2),
                 'perf_recent_1m': r.get('perf_recent_1m'),
                 'vol_annualisee': vol,   # % annualisé — visible dans l'UI
+                'multiplier': multiplier,  # σ_target / σ_asset (mode vol_scaling)
                 'signal': signal,
                 'allocation': allocation,
                 'rank': r['rank'],
@@ -532,6 +619,7 @@ class MomentumService:
             })
 
         total_investir = sum(1 for r in recommandations if r['signal'] == 'Investir')
+        exposition_brute = round(sum(r['allocation'] for r in recommandations), 2)
 
         return {
             'date_calcul': resultats_analyse['date_calcul'],
@@ -539,7 +627,11 @@ class MomentumService:
             'recommandations': recommandations,
             'total_investir': total_investir,
             'erreurs': resultats_analyse['erreurs'],
-            'market_regime': resultats_analyse.get('market_regime')
+            'market_regime': resultats_analyse.get('market_regime'),
+            'vol_scaling': bool(vol_scaling),
+            'vol_target_pct': vol_target_pct if vol_scaling else None,
+            'max_exposure_pct': max_exposure_pct if vol_scaling else None,
+            'exposition_brute': exposition_brute
         }
     
     def valider_ticker(self, ticker):

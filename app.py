@@ -166,13 +166,21 @@ def get_settings():
     date_calcul = Settings.get('date_calcul', '')  # Vide = aujourd'hui
     email_to = app.config.get('EMAIL_TO', '')
     email_configured = get_email_service().is_configured()
-    
+
+    vol_scaling = Settings.get('vol_scaling_enabled',
+                               str(app.config.get('DEFAULT_VOL_SCALING', False)).lower())
+    vol_target = Settings.get('vol_target', app.config.get('DEFAULT_VOL_TARGET', 12))
+    max_exposure = Settings.get('max_exposure', app.config.get('DEFAULT_MAX_EXPOSURE', 250))
+
     return jsonify({
         'nb_top': int(nb_top),
         'date_calcul': date_calcul,
         'email_to': email_to,
         'email_configured': email_configured,
-        'api_configured': app.config.get('TIINGO_API_KEY') is not None
+        'api_configured': app.config.get('TIINGO_API_KEY') is not None,
+        'vol_scaling_enabled': str(vol_scaling).lower() == 'true',
+        'vol_target': float(vol_target),
+        'max_exposure': float(max_exposure)
     })
 
 
@@ -198,7 +206,30 @@ def update_settings():
             except ValueError:
                 return jsonify({'error': 'Format de date invalide (YYYY-MM-DD)'}), 400
         Settings.set('date_calcul', date_calcul)
-    
+
+    if 'vol_scaling_enabled' in data:
+        Settings.set('vol_scaling_enabled', 'true' if data['vol_scaling_enabled'] else 'false')
+
+    if 'vol_target' in data:
+        try:
+            vol_target = float(data['vol_target'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'vol_target invalide'}), 400
+        if 1 <= vol_target <= 100:
+            Settings.set('vol_target', vol_target)
+        else:
+            return jsonify({'error': 'vol_target doit être entre 1 et 100'}), 400
+
+    if 'max_exposure' in data:
+        try:
+            max_exposure = float(data['max_exposure'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'max_exposure invalide'}), 400
+        if 100 <= max_exposure <= 500:
+            Settings.set('max_exposure', max_exposure)
+        else:
+            return jsonify({'error': 'max_exposure doit être entre 100 et 500'}), 400
+
     return jsonify({'success': True, 'message': 'Paramètres mis à jour'})
 
 
@@ -377,6 +408,17 @@ def import_panel():
 # ROUTES - API MOMENTUM
 # =============================================================================
 
+def _get_vol_scaling_settings():
+    """Lit les réglages de volatility scaling (Long) depuis Settings + fallback config."""
+    vs = Settings.get('vol_scaling_enabled',
+                      str(app.config.get('DEFAULT_VOL_SCALING', False)).lower())
+    return {
+        'vol_scaling': str(vs).lower() == 'true',
+        'vol_target_pct': float(Settings.get('vol_target', app.config.get('DEFAULT_VOL_TARGET', 12))),
+        'max_exposure_pct': float(Settings.get('max_exposure', app.config.get('DEFAULT_MAX_EXPOSURE', 250))),
+    }
+
+
 def _run_long_calculation():
     """
     Logique commune : récupère le panel, calcule le momentum, sauvegarde l'historique.
@@ -388,6 +430,7 @@ def _run_long_calculation():
 
     nb_top = int(Settings.get('nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
     date_calcul = Settings.get('date_calcul', '') or None
+    vs = _get_vol_scaling_settings()
 
     actions = PanelAction.query.filter_by(is_active=True).all()
     panel = [a.ticker for a in actions]
@@ -400,7 +443,7 @@ def _run_long_calculation():
     if not resultats['success']:
         raise RuntimeError(f"Échec du calcul: {resultats['erreurs']}")
 
-    recommandations = service.generer_recommandations(resultats, nb_top)
+    recommandations = service.generer_recommandations(resultats, nb_top, **vs)
 
     history = RecommendationHistory(
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
@@ -1263,8 +1306,9 @@ def job_mensuel():
             print(f"❌ Échec du calcul: {resultats['erreurs']}")
             return
         
-        recommandations = service.generer_recommandations(resultats, nb_top)
-        
+        recommandations = service.generer_recommandations(resultats, nb_top,
+                                                          **_get_vol_scaling_settings())
+
         # Sauvegarder
         history = RecommendationHistory(
             calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
