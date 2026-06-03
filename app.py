@@ -1841,25 +1841,44 @@ IBKR_SOCAT_PORT = {'live': 4003, 'paper': 4004}
 
 
 def _ibkr_set_env_vars(updates: dict):
-    """Met à jour des variables dans le .env hôte (monté en /app/.env.host)."""
+    """
+    Met à jour des variables dans le .env hôte (monté en /app/.env.host).
+    Déduplique les clés en double (garde une seule occurrence) pour éviter les
+    incohérences : python-dotenv prend la dernière valeur, ce qui pouvait annuler
+    un changement de mode si un doublon subsistait.
+    """
     import re
     env_path = '/app/.env.host'
     try:
         with open(env_path, 'r') as f:
-            content = f.read()
+            lines = f.read().splitlines()
 
-        def set_var(text, key, value):
-            pattern = rf'^{key}=.*$'
-            replacement = f'{key}={value}'
-            if re.search(pattern, text, re.MULTILINE):
-                return re.sub(pattern, replacement, text, flags=re.MULTILINE)
-            return text + f'\n{key}={value}'
+        # Appliquer les updates et dédupliquer (dernière occurrence gagne)
+        result_lines = []
+        seen = set()
+        applied = set()
+        for line in lines:
+            m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
+            if not m:
+                result_lines.append(line)
+                continue
+            key = m.group(1)
+            if key in seen:
+                continue  # doublon → on l'enlève
+            seen.add(key)
+            if key in updates:
+                result_lines.append(f'{key}={updates[key]}')
+                applied.add(key)
+            else:
+                result_lines.append(line)
 
+        # Ajouter les nouvelles clés absentes du fichier
         for key, value in updates.items():
-            content = set_var(content, key, value)
+            if key not in applied:
+                result_lines.append(f'{key}={value}')
 
         with open(env_path, 'w') as f:
-            f.write(content)
+            f.write('\n'.join(result_lines) + '\n')
         return True
     except Exception as e:
         app.logger.warning('_ibkr_set_env_vars: %s', e)
