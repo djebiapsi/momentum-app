@@ -722,7 +722,10 @@ def apply_generated_panel():
     # Ajouter ou réactiver les nouveaux tickers
     added = 0
     for ticker_data in tickers:
-        ticker = ticker_data.get('ticker', '').upper().strip()
+        if isinstance(ticker_data, str):
+            ticker = ticker_data.upper().strip()
+        else:
+            ticker = ticker_data.get('ticker', '').upper().strip()
         if not ticker:
             continue
         
@@ -764,20 +767,17 @@ def generate_panel_finviz():
     Avantage: 0 appel API Tiingo !
     """
     screener = get_finviz_screener_service()
-    
+
     result = screener.screen_long()
 
     if not result['success']:
-        # Fallback : tenter le screener Tiingo si Finviz échoue
+        # Fallback : tenter le screener Tiingo si Finviz échoue (IP datacenter bloquée)
         tiingo_svc = get_screener_service()
         if tiingo_svc:
             try:
                 tiingo_result = tiingo_svc.screen_universe()
                 if tiingo_result.get('success') and tiingo_result.get('tickers'):
-                    # screen_universe retourne des dicts {ticker, score, ...} → extraire les symboles
-                    tiingo_symbols = [t['ticker'] if isinstance(t, dict) else t
-                                      for t in tiingo_result['tickers']]
-                    result = {'success': True, 'tickers': tiingo_symbols,
+                    result = {'success': True, 'tickers': tiingo_result['tickers'],
                               'stats': {'source': 'Tiingo (fallback Finviz)', **tiingo_result.get('stats', {})}}
                 else:
                     return jsonify({'success': False, 'error': result['error'],
@@ -789,27 +789,59 @@ def generate_panel_finviz():
             return jsonify({'success': False, 'error': result['error'],
                             'stats': result.get('stats', {})}), 500
 
-    # Inclure les tickers du portefeuille IBKR (toujours en concurrence)
-    portfolio_tickers = []
+    # screener_objs : liste de dicts {ticker, price, volume_display, adv_display, ...}
+    screener_objs = result['tickers']
+    screener_symbols = {o['ticker'] if isinstance(o, dict) else o for o in screener_objs}
+
+    # Récupérer les positions du portefeuille IBKR (toujours en concurrence, en tête)
+    portfolio_positions = {}
     try:
         if ibkr_service.get_status()['connected']:
-            positions = ibkr_service.get_positions()
-            portfolio_tickers = [p['ticker'] for p in positions if p.get('ticker')]
+            for p in ibkr_service.get_positions():
+                if p.get('ticker'):
+                    portfolio_positions[p['ticker']] = p
     except Exception:
         pass
 
-    # Fusionner : portefeuille en premier, puis screener jusqu'à 50
-    screener_tickers = result['tickers']
-    merged = list(dict.fromkeys(portfolio_tickers + screener_tickers))[:50]
+    # Objets du portefeuille absents du screener → enrichir avec les données IBKR
+    portfolio_objs = []
+    for ticker, p in portfolio_positions.items():
+        if ticker in screener_symbols:
+            continue
+        price = p.get('market_price')
+        portfolio_objs.append({
+            'ticker': ticker,
+            'price': round(price, 2) if price else '-',
+            'volume': None,
+            'volume_display': 'Portefeuille',
+            'adv': None,
+            'adv_display': '-',
+            'score': None,
+            'in_portfolio': True,
+        })
+
+    # Marquer aussi les tickers screener déjà en portefeuille
+    def _norm(o):
+        if not isinstance(o, dict):
+            o = {'ticker': o, 'price': '-', 'volume_display': '-', 'adv_display': '-'}
+        o = dict(o)
+        o['in_portfolio'] = o['ticker'] in portfolio_positions
+        return o
+
+    # Fusion : portefeuille (hors screener) en premier, puis screener, limité à 50
+    merged = portfolio_objs + [_norm(o) for o in screener_objs]
+    merged = merged[:50]
+    for i, o in enumerate(merged):
+        o['rank'] = i + 1
 
     stats = result['stats']
-    stats['portfolio_tickers_added'] = len([t for t in portfolio_tickers if t not in screener_tickers])
+    stats['portfolio_tickers_added'] = len(portfolio_objs)
 
     return jsonify({
         'success': True,
         'tickers': merged,
         'stats': stats,
-        'portfolio_tickers': portfolio_tickers,
+        'portfolio_tickers': list(portfolio_positions.keys()),
     })
 
 
@@ -1165,7 +1197,10 @@ def apply_short_panel():
     # Ajouter ou réactiver les nouveaux tickers
     added = 0
     for ticker_data in tickers:
-        ticker = ticker_data.get('ticker', '').upper().strip()
+        if isinstance(ticker_data, str):
+            ticker = ticker_data.upper().strip()
+        else:
+            ticker = ticker_data.get('ticker', '').upper().strip()
         if not ticker:
             continue
         
