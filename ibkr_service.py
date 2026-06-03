@@ -89,8 +89,14 @@ class IBKRService:
         self.client_id = (self.client_id % 32) + 1
         return self.client_id
 
-    def connect(self) -> dict:
+    def connect(self, force: bool = True) -> dict:
         with self._lock:
+            # force=False (reconnexion auto) : si déjà connecté, ne rien faire.
+            # Évite les reconnexions redondantes en parallèle (threads gunicorn) qui
+            # créaient des connexions zombies côté gateway.
+            if not force and self._is_connected():
+                return {'success': True}
+
             # Fermer proprement la connexion précédente ET attendre la fin du thread
             self._close_connection()
 
@@ -101,11 +107,14 @@ class IBKRService:
             def _thread():
                 async def _connect_and_hold():
                     ib = IB()
+                    # Connexion socket de base (rapide). Les sous-requêtes de données
+                    # (positions, executions) peuvent émettre des warnings "timed out"
+                    # sans empêcher la connexion — on les tolère.
                     await ib.connectAsync(
                         self.host, self.port,
                         clientId=client_id,
                         readonly=True,
-                        timeout=20,
+                        timeout=30,
                     )
                     self._ib = ib
                     self._connected_at = time.time()
@@ -133,7 +142,7 @@ class IBKRService:
             self._conn_thread = threading.Thread(target=_thread, daemon=True)
             self._conn_thread.start()
 
-            if not conn_event.wait(timeout=30):
+            if not conn_event.wait(timeout=45):
                 self._last_error = 'Timeout de connexion'
                 return {'success': False, 'error': 'Timeout de connexion (gateway non prêt ?)'}
 
@@ -188,7 +197,8 @@ class IBKRService:
         if self._is_connected():
             return True
         logger.info('IBKR session perdue — tentative de reconnexion automatique')
-        result = self.connect()
+        # force=False : double-check sous lock pour éviter les reconnexions parallèles
+        result = self.connect(force=False)
         return bool(result.get('success'))
 
     # ------------------------------------------------------------------
