@@ -794,9 +794,10 @@ def generate_panel_finviz():
     screener_symbols = {o['ticker'] if isinstance(o, dict) else o for o in screener_objs}
 
     # Récupérer les positions du portefeuille IBKR (toujours en concurrence, en tête)
+    # ensure_connected reconnecte si la session est tombée → portefeuille toujours inclus
     portfolio_positions = {}
     try:
-        if ibkr_service.get_status()['connected']:
+        if ibkr_service.ensure_connected():
             for p in ibkr_service.get_positions():
                 if p.get('ticker'):
                     portfolio_positions[p['ticker']] = p
