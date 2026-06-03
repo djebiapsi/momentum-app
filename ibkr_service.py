@@ -155,6 +155,18 @@ class IBKRService:
             'last_error': self._last_error,
         }
 
+    def ensure_connected(self) -> bool:
+        """
+        Garantit une connexion active. Reconnecte automatiquement si la session
+        app est tombée (ex: après le restart quotidien du gateway).
+        Retourne True si connecté, False sinon.
+        """
+        if self._is_connected():
+            return True
+        logger.info('IBKR session perdue — tentative de reconnexion automatique')
+        result = self.connect()
+        return bool(result.get('success'))
+
     # ------------------------------------------------------------------
     # Données portfolio
     # ------------------------------------------------------------------

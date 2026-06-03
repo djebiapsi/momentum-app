@@ -1709,6 +1709,8 @@ def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str
 def ibkr_positions():
     """Retourne les positions ouvertes depuis IB Gateway."""
     try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
         positions = ibkr_service.get_positions()
         return jsonify({'success': True, 'positions': positions, 'count': len(positions)})
     except ConnectionError as e:
@@ -1722,6 +1724,8 @@ def ibkr_positions():
 def ibkr_portfolio_stats():
     """Stats complètes du portefeuille : positions, P&L, allocation, rendement."""
     try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
         stats = ibkr_service.get_portfolio_stats()
         return jsonify({'success': True, **stats})
     except ConnectionError as e:
@@ -1745,6 +1749,8 @@ def ibkr_rebalance():
     if not targets:
         return jsonify({'success': False, 'error': 'targets requis'}), 400
     try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
         orders = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run)
         return jsonify({
             'success': True,
@@ -1767,6 +1773,9 @@ def job_positions_ibkr():
     with app.app_context():
         print(f"[{datetime.now()}] 📊 Envoi email positions IBKR...")
         try:
+            if not ibkr_service.ensure_connected():
+                print("⚠️ Reconnexion IBKR impossible, email non envoyé")
+                return
             positions = ibkr_service.get_positions()
             if not positions:
                 print("⚠️ Aucune position ouverte, email non envoyé")
