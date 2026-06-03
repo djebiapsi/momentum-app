@@ -765,11 +765,23 @@ def generate_panel_finviz():
     result = screener.screen_long()
 
     if not result['success']:
-        return jsonify({
-            'success': False,
-            'error': result['error'],
-            'stats': result.get('stats', {})
-        }), 500
+        # Fallback : tenter le screener Tiingo si Finviz échoue
+        tiingo_svc = get_screener_service()
+        if tiingo_svc:
+            try:
+                tiingo_result = tiingo_svc.screen()
+                if tiingo_result.get('success') and tiingo_result.get('tickers'):
+                    result = {'success': True, 'tickers': tiingo_result['tickers'],
+                              'stats': {'source': 'Tiingo (fallback Finviz)', **tiingo_result.get('stats', {})}}
+                else:
+                    return jsonify({'success': False, 'error': result['error'],
+                                    'stats': result.get('stats', {})}), 500
+            except Exception as e:
+                return jsonify({'success': False, 'error': f"Finviz: {result['error']} | Tiingo: {e}",
+                                'stats': {}}), 500
+        else:
+            return jsonify({'success': False, 'error': result['error'],
+                            'stats': result.get('stats', {})}), 500
 
     # Inclure les tickers du portefeuille IBKR (toujours en concurrence)
     portfolio_tickers = []

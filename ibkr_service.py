@@ -43,45 +43,45 @@ class IBKRService:
     def connect(self) -> dict:
         with self._lock:
             async def _do():
-                if self._ib.isConnected():
+                # Créer IB() dans le contexte asyncio du thread dédié.
+                # C'est critique : apiStart est un asyncio.Event lié au loop courant.
+                # Créer IB() dans le thread principal produit un Event sans loop → timeout.
+                if self._ib is not None and self._ib.isConnected():
                     self._ib.disconnect()
+                self._ib = IB()
                 await self._ib.connectAsync(
                     self.host, self.port,
                     clientId=self.client_id,
                     readonly=True,
+                    timeout=20,
                 )
 
-            last_exc = None
-            for attempt in range(3):
-                try:
-                    self._run(_do())
-                    self._connected_at = time.time()
-                    self._last_error = None
-                    logger.info('IBKR connecté à %s:%s', self.host, self.port)
-                    return {'success': True}
-                except Exception as exc:
-                    last_exc = exc
-                    logger.warning('IBKR tentative %d échouée : %s', attempt + 1, exc)
-                    if attempt < 2:
-                        time.sleep(10)
-
-            self._last_error = str(last_exc)
-            return {'success': False, 'error': str(last_exc)}
+            try:
+                self._run(_do(), timeout=30)
+                self._connected_at = time.time()
+                self._last_error = None
+                logger.info('IBKR connecté à %s:%s', self.host, self.port)
+                return {'success': True}
+            except Exception as exc:
+                self._last_error = str(exc)
+                logger.warning('IBKR connexion échouée : %s', exc)
+                return {'success': False, 'error': str(exc)}
 
     def disconnect(self):
-        if self._ib.isConnected():
+        if self._ib is not None and self._ib.isConnected():
             self._ib.disconnect()
         self._connected_at = None
 
     def get_status(self) -> dict:
+        connected = self._ib is not None and self._ib.isConnected()
         return {
-            'connected': self._ib.isConnected(),
+            'connected': connected,
             'connected_at': self._connected_at,
             'last_error': self._last_error,
         }
 
     def get_positions(self) -> list:
-        if not self._ib.isConnected():
+        if self._ib is None or not self._ib.isConnected():
             raise ConnectionError('Non connecté à IB Gateway')
 
         async def _do():
