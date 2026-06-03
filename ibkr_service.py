@@ -3,6 +3,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import random
 import threading
 import time
 
@@ -43,7 +44,10 @@ class IBKRService:
         threading.Thread(target=self._loop.run_forever, daemon=True).start()
 
     def _next_cid(self):
-        self._client_id = (self._client_id % 32) + 1
+        # clientId aléatoire dans une grande plage : évite les collisions avec
+        # d'éventuelles connexions zombies (erreur 326). Le loop permanent +
+        # disconnect propre évite d'en créer de nouvelles.
+        self._client_id = random.randint(100, 99999)
         return self._client_id
 
     def _submit(self, coro, timeout=45):
