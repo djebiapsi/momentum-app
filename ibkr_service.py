@@ -81,11 +81,20 @@ class IBKRService:
     # Connexion persistante
     # ------------------------------------------------------------------
 
+    def _next_client_id(self):
+        """
+        clientId rotatif (1→32) pour éviter l'erreur 326 "client id already in use"
+        quand une ancienne connexion n'est pas encore libérée côté gateway.
+        """
+        self.client_id = (self.client_id % 32) + 1
+        return self.client_id
+
     def connect(self) -> dict:
         with self._lock:
-            # Arrêter une éventuelle connexion précédente
+            # Fermer proprement la connexion précédente ET attendre la fin du thread
             self._close_connection()
 
+            client_id = self._next_client_id()
             conn_event = threading.Event()
             conn_error = [None]
 
@@ -94,7 +103,7 @@ class IBKRService:
                     ib = IB()
                     await ib.connectAsync(
                         self.host, self.port,
-                        clientId=self.client_id,
+                        clientId=client_id,
                         readonly=True,
                         timeout=20,
                     )
@@ -114,7 +123,10 @@ class IBKRService:
                     conn_error[0] = e
                     conn_event.set()
                 finally:
-                    loop.close()
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
                     self._loop = None
                     self._ib = None
 
@@ -123,25 +135,37 @@ class IBKRService:
 
             if not conn_event.wait(timeout=30):
                 self._last_error = 'Timeout de connexion'
-                return {'success': False, 'error': 'Timeout de connexion'}
+                return {'success': False, 'error': 'Timeout de connexion (gateway non prêt ?)'}
 
             if conn_error[0]:
                 self._last_error = str(conn_error[0])
-                return {'success': False, 'error': str(conn_error[0])}
+                return {'success': False, 'error': str(conn_error[0]) or 'Connexion refusée'}
 
             self._last_error = None
-            logger.info('IBKR connecté à %s:%s', self.host, self.port)
+            logger.info('IBKR connecté à %s:%s (clientId=%s)', self.host, self.port, client_id)
             return {'success': True}
 
     def _close_connection(self):
-        if self._ib is not None:
+        """Ferme la connexion et attend la fin réelle du thread (libère le clientId)."""
+        ib = self._ib
+        if ib is not None:
             try:
-                self._ib.disconnect()
+                ib.disconnect()
             except Exception:
                 pass
-            self._ib = None
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._loop.stop)
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                pass
+        # Attendre que le thread se termine vraiment → le clientId est libéré côté gateway
+        thread = self._conn_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=8)
+        self._ib = None
+        self._loop = None
+        self._conn_thread = None
         self._connected_at = None
 
     def disconnect(self):
