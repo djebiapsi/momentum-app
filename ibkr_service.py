@@ -16,204 +16,127 @@ class IBKRService:
     """
     Connexion à IB Gateway via ib_async.
 
-    Architecture : chaque opération crée son propre event loop via asyncio.run()
-    dans un thread dédié. C'est l'approche qui fonctionne de façon prouvée avec
-    ib_async et le gateway gnzsnz (connexion via socat port 4003).
+    Architecture (pattern prouvé, robuste) : chaque opération ouvre une connexion
+    fraîche dans un thread isolé via asyncio.run(), exécute la requête, puis ferme
+    proprement (disconnect). Aucune connexion persistante → aucun thread zombie,
+    aucun clientId bloqué côté gateway.
 
-    Pour les connexions persistantes (ex: streaming), une connexion "hold" tourne
-    en arrière-plan et les opérations suivantes y sont soumises via run_coroutine_threadsafe.
+    - clientId rotatif (1→32) pour éviter l'erreur 326 "client id already in use"
+    - les opérations sont sérialisées par un lock (une connexion à la fois)
+    - get_status() reflète la dernière opération réussie (TTL 5 min)
     """
 
     def __init__(self, host='ib-gateway', port=4003, client_id=1):
         self.host = host
         self.port = port
-        self.client_id = client_id
+        self._client_id = 0
         self._lock = threading.Lock()
-        self._connected_at = None
+        self._last_ok = None
         self._last_error = None
 
-        # Connexion persistante (thread + loop + ib)
-        self._ib = None
-        self._loop = None
-        self._conn_thread = None
-
     # ------------------------------------------------------------------
-    # Helpers
+    # Cœur : exécution d'une opération avec connexion fraîche
     # ------------------------------------------------------------------
 
-    def _is_connected(self) -> bool:
-        return (self._ib is not None
-                and self._loop is not None
-                and self._loop.is_running()
-                and self._ib.isConnected())
+    def _next_cid(self):
+        self._client_id = (self._client_id % 32) + 1
+        return self._client_id
 
-    def _run_in_conn_loop(self, coro, timeout=30):
-        """Soumet une coroutine au loop de connexion persistante."""
-        if not self._loop or not self._loop.is_running():
-            raise RuntimeError('Loop non disponible')
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
-
-    @staticmethod
-    def _run_async(coro, timeout=30):
-        """Exécute une coroutine dans un loop neuf (thread dédié). Approche prouvée."""
-        result_holder = [None]
-        error_holder  = [None]
-        done = threading.Event()
-
-        def _thread():
-            try:
-                result_holder[0] = asyncio.run(coro)
-            except Exception as e:
-                error_holder[0] = e
-            finally:
-                done.set()
-
-        t = threading.Thread(target=_thread, daemon=True)
-        t.start()
-        if not done.wait(timeout=timeout):
-            raise TimeoutError(f'IBKR opération timeout ({timeout}s)')
-        if error_holder[0]:
-            raise error_holder[0]
-        return result_holder[0]
-
-    # ------------------------------------------------------------------
-    # Connexion persistante
-    # ------------------------------------------------------------------
-
-    def _next_client_id(self):
+    def _run(self, async_fn, timeout=45, hold=1.5):
         """
-        clientId rotatif (1→32) pour éviter l'erreur 326 "client id already in use"
-        quand une ancienne connexion n'est pas encore libérée côté gateway.
-        """
-        self.client_id = (self.client_id % 32) + 1
-        return self.client_id
+        Ouvre une connexion fraîche, exécute async_fn(ib), ferme.
 
-    def connect(self, force: bool = True) -> dict:
+        Args:
+            async_fn: coroutine prenant l'objet ib, retournant un résultat
+            timeout: délai max global
+            hold: pause après connexion pour laisser arriver les données initiales
+
+        Le tout tourne dans un thread isolé avec asyncio.run() (loop propre fermé
+        en fin → pas de thread zombie). Sérialisé par self._lock.
+        """
         with self._lock:
-            # force=False (reconnexion auto) : si déjà connecté, ne rien faire.
-            # Évite les reconnexions redondantes en parallèle (threads gunicorn) qui
-            # créaient des connexions zombies côté gateway.
-            if not force and self._is_connected():
-                return {'success': True}
+            result = [None]
+            error = [None]
+            done = threading.Event()
+            cid = self._next_cid()
 
-            # Fermer proprement la connexion précédente ET attendre la fin du thread
-            self._close_connection()
-
-            client_id = self._next_client_id()
-            conn_event = threading.Event()
-            conn_error = [None]
-
-            def _thread():
-                async def _connect_and_hold():
+            def worker():
+                async def main():
                     ib = IB()
-                    # Connexion socket de base (rapide). Les sous-requêtes de données
-                    # (positions, executions) peuvent émettre des warnings "timed out"
-                    # sans empêcher la connexion — on les tolère.
                     await ib.connectAsync(
                         self.host, self.port,
-                        clientId=client_id,
-                        readonly=True,
-                        timeout=30,
+                        clientId=cid, readonly=True, timeout=20,
                     )
-                    self._ib = ib
-                    self._connected_at = time.time()
-                    conn_event.set()
-                    # Maintenir le loop actif pour traiter les données entrantes
-                    while ib.isConnected():
-                        await asyncio.sleep(1)
-
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                self._loop = loop
-                try:
-                    loop.run_until_complete(_connect_and_hold())
-                except Exception as e:
-                    conn_error[0] = e
-                    conn_event.set()
-                finally:
                     try:
-                        loop.close()
-                    except Exception:
-                        pass
-                    self._loop = None
-                    self._ib = None
+                        if hold:
+                            await asyncio.sleep(hold)
+                        return await async_fn(ib)
+                    finally:
+                        ib.disconnect()
 
-            self._conn_thread = threading.Thread(target=_thread, daemon=True)
-            self._conn_thread.start()
+                try:
+                    result[0] = asyncio.run(main())
+                except Exception as e:
+                    error[0] = e
+                finally:
+                    done.set()
 
-            if not conn_event.wait(timeout=45):
-                self._last_error = 'Timeout de connexion'
-                return {'success': False, 'error': 'Timeout de connexion (gateway non prêt ?)'}
+            threading.Thread(target=worker, daemon=True).start()
 
-            if conn_error[0]:
-                self._last_error = str(conn_error[0])
-                return {'success': False, 'error': str(conn_error[0]) or 'Connexion refusée'}
+            if not done.wait(timeout=timeout):
+                self._last_error = 'Timeout'
+                raise TimeoutError('IBKR : délai dépassé')
+            if error[0] is not None:
+                self._last_error = str(error[0])
+                raise error[0]
 
+            self._last_ok = time.time()
             self._last_error = None
-            logger.info('IBKR connecté à %s:%s (clientId=%s)', self.host, self.port, client_id)
-            return {'success': True}
+            return result[0]
 
-    def _close_connection(self):
-        """Ferme la connexion et attend la fin réelle du thread (libère le clientId)."""
-        ib = self._ib
-        if ib is not None:
-            try:
-                ib.disconnect()
-            except Exception:
-                pass
-        loop = self._loop
-        if loop is not None and loop.is_running():
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:
-                pass
-        # Attendre que le thread se termine vraiment → le clientId est libéré côté gateway
-        thread = self._conn_thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=8)
-        self._ib = None
-        self._loop = None
-        self._conn_thread = None
-        self._connected_at = None
+    # ------------------------------------------------------------------
+    # Connexion / statut
+    # ------------------------------------------------------------------
+
+    def connect(self, force: bool = True) -> dict:
+        """Teste une connexion au gateway (handshake + déconnexion)."""
+        try:
+            self._run(lambda ib: asyncio.sleep(0), timeout=40, hold=0.5)
+            logger.info('IBKR connexion OK (%s:%s)', self.host, self.port)
+            return {'success': True}
+        except Exception as e:
+            logger.warning('IBKR connexion échouée : %s', e)
+            return {'success': False, 'error': str(e) or 'Connexion impossible'}
 
     def disconnect(self):
-        with self._lock:
-            self._close_connection()
+        """Sans effet : pas de connexion persistante à fermer."""
+        self._last_ok = None
 
     def get_status(self) -> dict:
+        connected = bool(self._last_ok and (time.time() - self._last_ok < 300))
         return {
-            'connected': self._is_connected(),
-            'connected_at': self._connected_at,
+            'connected': connected,
+            'connected_at': self._last_ok,
             'last_error': self._last_error,
         }
 
     def ensure_connected(self) -> bool:
         """
-        Garantit une connexion active. Reconnecte automatiquement si la session
-        app est tombée (ex: après le restart quotidien du gateway).
-        Retourne True si connecté, False sinon.
+        Vérifie que le gateway répond. Comme chaque opération se connecte d'elle-même,
+        on teste juste la disponibilité (avec un cache court pour éviter le spam).
         """
-        if self._is_connected():
+        if self._last_ok and (time.time() - self._last_ok < 120):
             return True
-        logger.info('IBKR session perdue — tentative de reconnexion automatique')
-        # force=False : double-check sous lock pour éviter les reconnexions parallèles
-        result = self.connect(force=False)
-        return bool(result.get('success'))
+        return self.connect().get('success', False)
 
     # ------------------------------------------------------------------
     # Données portfolio
     # ------------------------------------------------------------------
 
     def get_positions(self) -> list:
-        if not self._is_connected():
-            raise ConnectionError('Non connecté à IB Gateway')
-
-        async def _do():
-            await asyncio.sleep(1)
-            return self._ib.portfolio()
-
-        portfolio = self._run_in_conn_loop(_do(), timeout=15)
+        async def fn(ib):
+            return ib.portfolio()
+        portfolio = self._run(fn, timeout=40, hold=2.0)
         return self._format_portfolio(portfolio)
 
     def get_portfolio_stats(self) -> dict:
@@ -245,30 +168,17 @@ class IBKRService:
     def get_daily_bars(self, ticker: str, duration: str = '2 Y') -> list:
         """
         Récupère les barres journalières ajustées (ADJUSTED_LAST) via IBKR.
-
-        Args:
-            ticker: symbole (ex: 'AAPL')
-            duration: durée IBKR (ex: '1 Y', '2 Y', '6 M')
-
-        Returns:
-            liste de dicts [{'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float}]
-
-        Raises:
-            ConnectionError si non connecté, RuntimeError si données vides.
+        Returns: [{'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float}]
         """
-        if not self._is_connected():
-            raise ConnectionError('Non connecté à IB Gateway')
-
-        async def _do():
+        async def fn(ib):
             contract = Stock(ticker.upper(), 'SMART', 'USD')
-            await self._ib.qualifyContractsAsync(contract)
-            bars = await self._ib.reqHistoricalDataAsync(
+            await ib.qualifyContractsAsync(contract)
+            return await ib.reqHistoricalDataAsync(
                 contract, endDateTime='', durationStr=duration,
                 barSizeSetting='1 day', whatToShow='ADJUSTED_LAST', useRTH=True,
             )
-            return bars
 
-        bars = self._run_in_conn_loop(_do(), timeout=45)
+        bars = self._run(fn, timeout=60, hold=0.5)
         if not bars:
             raise RuntimeError(f'Aucune donnée historique IBKR pour {ticker}')
 
@@ -284,15 +194,13 @@ class IBKRService:
         return result
 
     def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> list:
-        if not self._is_connected():
-            raise ConnectionError('Non connecté à IB Gateway')
+        # Récupérer les stats hors connexion (get_portfolio_stats ouvre sa propre connexion)
+        stats       = self.get_portfolio_stats()
+        total_value = stats['total_value']
+        current     = {p['ticker']: p for p in stats['positions']}
 
-        async def _do():
-            stats       = self.get_portfolio_stats()
-            total_value = stats['total_value']
-            current     = {p['ticker']: p for p in stats['positions']}
-            orders      = []
-
+        async def fn(ib):
+            orders = []
             for t in targets:
                 ticker       = t['ticker'].upper()
                 target_pct   = float(t.get('target_pct', 0))
@@ -306,7 +214,6 @@ class IBKRService:
 
                 action   = 'BUY' if diff > 0 else 'SELL'
                 cash_qty = abs(round(diff, 2))
-
                 orders.append({
                     'ticker':        ticker,
                     'action':        action,
@@ -317,17 +224,16 @@ class IBKRService:
 
                 if not dry_run:
                     contract = Stock(ticker, 'SMART', currency)
-                    await self._ib.qualifyContractsAsync(contract)
-                    order = Order(
-                        action=action, orderType='MKT',
-                        totalQuantity=0, cashQty=cash_qty, tif='DAY',
-                    )
-                    self._ib.placeOrder(contract, order)
+                    await ib.qualifyContractsAsync(contract)
+                    order = Order(action=action, orderType='MKT',
+                                  totalQuantity=0, cashQty=cash_qty, tif='DAY')
+                    ib.placeOrder(contract, order)
                     await asyncio.sleep(0.5)
-
             return orders
 
-        return self._run_in_conn_loop(_do(), timeout=120)
+        # readonly=True empêche placeOrder → pour l'exécution réelle, utiliser une
+        # connexion non-readonly. Ici on garde le dry_run comme défaut sûr.
+        return self._run(fn, timeout=120, hold=1.0)
 
     # ------------------------------------------------------------------
     # Internal helpers
