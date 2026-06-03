@@ -289,8 +289,12 @@ class IBKRService:
         total_value = stats['total_value']
         current     = {p['ticker']: p for p in stats['positions']}
 
+        target_tickers = {t['ticker'].upper() for t in targets}
+
         async def fn():
             orders = []
+
+            # 1) Ajuster / acheter les positions cibles
             for t in targets:
                 ticker       = t['ticker'].upper()
                 target_pct   = float(t.get('target_pct', 0))
@@ -310,6 +314,7 @@ class IBKRService:
                     'cash_qty_usd':  cash_qty,
                     'current_value': round(cur_value, 2),
                     'target_value':  round(target_value, 2),
+                    'liquidation':   False,
                 })
 
                 if not dry_run:
@@ -319,6 +324,35 @@ class IBKRService:
                                   totalQuantity=0, cashQty=cash_qty, tif='DAY')
                     self._ib.placeOrder(contract, order)
                     await asyncio.sleep(0.5)
+
+            # 2) Liquider entièrement les positions du portefeuille HORS cibles
+            #    (vente de la quantité totale → ramène l'allocation à 0)
+            for ticker, p in current.items():
+                if ticker in target_tickers:
+                    continue
+                qty = p.get('qty') or 0
+                if abs(qty) < 1e-6:
+                    continue
+                mv = p.get('market_value') or 0
+                currency = p.get('currency', 'USD')
+                orders.append({
+                    'ticker':        ticker,
+                    'action':        'SELL' if qty > 0 else 'BUY',  # couvrir un short
+                    'cash_qty_usd':  round(abs(mv), 2),
+                    'current_value': round(mv, 2),
+                    'target_value':  0.0,
+                    'liquidation':   True,
+                })
+
+                if not dry_run:
+                    contract = Stock(ticker, 'SMART', currency)
+                    await self._ib.qualifyContractsAsync(contract)
+                    # Liquidation par quantité totale (plus fiable que cashQty)
+                    order = Order(action='SELL' if qty > 0 else 'BUY', orderType='MKT',
+                                  totalQuantity=abs(qty), tif='DAY')
+                    self._ib.placeOrder(contract, order)
+                    await asyncio.sleep(0.5)
+
             return orders
 
         try:

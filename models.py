@@ -77,17 +77,26 @@ class RecommendationHistory(db.Model):
     calculation_date = db.Column(db.DateTime, nullable=False)  # Date du calcul
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     nb_top = db.Column(db.Integer, default=5)  # Nombre de top actions à ce moment
-    
+    market_regime = db.Column(db.Text)  # Régime de marché (JSON) au moment du calcul
+
     # Relation avec les détails
     details = db.relationship('RecommendationDetail', backref='history', lazy=True,
                               cascade='all, delete-orphan')
-    
+
     def to_dict(self):
+        import json
+        regime = None
+        if self.market_regime:
+            try:
+                regime = json.loads(self.market_regime)
+            except Exception:
+                regime = None
         return {
             'id': self.id,
             'calculation_date': self.calculation_date.strftime('%Y-%m-%d'),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'nb_top': self.nb_top,
+            'market_regime': regime,
             'details': [d.to_dict() for d in self.details]
         }
 
@@ -106,14 +115,27 @@ class RecommendationDetail(db.Model):
     signal = db.Column(db.String(20), nullable=False)  # Investir, Sortir, Cash
     allocation = db.Column(db.Float, default=0.0)
     rank = db.Column(db.Integer)  # Position dans le classement
-    
+    perf_recent_1m = db.Column(db.Float)       # Perf du mois exclu (mean-reversion)
+    vol_annualisee = db.Column(db.Float)       # Volatilité annualisée (%)
+    details_mensuels = db.Column(db.Text)      # Historique mensuel (JSON)
+
     def to_dict(self):
+        import json
+        dm = None
+        if self.details_mensuels:
+            try:
+                dm = json.loads(self.details_mensuels)
+            except Exception:
+                dm = None
         return {
             'ticker': self.ticker,
             'momentum': round(self.momentum, 2),
             'signal': self.signal,
             'allocation': self.allocation,
-            'rank': self.rank
+            'rank': self.rank,
+            'perf_recent_1m': self.perf_recent_1m,
+            'vol_annualisee': self.vol_annualisee,
+            'details_mensuels': dm,
         }
 
 
@@ -326,6 +348,16 @@ def init_db(app, default_panel):
         
         # Migration: Ajouter la colonne strategy_type si elle n'existe pas
         _migrate_add_strategy_type(app)
+
+        # Migration: colonnes enrichies pour persister tout le détail du calcul
+        _migrate_add_columns(app, 'recommendation_details', {
+            'perf_recent_1m':   'FLOAT',
+            'vol_annualisee':   'FLOAT',
+            'details_mensuels': 'TEXT',
+        })
+        _migrate_add_columns(app, 'recommendation_history', {
+            'market_regime': 'TEXT',
+        })
         
         # Initialiser le panel Long par défaut si vide
         if PanelAction.query.count() == 0:
@@ -334,6 +366,27 @@ def init_db(app, default_panel):
                 db.session.add(action)
             db.session.commit()
             print(f"✅ Panel Long initialisé avec {len(default_panel)} actions")
+
+
+def _migrate_add_columns(app, table_name, columns: dict):
+    """
+    Ajoute des colonnes manquantes à une table existante (PostgreSQL & SQLite).
+    columns: { 'nom_colonne': 'TYPE_SQL' }
+    """
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(db.engine)
+        existing = {col['name'] for col in inspector.get_columns(table_name)}
+        for name, sql_type in columns.items():
+            if name not in existing:
+                db.session.execute(text(
+                    f'ALTER TABLE {table_name} ADD COLUMN {name} {sql_type}'
+                ))
+                print(f"🔄 Migration: {table_name}.{name} ajoutée")
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ Migration {table_name} échouée: {e}")
 
 
 def _migrate_add_strategy_type(app):

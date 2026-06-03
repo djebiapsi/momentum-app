@@ -3977,11 +3977,23 @@
 
             if (!preview.orders.length) { showToast('Aucun ordre nécessaire (portefeuille déjà équilibré)', 'success'); return; }
 
-            const summary = preview.orders.map(o =>
-                `${o.action} ${o.ticker}: $${o.cash_qty_usd} (actuel: $${o.current_value} → cible: $${o.target_value})`
-            ).join('\n');
+            // Séparer rééquilibrages et liquidations (positions hors cibles → vendues)
+            const ajustements = preview.orders.filter(o => !o.liquidation);
+            const liquidations = preview.orders.filter(o => o.liquidation);
 
-            if (!confirm(`${preview.count} ordre(s) à passer :\n\n${summary}\n\nConfirmer l'exécution ?`)) return;
+            let summary = '';
+            if (ajustements.length) {
+                summary += '— Ajustements —\n' + ajustements.map(o =>
+                    `${o.action} ${o.ticker}: $${o.cash_qty_usd} (actuel $${o.current_value} → cible $${o.target_value})`
+                ).join('\n') + '\n';
+            }
+            if (liquidations.length) {
+                summary += '\n— Liquidations (hors stratégie) —\n' + liquidations.map(o =>
+                    `VENDRE TOUT ${o.ticker}: $${o.current_value}`
+                ).join('\n') + '\n';
+            }
+
+            if (!confirm(`${preview.count} ordre(s) à passer :\n\n${summary}\nConfirmer l'exécution ?`)) return;
 
             showToast('Passage des ordres...', 'info');
             const result = await api('/ibkr/rebalance', { method: 'POST', body: JSON.stringify({ targets, dry_run: false }) });

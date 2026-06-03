@@ -473,21 +473,27 @@ def _run_long_calculation():
 
     recommandations = service.generer_recommandations(resultats, nb_top, **vs)
 
+    regime = recommandations.get('market_regime')
     history = RecommendationHistory(
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
-        nb_top=nb_top
+        nb_top=nb_top,
+        market_regime=json.dumps(regime) if regime else None,
     )
     db.session.add(history)
     db.session.flush()
 
     for r in recommandations['recommandations']:
+        dm = r.get('details_mensuels')
         db.session.add(RecommendationDetail(
             history_id=history.id,
             ticker=r['ticker'],
             momentum=float(r['momentum']),
             signal=r['signal'],
             allocation=float(r['allocation']),
-            rank=int(r['rank'])
+            rank=int(r['rank']),
+            perf_recent_1m=r.get('perf_recent_1m'),
+            vol_annualisee=r.get('vol_annualisee'),
+            details_mensuels=json.dumps(dm) if dm else None,
         ))
 
     db.session.commit()
@@ -1344,21 +1350,27 @@ def job_mensuel():
                                                           **_get_vol_scaling_settings())
 
         # Sauvegarder
+        regime = recommandations.get('market_regime')
         history = RecommendationHistory(
             calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
-            nb_top=nb_top
+            nb_top=nb_top,
+            market_regime=json.dumps(regime) if regime else None,
         )
         db.session.add(history)
         db.session.flush()
-        
+
         for r in recommandations['recommandations']:
+            dm = r.get('details_mensuels')
             detail = RecommendationDetail(
                 history_id=history.id,
                 ticker=r['ticker'],
                 momentum=float(r['momentum']),
                 signal=r['signal'],
                 allocation=float(r['allocation']),
-                rank=int(r['rank'])
+                rank=int(r['rank']),
+                perf_recent_1m=r.get('perf_recent_1m'),
+                vol_annualisee=r.get('vol_annualisee'),
+                details_mensuels=json.dumps(dm) if dm else None,
             )
             db.session.add(detail)
         
