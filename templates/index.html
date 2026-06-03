@@ -1920,6 +1920,22 @@
                     </div>
                 </div>
 
+                <div class="form-group">
+                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="input-portfolio-filter" onchange="togglePortfolioFilterInputs()" style="width:18px;height:18px;">
+                        Filtre portefeuille (anti-krach)
+                    </label>
+                    <p class="form-hint">Layer 2 : réduit l'exposition globale quand la volatilité du panier (corrélations) dépasse le seuil — désamorce le levier au moment du risque de krach.</p>
+                </div>
+
+                <div id="portfolio-filter-params" style="display:none;">
+                    <div class="form-group">
+                        <label class="form-label">Vol. seuil du panier (%)</label>
+                        <input type="number" class="form-input" id="input-portfolio-threshold" min="5" max="100" step="1" value="20">
+                        <p class="form-hint">Au-delà, facteur f = seuil / vol panier (&lt; 1) appliqué à toutes les positions.</p>
+                    </div>
+                </div>
+
                 <button class="btn btn-primary btn-block" onclick="saveSettings()">
                     Enregistrer
                 </button>
@@ -3198,15 +3214,25 @@
             document.getElementById('stat-vol-avg').textContent =
                 avgVol != null ? avgVol + '%' : '—';
 
-            // --- Bannière exposition brute (mode volatility scaling) ---
+            // --- Bannière exposition brute (vol scaling et/ou filtre portefeuille) ---
             const expoBanner = document.getElementById('exposure-banner');
             if (expoBanner) {
-                if (data.vol_scaling && data.exposition_brute != null) {
+                if ((data.vol_scaling || data.portfolio_filter) && data.exposition_brute != null) {
                     const brute = data.exposition_brute;
                     const levier = brute > 100;
-                    document.getElementById('exposure-value').innerHTML =
-                        `<span style="color:${levier ? 'var(--accent-short)' : 'var(--text-primary,#fff)'}">${brute.toFixed(1)}%</span>`
+                    let html = `<span style="color:${levier ? 'var(--accent-short)' : 'var(--text-primary,#fff)'}">${brute.toFixed(1)}%</span>`
                         + (levier ? ' <span style="font-size:11px;color:var(--accent-short);">⚡ levier</span>' : '');
+                    // Frein anti-krach actif ?
+                    if (data.portfolio_filter && data.portfolio_factor != null) {
+                        const f = data.portfolio_factor;
+                        const pvol = data.portfolio_vol != null ? data.portfolio_vol + '%' : '—';
+                        if (f < 1) {
+                            html += ` <span style="font-size:11px;color:var(--accent-short);" title="Vol panier ${pvol} > seuil ${data.portfolio_threshold_pct}%">🛡️ frein ×${f}</span>`;
+                        } else {
+                            html += ` <span style="font-size:11px;color:var(--text-secondary,#888);" title="Vol panier ${pvol} ≤ seuil ${data.portfolio_threshold_pct}%">🛡️ veille (vol ${pvol})</span>`;
+                        }
+                    }
+                    document.getElementById('exposure-value').innerHTML = html;
                     expoBanner.style.display = 'flex';
                 } else {
                     expoBanner.style.display = 'none';
@@ -3826,6 +3852,11 @@
             document.getElementById('vol-scaling-params').style.display = on ? 'block' : 'none';
         }
 
+        function togglePortfolioFilterInputs() {
+            const on = document.getElementById('input-portfolio-filter').checked;
+            document.getElementById('portfolio-filter-params').style.display = on ? 'block' : 'none';
+        }
+
         async function loadSettings() {
             const data = await api('/settings');
             if (data) {
@@ -3834,7 +3865,10 @@
                 document.getElementById('input-vol-scaling').checked = !!data.vol_scaling_enabled;
                 if (data.vol_target != null) document.getElementById('input-vol-target').value = data.vol_target;
                 if (data.max_exposure != null) document.getElementById('input-max-exposure').value = data.max_exposure;
+                document.getElementById('input-portfolio-filter').checked = !!data.portfolio_filter_enabled;
+                if (data.portfolio_vol_threshold != null) document.getElementById('input-portfolio-threshold').value = data.portfolio_vol_threshold;
                 toggleVolScalingInputs();
+                togglePortfolioFilterInputs();
 
                 // Email status
                 const emailDiv = document.getElementById('email-status');
@@ -3862,6 +3896,8 @@
             const volScaling = document.getElementById('input-vol-scaling').checked;
             const volTarget = parseFloat(document.getElementById('input-vol-target').value);
             const maxExposure = parseFloat(document.getElementById('input-max-exposure').value);
+            const portfolioFilter = document.getElementById('input-portfolio-filter').checked;
+            const portfolioThreshold = parseFloat(document.getElementById('input-portfolio-threshold').value);
 
             const data = await api('/settings', {
                 method: 'POST',
@@ -3870,7 +3906,9 @@
                     date_calcul: dateCalcul,
                     vol_scaling_enabled: volScaling,
                     vol_target: volTarget,
-                    max_exposure: maxExposure
+                    max_exposure: maxExposure,
+                    portfolio_filter_enabled: portfolioFilter,
+                    portfolio_vol_threshold: portfolioThreshold
                 })
             });
             

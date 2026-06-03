@@ -171,6 +171,10 @@ def get_settings():
                                str(app.config.get('DEFAULT_VOL_SCALING', False)).lower())
     vol_target = Settings.get('vol_target', app.config.get('DEFAULT_VOL_TARGET', 12))
     max_exposure = Settings.get('max_exposure', app.config.get('DEFAULT_MAX_EXPOSURE', 250))
+    portfolio_filter = Settings.get('portfolio_filter_enabled',
+                                    str(app.config.get('DEFAULT_PORTFOLIO_FILTER', False)).lower())
+    portfolio_vol_threshold = Settings.get('portfolio_vol_threshold',
+                                           app.config.get('DEFAULT_PORTFOLIO_VOL_THRESHOLD', 20))
 
     return jsonify({
         'nb_top': int(nb_top),
@@ -180,7 +184,9 @@ def get_settings():
         'api_configured': app.config.get('TIINGO_API_KEY') is not None,
         'vol_scaling_enabled': str(vol_scaling).lower() == 'true',
         'vol_target': float(vol_target),
-        'max_exposure': float(max_exposure)
+        'max_exposure': float(max_exposure),
+        'portfolio_filter_enabled': str(portfolio_filter).lower() == 'true',
+        'portfolio_vol_threshold': float(portfolio_vol_threshold)
     })
 
 
@@ -229,6 +235,19 @@ def update_settings():
             Settings.set('max_exposure', max_exposure)
         else:
             return jsonify({'error': 'max_exposure doit être entre 100 et 500'}), 400
+
+    if 'portfolio_filter_enabled' in data:
+        Settings.set('portfolio_filter_enabled', 'true' if data['portfolio_filter_enabled'] else 'false')
+
+    if 'portfolio_vol_threshold' in data:
+        try:
+            seuil = float(data['portfolio_vol_threshold'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'portfolio_vol_threshold invalide'}), 400
+        if 5 <= seuil <= 100:
+            Settings.set('portfolio_vol_threshold', seuil)
+        else:
+            return jsonify({'error': 'portfolio_vol_threshold doit être entre 5 et 100'}), 400
 
     return jsonify({'success': True, 'message': 'Paramètres mis à jour'})
 
@@ -412,10 +431,15 @@ def _get_vol_scaling_settings():
     """Lit les réglages de volatility scaling (Long) depuis Settings + fallback config."""
     vs = Settings.get('vol_scaling_enabled',
                       str(app.config.get('DEFAULT_VOL_SCALING', False)).lower())
+    pf = Settings.get('portfolio_filter_enabled',
+                      str(app.config.get('DEFAULT_PORTFOLIO_FILTER', False)).lower())
     return {
         'vol_scaling': str(vs).lower() == 'true',
         'vol_target_pct': float(Settings.get('vol_target', app.config.get('DEFAULT_VOL_TARGET', 12))),
         'max_exposure_pct': float(Settings.get('max_exposure', app.config.get('DEFAULT_MAX_EXPOSURE', 250))),
+        'portfolio_filter': str(pf).lower() == 'true',
+        'portfolio_vol_threshold_pct': float(Settings.get('portfolio_vol_threshold',
+                                            app.config.get('DEFAULT_PORTFOLIO_VOL_THRESHOLD', 20))),
     }
 
 

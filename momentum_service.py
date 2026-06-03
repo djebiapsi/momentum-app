@@ -457,18 +457,77 @@ class MomentumService:
         annual_vol = math.sqrt(daily_var * 252)
         return annual_vol if annual_vol > 1e-6 else None
 
+    def _vol_portefeuille_126j(self, poids):
+        """
+        Volatilité réalisée annualisée du PANIER pondéré sur ~126 sessions (Layer 2,
+        cœur de Barroso & Santa-Clara 2014, éq. 5). Contrairement à la vol par actif,
+        elle intègre les corrélations entre titres → capte la nervosité de marché.
+
+        Args:
+            poids: dict {ticker: poids_relatif} (sera normalisé pour sommer à 1)
+
+        Returns:
+            float: volatilité annualisée du panier en décimal, ou None.
+        """
+        poids = {t: w for t, w in poids.items() if w and w > 0}
+        total = sum(poids.values())
+        if not poids or total <= 0:
+            return None
+        poids = {t: w / total for t, w in poids.items()}
+
+        # Récupérer les prix journaliers de chaque titre, alignés sur les dates communes
+        series = {}
+        for t in poids:
+            df, err = self.recuperer_prix_journaliers(t, nb_jours=200)
+            if df is None or err or 'adjClose' not in df:
+                continue
+            series[t] = df.sort_index()['adjClose']
+
+        if not series:
+            return None
+
+        prices = pd.DataFrame(series).dropna()
+        if len(prices) < 21:
+            return None
+
+        # Rendements journaliers, puis rendement du panier = Σ poids_i × r_i
+        rets = prices.pct_change().dropna()
+        # Renormaliser les poids sur les titres effectivement disponibles
+        dispo = {t: poids[t] for t in rets.columns if t in poids}
+        s = sum(dispo.values())
+        if s <= 0:
+            return None
+        dispo = {t: w / s for t, w in dispo.items()}
+
+        port_rets = sum(rets[t] * w for t, w in dispo.items())
+        port_rets = port_rets.values[-126:]
+        if len(port_rets) < 20:
+            return None
+
+        daily_var = float((port_rets ** 2).sum() / len(port_rets))
+        annual_vol = math.sqrt(daily_var * 252)
+        return annual_vol if annual_vol > 1e-6 else None
+
     def generer_recommandations(self, resultats_analyse, nb_top,
                                 vol_scaling=False, vol_target_pct=12.0,
-                                max_exposure_pct=250.0):
+                                max_exposure_pct=250.0,
+                                portfolio_filter=False,
+                                portfolio_vol_threshold_pct=20.0):
         """
         Génère les signaux d'investissement et calcule les allocations.
 
-        Deux modes d'allocation :
+        Deux couches de gestion du risque, combinables :
+
+        Layer 1 — répartition par actif :
           - vol_scaling=False (défaut) : pondération inverse-volatilité normalisée à 100%.
           - vol_scaling=True : « volatility scaling » par actif (Barroso & Santa-Clara 2014,
             footnote 13). Poids_i = σ_target / σ_asset_i (vol récente 126j de chaque titre).
-            L'exposition brute peut dépasser 100% (levier) ; elle est plafonnée à
-            max_exposure_pct. Si la somme reste sous le plafond, le reste demeure en cash.
+            L'exposition brute peut dépasser 100% (levier), plafonnée à max_exposure_pct.
+
+        Layer 2 — filtre portefeuille « anti-krach » (portfolio_filter=True, éq. 5-6) :
+          Applique un facteur global f = min(1, σ_seuil / σ̂_panier) aux allocations.
+          σ̂_panier = vol réalisée 126j du panier pondéré (intègre les corrélations).
+          f ≤ 1 : ne réduit l'exposition (désamorce le levier) qu'en cas de turbulence.
 
         Args:
             resultats_analyse: Résultat de analyser_panel()
@@ -476,17 +535,12 @@ class MomentumService:
             vol_scaling: active la mise à l'échelle par volatilité (Long)
             vol_target_pct: volatilité cible annualisée en % (ex. 12)
             max_exposure_pct: plafond d'exposition brute en % (ex. 250)
+            portfolio_filter: active le frein anti-krach au niveau du panier
+            portfolio_vol_threshold_pct: vol annualisée seuil du panier en % (ex. 20)
 
         Returns:
-            dict: {
-                'date_calcul': str,
-                'nb_top': int,
-                'recommandations': list,
-                'total_investir': int,
-                'erreurs': list,
-                'vol_scaling': bool,
-                'exposition_brute': float   # somme des allocations en %
-            }
+            dict avec recommandations + métriques (vol_scaling, exposition_brute,
+            portfolio_filter, portfolio_vol, portfolio_factor).
         """
         if not resultats_analyse['success']:
             return {
@@ -497,7 +551,11 @@ class MomentumService:
                 'erreurs': resultats_analyse['erreurs'],
                 'market_regime': resultats_analyse.get('market_regime'),
                 'vol_scaling': bool(vol_scaling),
-                'exposition_brute': 0.0
+                'exposition_brute': 0.0,
+                'portfolio_filter': bool(portfolio_filter),
+                'portfolio_vol': None,
+                'portfolio_threshold_pct': portfolio_vol_threshold_pct if portfolio_filter else None,
+                'portfolio_factor': None
             }
         
         resultats = resultats_analyse['resultats']
@@ -585,6 +643,23 @@ class MomentumService:
             else:
                 allocations = {}
 
+        # ------------------------------------------------------------------
+        # Layer 2 — Filtre portefeuille « anti-krach » (Barroso & Santa-Clara, éq. 5-6)
+        #   f = min(1, σ_seuil / σ̂_panier) appliqué à toutes les allocations.
+        #   σ̂_panier capte les corrélations → désamorce le levier en turbulence.
+        # ------------------------------------------------------------------
+        portfolio_vol = None
+        portfolio_factor = 1.0
+        if portfolio_filter and allocations:
+            portfolio_vol = self._vol_portefeuille_126j(allocations)
+            if portfolio_vol and portfolio_vol > 1e-6:
+                seuil = portfolio_vol_threshold_pct / 100.0
+                portfolio_factor = min(1.0, seuil / portfolio_vol)
+                if portfolio_factor < 1.0:
+                    allocations = {t: round(a * portfolio_factor, 2)
+                                   for t, a in allocations.items()}
+                    multipliers = {t: m * portfolio_factor for t, m in multipliers.items()}
+
         recommandations = []
 
         for i, r in enumerate(resultats):
@@ -631,7 +706,11 @@ class MomentumService:
             'vol_scaling': bool(vol_scaling),
             'vol_target_pct': vol_target_pct if vol_scaling else None,
             'max_exposure_pct': max_exposure_pct if vol_scaling else None,
-            'exposition_brute': exposition_brute
+            'exposition_brute': exposition_brute,
+            'portfolio_filter': bool(portfolio_filter),
+            'portfolio_vol': round(portfolio_vol * 100, 1) if portfolio_vol else None,
+            'portfolio_threshold_pct': portfolio_vol_threshold_pct if portfolio_filter else None,
+            'portfolio_factor': round(portfolio_factor, 3) if portfolio_filter else None
         }
     
     def valider_ticker(self, ticker):

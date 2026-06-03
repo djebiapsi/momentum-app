@@ -82,6 +82,12 @@ class Config:
     DEFAULT_VOL_SCALING = False   # désactivé par défaut (comportement inverse-vol historique)
     DEFAULT_VOL_TARGET = 12       # volatilité cible annualisée en % (valeur du papier)
     DEFAULT_MAX_EXPOSURE = 250    # plafond d'exposition brute en % (garde-fou levier)
+
+    # Filtre portefeuille « anti-krach » (Layer 2, éq. 5-6 du papier)
+    # Réduit l'exposition globale (facteur f≤1) quand la vol réalisée du panier
+    # dépasse le seuil — capte les corrélations / la nervosité de marché.
+    DEFAULT_PORTFOLIO_FILTER = False        # désactivé par défaut
+    DEFAULT_PORTFOLIO_VOL_THRESHOLD = 20    # vol annualisée seuil du panier en %
     
     # Panel d'actions par défaut
     DEFAULT_PANEL = [
