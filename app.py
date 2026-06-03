@@ -484,6 +484,8 @@ def _run_long_calculation():
 
     for r in recommandations['recommandations']:
         dm = r.get('details_mensuels')
+        pr = r.get('perf_recent_1m')
+        vol = r.get('vol_annualisee')
         db.session.add(RecommendationDetail(
             history_id=history.id,
             ticker=r['ticker'],
@@ -491,8 +493,8 @@ def _run_long_calculation():
             signal=r['signal'],
             allocation=float(r['allocation']),
             rank=int(r['rank']),
-            perf_recent_1m=r.get('perf_recent_1m'),
-            vol_annualisee=r.get('vol_annualisee'),
+            perf_recent_1m=float(pr) if pr is not None else None,
+            vol_annualisee=float(vol) if vol is not None else None,
             details_mensuels=json.dumps(dm) if dm else None,
         ))
 
@@ -1361,6 +1363,8 @@ def job_mensuel():
 
         for r in recommandations['recommandations']:
             dm = r.get('details_mensuels')
+            pr = r.get('perf_recent_1m')
+            vol = r.get('vol_annualisee')
             detail = RecommendationDetail(
                 history_id=history.id,
                 ticker=r['ticker'],
@@ -1368,8 +1372,8 @@ def job_mensuel():
                 signal=r['signal'],
                 allocation=float(r['allocation']),
                 rank=int(r['rank']),
-                perf_recent_1m=r.get('perf_recent_1m'),
-                vol_annualisee=r.get('vol_annualisee'),
+                perf_recent_1m=float(pr) if pr is not None else None,
+                vol_annualisee=float(vol) if vol is not None else None,
                 details_mensuels=json.dumps(dm) if dm else None,
             )
             db.session.add(detail)
