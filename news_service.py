@@ -115,15 +115,18 @@ class NewsService:
             for it in news_items[:25]
         )
         prompt = (
-            "Tu es un analyste financier. Voici des titres d'actualité récents"
+            "Tu es un analyste financier francophone. Voici des titres d'actualité "
+            "récents (souvent en anglais)"
             f"{(' — contexte: ' + context) if context else ''}.\n\n"
             f"{headlines}\n\n"
-            "Rédige en français un résumé court et structuré (4 à 6 puces) qui :\n"
+            "IMPORTANT : réponds EXCLUSIVEMENT en français. Traduis en français toute "
+            "information issue de titres en anglais ; n'écris aucune phrase en anglais.\n\n"
+            "Rédige un résumé court et structuré (4 à 6 puces) qui :\n"
             "1) met en avant uniquement ce qui est pertinent pour un investisseur "
             "momentum passif (tendances de fond, risques macro, mouvements majeurs),\n"
             "2) ignore le bruit (clickbait, news mineures),\n"
             "3) signale tout signe de stress de marché.\n"
-            "Sois factuel et concis."
+            "Sois factuel et concis, et rédige intégralement en français."
         )
         try:
             r = requests.post(
