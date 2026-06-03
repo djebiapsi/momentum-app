@@ -1721,7 +1721,10 @@ def quick_option_calc():
 def ibkr_status():
     """Retourne le statut de connexion à IB Gateway + le mode de trading courant."""
     status = ibkr_service.get_status()
-    status['trading_mode'] = Settings.get('ibkr_trading_mode', 'live')
+    # Le mode est déduit du port socat réel (4003=live, 4004=paper) : reflète la
+    # connexion effective, plus fiable qu'une valeur Settings potentiellement périmée.
+    mode_from_port = {4003: 'live', 4004: 'paper'}.get(status.get('port'))
+    status['trading_mode'] = mode_from_port or Settings.get('ibkr_trading_mode', 'live')
     return jsonify(status)
 
 
