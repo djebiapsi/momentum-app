@@ -27,6 +27,8 @@ class IBKRService:
     - get_status() reflète la dernière opération réussie (TTL 5 min)
     """
 
+    CONNECT_COOLDOWN = 60  # secondes avant de retenter après un échec
+
     def __init__(self, host='ib-gateway', port=4003, client_id=1):
         self.host = host
         self.port = port
@@ -34,6 +36,7 @@ class IBKRService:
         self._lock = threading.Lock()
         self._connected_at = None
         self._last_error = None
+        self._last_failed_at = None  # horodatage du dernier échec de connexion
         self._ib = None
 
         # Event loop PERMANENT dans un thread dédié. ib_async ne fonctionne pas
@@ -101,6 +104,7 @@ class IBKRService:
                 cid = self._submit(_connect(), timeout=40)
                 self._connected_at = time.time()
                 self._last_error = None
+                self._last_failed_at = None  # reset cooldown après succès
                 logger.info('IBKR connecté (%s:%s, clientId=%s)', self.host, self.port, cid)
                 return {'success': True}
             except Exception as e:
@@ -117,6 +121,7 @@ class IBKRService:
                 else:
                     friendly = raw or 'Connexion impossible'
                 self._last_error = friendly
+                self._last_failed_at = time.time()
                 logger.warning('IBKR connexion échouée : %s', raw)
                 return {'success': False, 'error': friendly}
 
@@ -135,18 +140,30 @@ class IBKRService:
             self._ib.disconnect()
 
     def get_status(self) -> dict:
+        cooldown_remaining = None
+        if self._last_failed_at and not self._is_connected():
+            remaining = self.CONNECT_COOLDOWN - (time.time() - self._last_failed_at)
+            cooldown_remaining = max(0, round(remaining))
         return {
             'connected': self._is_connected(),
             'connected_at': self._connected_at,
             'last_error': self._last_error,
             'host': self.host,
             'port': self.port,
+            'cooldown_remaining_s': cooldown_remaining,
         }
 
     def ensure_connected(self) -> bool:
-        """Reconnecte automatiquement si la session est tombée."""
+        """
+        Reconnecte automatiquement si la session est tombée.
+        Respecte un cooldown après un échec pour ne pas retenter
+        la connexion pour chaque ticker lors d'un calcul (51 appels).
+        """
         if self._is_connected():
             return True
+        # Cooldown : si le dernier échec date de moins de CONNECT_COOLDOWN secondes, on skip
+        if self._last_failed_at and (time.time() - self._last_failed_at) < self.CONNECT_COOLDOWN:
+            return False
         return self.connect(force=False).get('success', False)
 
     # ------------------------------------------------------------------
