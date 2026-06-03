@@ -104,9 +104,21 @@ class IBKRService:
                 logger.info('IBKR connecté (%s:%s, clientId=%s)', self.host, self.port, cid)
                 return {'success': True}
             except Exception as e:
-                self._last_error = str(e) or 'Connexion impossible'
-                logger.warning('IBKR connexion échouée : %s', e)
-                return {'success': False, 'error': self._last_error}
+                raw = str(e)
+                # DNS / réseau : le conteneur Docker n'est pas démarré ou pas accessible
+                if any(k in raw for k in ('getaddrinfo', 'Errno 11001', 'Name or service not known',
+                                          'nodename nor servname', 'ConnectionRefused', 'Connection refused',
+                                          'timed out', 'Errno 111', 'Errno 10061')):
+                    friendly = (
+                        f"IB Gateway non accessible (hôte '{self.host}:{self.port}'). "
+                        "Vérifiez que le conteneur Docker ib-gateway est démarré et que "
+                        "IB_GATEWAY_HOST/PORT sont corrects dans les variables d'environnement."
+                    )
+                else:
+                    friendly = raw or 'Connexion impossible'
+                self._last_error = friendly
+                logger.warning('IBKR connexion échouée : %s', raw)
+                return {'success': False, 'error': friendly}
 
     def disconnect(self):
         with self._lock:
@@ -127,6 +139,8 @@ class IBKRService:
             'connected': self._is_connected(),
             'connected_at': self._connected_at,
             'last_error': self._last_error,
+            'host': self.host,
+            'port': self.port,
         }
 
     def ensure_connected(self) -> bool:

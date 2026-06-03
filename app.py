@@ -465,7 +465,11 @@ def _run_long_calculation():
     resultats = service.analyser_panel(panel, date_calcul)
 
     if not resultats['success']:
-        raise RuntimeError(f"Échec du calcul: {resultats['erreurs']}")
+        erreurs = resultats.get('erreurs') or []
+        if erreurs:
+            detail = '; '.join(f"{e.get('ticker','?')}: {e.get('erreur','?')}" for e in erreurs[:5])
+            raise RuntimeError(f"Calcul impossible — données manquantes : {detail}")
+        raise RuntimeError("Calcul impossible — aucun résultat (panel vide ou toutes les sources de données indisponibles)")
 
     recommandations = service.generer_recommandations(resultats, nb_top, **vs)
 
@@ -500,6 +504,9 @@ def calculate_momentum():
         return jsonify({'error': str(e)}), 400
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        app.logger.exception('Erreur inattendue dans calculate_momentum')
+        return jsonify({'error': f'Erreur inattendue : {type(e).__name__}: {e}'}), 500
 
     return jsonify({'success': True, 'history_id': history.id, **recommandations})
 
@@ -514,6 +521,9 @@ def calculate_and_notify():
         return jsonify({'error': str(e)}), 400
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        app.logger.exception('Erreur inattendue dans calculate_and_notify')
+        return jsonify({'error': f'Erreur inattendue : {type(e).__name__}: {e}'}), 500
 
     email_svc = get_email_service()
     email_result = email_svc.envoyer_recommandations(recommandations)
