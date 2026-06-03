@@ -28,6 +28,7 @@ from short_screener_service import ShortScreenerService
 from finviz_screener_service import FinvizScreenerService
 from options_service import OptionsService, estimate_historical_volatility
 from ibkr_service import IBKRService, encrypt_credential, decrypt_credential
+import flex_service
 
 
 def require_admin(f):
@@ -1985,60 +1986,267 @@ def ibkr_portfolio_stats():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+RANGE_TO_DAYS = {
+    '1W': 7, '1M': 30, '3M': 90, '6M': 180,
+    '1Y': 365, '3Y': 1095, '5Y': 1825, 'ALL': 3650,
+}
+
+
 @app.route('/api/perf/dashboard', methods=['GET'])
 @require_admin
 def perf_dashboard():
     """
-    Retourne toutes les données nécessaires au tableau de bord Performance v2.0.
-    Agrège les snapshots, le benchmark, les positions, transactions et dividendes.
+    Tableau de bord Performance : reconstruit l'évolution du portefeuille en
+    buy & hold des positions actuelles (qty × prix historiques persistés), calcule
+    les métriques (CAGR, Sharpe, max drawdown, drawdown série, rendements mensuels)
+    et compare au S&P 500 (SPY). Paramètre ?range=1W|1M|3M|6M|1Y|3Y|5Y|YTD|ALL.
+
+    Note : approximation buy & hold (pas d'historique de transactions) — la série
+    suppose les positions actuelles détenues sur toute la période.
     """
+    import pandas as pd
+    range_key = (request.args.get('range') or '1Y').upper()
+
     try:
-        from models import PortfolioSnapshot, MarketPriceBar, Transaction, Dividend
-        
-        # 1. Snapshots (Historique NAV)
-        snapshots = PortfolioSnapshot.query.order_by(PortfolioSnapshot.date.asc()).all()
-        
-        # 2. Benchmark (^GSPC)
-        benchmark = MarketPriceBar.query.filter_by(ticker='^GSPC')\
-            .order_by(MarketPriceBar.bar_date.asc()).all()
-        
-        # 3. Positions actuelles (Live IBKR)
-        positions = []
-        stats = {}
-        if ibkr_service.ensure_connected():
-            stats = ibkr_service.get_portfolio_stats()
-            positions = stats.get('positions', [])
-        
-        # 4. Transactions
-        transactions = Transaction.query.order_by(Transaction.date.desc()).all()
-        
-        # 5. Dividendes
-        dividends = Dividend.query.order_by(Dividend.date.desc()).all()
-        
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
+
+        stats = ibkr_service.get_portfolio_stats()
+        positions = stats.get('positions', [])
+        if not positions:
+            return jsonify({'success': True, 'empty': True,
+                            'message': 'Aucune position', 'summary': stats})
+
+        # Fenêtre temporelle
+        from datetime import date as _date
+        if range_key == 'YTD':
+            nb_jours = (_date.today() - _date(_date.today().year, 1, 1)).days + 1
+        else:
+            nb_jours = RANGE_TO_DAYS.get(range_key, 365)
+
+        svc = get_momentum_service()
+        cutoff = pd.Timestamp(datetime.now()) - pd.Timedelta(days=nb_jours)
+
+        # Source de la NAV : snapshots Flex réels (prioritaire) sinon reconstruction
+        from models import PortfolioSnapshot
+        snaps = (PortfolioSnapshot.query
+                 .filter(PortfolioSnapshot.date >= cutoff.date())
+                 .order_by(PortfolioSnapshot.date.asc()).all())
+        nav_source = 'flex'
+        if len(snaps) >= 2:
+            nav = pd.Series({pd.Timestamp(s.date): s.nav for s in snaps}).sort_index()
+        else:
+            # 1) Reconstruction buy & hold : Σ qty_i × prix_i(t)
+            nav_source = 'reconstruction'
+            series = {}
+            for p in positions:
+                ticker, qty = p['ticker'], (p.get('qty') or 0)
+                if abs(qty) < 1e-9:
+                    continue
+                df, err = svc._fetch_daily_adjusted(ticker, nb_jours) if svc else (None, 'no svc')
+                if df is None or df.empty:
+                    continue
+                series[ticker] = df['adjClose'] * qty
+            if not series:
+                return jsonify({'success': True, 'empty': True,
+                                'message': 'Pas de prix historiques disponibles', 'summary': stats})
+            nav_df = pd.DataFrame(series).sort_index().ffill().dropna(how='all')
+            nav = nav_df.sum(axis=1).dropna()
+            nav = nav[nav.index >= cutoff]
+
+        if len(nav) < 2:
+            return jsonify({'success': True, 'empty': True,
+                            'message': 'Historique insuffisant', 'summary': stats})
+
+        # 2) Benchmark S&P 500 (SPY), rebasé sur la valeur initiale du portefeuille
+        bench_series = None
+        if svc:
+            spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
+            if spy_df is not None and not spy_df.empty:
+                spy = spy_df['adjClose']
+                spy = spy[spy.index >= cutoff]
+                if len(spy) >= 2:
+                    bench_series = (spy / spy.iloc[0]) * float(nav.iloc[0])
+
+        # 3) Métriques
+        daily_ret = nav.pct_change().dropna()
+        days = max(1, (nav.index[-1] - nav.index[0]).days)
+        total_ret = float(nav.iloc[-1] / nav.iloc[0] - 1)
+        cagr = float((nav.iloc[-1] / nav.iloc[0]) ** (365.0 / days) - 1) if days >= 1 else 0.0
+        vol_ann = float(daily_ret.std() * (252 ** 0.5)) if len(daily_ret) > 1 else 0.0
+        rf = 0.04
+        sharpe = float((cagr - rf) / vol_ann) if vol_ann > 1e-9 else 0.0
+        cummax = nav.cummax()
+        drawdown = (nav - cummax) / cummax
+        max_dd = float(drawdown.min())
+
+        # Bench CAGR pour comparaison
+        bench_cagr = None
+        if bench_series is not None and len(bench_series) >= 2:
+            bd = max(1, (bench_series.index[-1] - bench_series.index[0]).days)
+            bench_cagr = float((bench_series.iloc[-1] / bench_series.iloc[0]) ** (365.0 / bd) - 1)
+
+        # 4) Rendements mensuels (heatmap)
+        monthly = nav.resample('ME').last().pct_change().dropna()
+        monthly_returns = [
+            {'year': idx.year, 'month': idx.month, 'return_pct': round(float(v) * 100, 2)}
+            for idx, v in monthly.items()
+        ]
+
+        # 5) Séries pour les graphes (sous-échantillonnées si trop longues)
+        def _fmt(s):
+            return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v), 2)}
+                    for idx, v in s.items()]
+
+        # Dividendes réels sur la période (Flex)
+        from models import Dividend
+        div_rows = Dividend.query.filter(Dividend.date >= cutoff.date()).all()
+        dividends_total = round(sum(d.amount for d in div_rows), 2)
+        dividends_by_period = {}
+        for d in div_rows:
+            key = d.date.strftime('%Y-%m')
+            dividends_by_period[key] = round(dividends_by_period.get(key, 0) + d.amount, 2)
+
         return jsonify({
             'success': True,
-            'metadata': {
-                'currency': 'USD',
-                'updated_at': datetime.now().isoformat()
-            },
-            'data_sources': {
-                'portfolio_timeseries': [s.to_dict() for s in snapshots],
-                'benchmark': [b.to_dict() for b in benchmark],
-                'positions': positions,
-                'transactions': [t.to_dict() for t in transactions],
-                'dividends': [d.to_dict() for d in dividends]
-            },
-            'summary': {
+            'range': range_key,
+            'nav_source': nav_source,
+            'kpis': {
                 'total_value': stats.get('total_value', 0),
-                'total_pnl': stats.get('total_pnl', 0),
+                'total_return_pct': round(total_ret * 100, 2),
+                'cagr_pct': round(cagr * 100, 2),
+                'bench_cagr_pct': round(bench_cagr * 100, 2) if bench_cagr is not None else None,
+                'cagr_vs_bench_pct': round((cagr - bench_cagr) * 100, 2) if bench_cagr is not None else None,
+                'sharpe': round(sharpe, 2),
+                'vol_annual_pct': round(vol_ann * 100, 2),
+                'max_drawdown_pct': round(max_dd * 100, 2),
                 'unrealized_pnl': stats.get('total_unrealized_pnl', 0),
                 'realized_pnl': stats.get('total_realized_pnl', 0),
-                'return_pct': stats.get('return_pct', 0)
-            }
+                'dividends_total': dividends_total,
+            },
+            'dividends_by_period': [{'period': k, 'amount': v}
+                                    for k, v in sorted(dividends_by_period.items())],
+            'timeseries': {
+                'portfolio': _fmt(nav),
+                'benchmark': _fmt(bench_series) if bench_series is not None else [],
+            },
+            'drawdown': [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
+                         for idx, v in drawdown.items()],
+            'monthly_returns': monthly_returns,
+            'positions': positions,
+            'summary': stats,
         })
     except Exception as e:
         app.logger.exception('Erreur dans perf_dashboard')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/flex/credentials', methods=['POST'])
+@require_admin
+def flex_save_credentials():
+    """Sauvegarde le token + query_id Flex (chiffrés). Body: { token, query_id }"""
+    data = request.get_json() or {}
+    token = (data.get('token') or '').strip()
+    query_id = (data.get('query_id') or '').strip()
+    if not token or not query_id:
+        return jsonify({'success': False, 'error': 'token et query_id requis'}), 400
+    secret = app.config.get('SECRET_KEY', '')
+    Settings.set('flex_token_enc', encrypt_credential(token, secret))
+    Settings.set('flex_query_id', query_id)
+    return jsonify({'success': True, 'message': 'Identifiants Flex sauvegardés'})
+
+
+@app.route('/api/flex/status', methods=['GET'])
+def flex_status():
+    """Statut Flex : configuré ? dernière synchro ? volumes importés."""
+    from models import PortfolioSnapshot, Transaction, Dividend
+    configured = bool(Settings.get('flex_token_enc') and Settings.get('flex_query_id'))
+    return jsonify({
+        'configured': configured,
+        'last_sync': Settings.get('flex_last_sync'),
+        'last_error': Settings.get('flex_last_error'),
+        'snapshots': PortfolioSnapshot.query.count(),
+        'transactions': Transaction.query.count(),
+        'dividends': Dividend.query.count(),
+    })
+
+
+@app.route('/api/flex/sync', methods=['POST'])
+@require_admin
+def flex_sync():
+    """
+    Récupère le rapport Flex et importe NAV / transactions / dividendes en base.
+    Données officielles IBKR (exactes).
+    """
+    from models import db, PortfolioSnapshot, Transaction, Dividend
+
+    enc_token = Settings.get('flex_token_enc')
+    query_id = Settings.get('flex_query_id')
+    if not enc_token or not query_id:
+        return jsonify({'success': False, 'error': 'Flex non configuré (token + query_id)'}), 400
+
+    try:
+        token = decrypt_credential(enc_token, app.config.get('SECRET_KEY', ''))
+    except Exception:
+        return jsonify({'success': False, 'error': 'Déchiffrement du token impossible'}), 500
+
+    try:
+        parsed = flex_service.fetch_and_parse(token, query_id)
+    except Exception as e:
+        Settings.set('flex_last_error', str(e)[:300])
+        return jsonify({'success': False, 'error': f'Flex : {e}'}), 502
+
+    nav_n = trade_n = div_n = 0
+
+    # NAV → PortfolioSnapshot (upsert par date)
+    existing_snap = {s.date: s for s in PortfolioSnapshot.query.all()}
+    for row in parsed['nav']:
+        d, val = row['date'], row['nav']
+        if d in existing_snap:
+            existing_snap[d].nav = val
+        else:
+            db.session.add(PortfolioSnapshot(date=d, nav=val))
+            nav_n += 1
+
+    # Transactions → Transaction (dédup par date+ticker+qty+price)
+    existing_tx = {(t.date.date() if hasattr(t.date, 'date') else t.date, t.ticker,
+                    round(t.quantity, 4), round(t.price, 4))
+                   for t in Transaction.query.all()}
+    for tr in parsed['trades']:
+        key = (tr['date'], tr['ticker'], round(tr['quantity'], 4), round(tr['price'], 4))
+        if key in existing_tx:
+            continue
+        db.session.add(Transaction(
+            date=datetime.combine(tr['date'], datetime.min.time()),
+            ticker=tr['ticker'], type=tr['type'], quantity=tr['quantity'],
+            price=tr['price'], amount=tr['amount'], currency=tr['currency'],
+        ))
+        trade_n += 1
+
+    # Dividendes → Dividend (dédup par date+ticker+amount)
+    existing_div = {(d.date, d.ticker, round(d.amount, 2)) for d in Dividend.query.all()}
+    for dv in parsed['dividends']:
+        key = (dv['date'], dv['ticker'], round(dv['amount'], 2))
+        if key in existing_div:
+            continue
+        db.session.add(Dividend(date=dv['date'], ticker=dv['ticker'],
+                                amount=dv['amount'], currency=dv['currency']))
+        div_n += 1
+
+    db.session.commit()
+    Settings.set('flex_last_sync', datetime.now().isoformat())
+    Settings.set('flex_last_error', '')
+
+    return jsonify({
+        'success': True,
+        'imported': {'snapshots': nav_n, 'transactions': trade_n, 'dividends': div_n},
+        'totals': {
+            'snapshots': PortfolioSnapshot.query.count(),
+            'transactions': Transaction.query.count(),
+            'dividends': Dividend.query.count(),
+        },
+        'account_id': parsed.get('account_id'),
+    })
 
 
 @app.route('/api/ibkr/rebalance', methods=['POST'])
