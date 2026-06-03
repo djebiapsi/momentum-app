@@ -2205,40 +2205,51 @@ def flex_sync():
 
     nav_n = trade_n = div_n = 0
 
-    # NAV → PortfolioSnapshot (upsert par date)
+    # Toutes les lectures d'existence d'abord, puis les écritures — et on désactive
+    # l'autoflush pour éviter qu'une query déclenche un flush prématuré (cause de
+    # l'erreur de contrainte unique vue lors d'un import partiel).
     existing_snap = {s.date: s for s in PortfolioSnapshot.query.all()}
-    for row in parsed['nav']:
-        d, val = row['date'], row['nav']
-        if d in existing_snap:
-            existing_snap[d].nav = val
-        else:
-            db.session.add(PortfolioSnapshot(date=d, nav=val))
-            nav_n += 1
-
-    # Transactions → Transaction (dédup par date+ticker+qty+price)
     existing_tx = {(t.date.date() if hasattr(t.date, 'date') else t.date, t.ticker,
                     round(t.quantity, 4), round(t.price, 4))
                    for t in Transaction.query.all()}
-    for tr in parsed['trades']:
-        key = (tr['date'], tr['ticker'], round(tr['quantity'], 4), round(tr['price'], 4))
-        if key in existing_tx:
-            continue
-        db.session.add(Transaction(
-            date=datetime.combine(tr['date'], datetime.min.time()),
-            ticker=tr['ticker'], type=tr['type'], quantity=tr['quantity'],
-            price=tr['price'], amount=tr['amount'], currency=tr['currency'],
-        ))
-        trade_n += 1
-
-    # Dividendes → Dividend (dédup par date+ticker+amount)
     existing_div = {(d.date, d.ticker, round(d.amount, 2)) for d in Dividend.query.all()}
-    for dv in parsed['dividends']:
-        key = (dv['date'], dv['ticker'], round(dv['amount'], 2))
-        if key in existing_div:
-            continue
-        db.session.add(Dividend(date=dv['date'], ticker=dv['ticker'],
-                                amount=dv['amount'], currency=dv['currency']))
-        div_n += 1
+
+    with db.session.no_autoflush:
+        # NAV → PortfolioSnapshot. parsed['nav'] peut contenir plusieurs lignes
+        # pour une même date → on déduplique (dernière valeur) avant insertion.
+        nav_by_date = {}
+        for row in parsed['nav']:
+            nav_by_date[row['date']] = row['nav']
+        for d, val in nav_by_date.items():
+            if d in existing_snap:
+                existing_snap[d].nav = val
+            else:
+                db.session.add(PortfolioSnapshot(date=d, nav=val))
+                existing_snap[d] = True  # marquer pour éviter un doublon intra-batch
+                nav_n += 1
+
+        # Transactions (dédup par date+ticker+qty+price)
+        for tr in parsed['trades']:
+            key = (tr['date'], tr['ticker'], round(tr['quantity'], 4), round(tr['price'], 4))
+            if key in existing_tx:
+                continue
+            existing_tx.add(key)
+            db.session.add(Transaction(
+                date=datetime.combine(tr['date'], datetime.min.time()),
+                ticker=tr['ticker'], type=tr['type'], quantity=tr['quantity'],
+                price=tr['price'], amount=tr['amount'], currency=tr['currency'],
+            ))
+            trade_n += 1
+
+        # Dividendes (dédup par date+ticker+amount)
+        for dv in parsed['dividends']:
+            key = (dv['date'], dv['ticker'], round(dv['amount'], 2))
+            if key in existing_div:
+                continue
+            existing_div.add(key)
+            db.session.add(Dividend(date=dv['date'], ticker=dv['ticker'],
+                                    amount=dv['amount'], currency=dv['currency']))
+            div_n += 1
 
     db.session.commit()
     Settings.set('flex_last_sync', datetime.now().isoformat())
