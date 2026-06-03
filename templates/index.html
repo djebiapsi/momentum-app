@@ -2161,6 +2161,33 @@
                 </div>
             </div>
 
+            <!-- Flex Web Service (données historiques exactes) -->
+            <div class="card admin-only" style="margin-top:12px;">
+                <div class="card-header">
+                    <span class="card-title">IBKR Flex (historique exact)</span>
+                    <span class="status-badge" id="flex-status-badge" style="font-size:10px;">—</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+                    NAV jour par jour, transactions et dividendes réels.
+                    Créez une <em>Activity Flex Query</em> (XML) sur le portail IBKR puis collez le Token et le Query ID.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">Flex Token</label>
+                    <input type="password" class="form-input" id="flex-token" placeholder="••••••••" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Query ID</label>
+                    <input type="text" class="form-input" id="flex-query-id" placeholder="ex: 123456">
+                </div>
+                <button class="btn btn-primary btn-block" onclick="saveFlexCredentials()">
+                    Sauvegarder
+                </button>
+                <button class="btn btn-secondary btn-block" style="margin-top:6px;" onclick="syncFlex()">
+                    Synchroniser maintenant
+                </button>
+                <div id="flex-sync-info" style="font-size:12px;color:var(--text-muted);margin-top:10px;"></div>
+            </div>
+
             <!-- Méthodologie -->
             <div class="section-title" style="margin-top: 24px;">Méthodologie</div>
             <div class="card">
@@ -3124,6 +3151,7 @@
                 loadSettings();
                 loadShortSettings();
                 loadIBKRStatus();
+                loadFlexStatus();
             }
             if (pageName === 'perf') loadPerfData();
         }
@@ -4131,6 +4159,50 @@
         // =================================================================
         // IBKR
         // =================================================================
+
+        // ---- IBKR Flex Web Service ----
+        async function loadFlexStatus() {
+            const data = await api('/flex/status');
+            if (!data) return;
+            const badge = document.getElementById('flex-status-badge');
+            const info = document.getElementById('flex-sync-info');
+            if (badge) {
+                badge.textContent = data.configured ? '✓ Configuré' : 'Non configuré';
+                badge.style.cssText = data.configured
+                    ? 'font-size:10px;background:#14532d;color:#4ade80;'
+                    : 'font-size:10px;background:var(--bg-hover);color:var(--text-muted);';
+            }
+            if (info) {
+                const last = data.last_sync ? new Date(data.last_sync).toLocaleString('fr-FR') : 'jamais';
+                info.innerHTML = `Dernière synchro : ${last}<br>`
+                    + `${data.snapshots} jours NAV · ${data.transactions} transactions · ${data.dividends} dividendes`
+                    + (data.last_error ? `<br><span style="color:#f87171">Erreur : ${data.last_error}</span>` : '');
+            }
+        }
+
+        async function saveFlexCredentials() {
+            const token = document.getElementById('flex-token').value.trim();
+            const query_id = document.getElementById('flex-query-id').value.trim();
+            if (!token || !query_id) { showToast('Token et Query ID requis', 'error'); return; }
+            const data = await api('/flex/credentials', { method: 'POST', body: JSON.stringify({ token, query_id }) });
+            if (!data) return;
+            showToast(data.success ? 'Identifiants Flex sauvegardés' : data.error, data.success ? 'success' : 'error');
+            if (data.success) document.getElementById('flex-token').value = '';
+            loadFlexStatus();
+        }
+
+        async function syncFlex() {
+            showToast('Synchronisation Flex en cours (~30s)...', 'info');
+            const data = await api('/flex/sync', { method: 'POST' });
+            if (!data) return;
+            if (data.success) {
+                const i = data.imported;
+                showToast(`Importé : ${i.snapshots} NAV, ${i.transactions} tx, ${i.dividends} div`, 'success');
+            } else {
+                showToast(data.error || 'Erreur Flex', 'error');
+            }
+            loadFlexStatus();
+        }
 
         async function loadIBKRStatus() {
             const data = await api('/ibkr/status');
