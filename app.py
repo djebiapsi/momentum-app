@@ -2027,6 +2027,12 @@ def perf_dashboard():
         svc = get_momentum_service()
         cutoff = pd.Timestamp(datetime.now()) - pd.Timedelta(days=nb_jours)
 
+        def _tz_naive(s):
+            """Normalise l'index d'une série en tz-naive (mix IBKR tz-aware / DB tz-naive)."""
+            if getattr(s.index, 'tz', None) is not None:
+                s.index = s.index.tz_localize(None)
+            return s
+
         # Source de la NAV : snapshots Flex réels (prioritaire) sinon reconstruction
         from models import PortfolioSnapshot
         snaps = (PortfolioSnapshot.query
@@ -2046,7 +2052,7 @@ def perf_dashboard():
                 df, err = svc._fetch_daily_adjusted(ticker, nb_jours) if svc else (None, 'no svc')
                 if df is None or df.empty:
                     continue
-                series[ticker] = df['adjClose'] * qty
+                series[ticker] = _tz_naive(df['adjClose'] * qty)
             if not series:
                 return jsonify({'success': True, 'empty': True,
                                 'message': 'Pas de prix historiques disponibles', 'summary': stats})
@@ -2054,6 +2060,7 @@ def perf_dashboard():
             nav = nav_df.sum(axis=1).dropna()
             nav = nav[nav.index >= cutoff]
 
+        nav = _tz_naive(nav)
         if len(nav) < 2:
             return jsonify({'success': True, 'empty': True,
                             'message': 'Historique insuffisant', 'summary': stats})
@@ -2063,7 +2070,7 @@ def perf_dashboard():
         if svc:
             spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
             if spy_df is not None and not spy_df.empty:
-                spy = spy_df['adjClose']
+                spy = _tz_naive(spy_df['adjClose'].copy())
                 spy = spy[spy.index >= cutoff]
                 if len(spy) >= 2:
                     bench_series = (spy / spy.iloc[0]) * float(nav.iloc[0])
