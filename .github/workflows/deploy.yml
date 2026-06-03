@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
 
+# Sérialise les déploiements : un seul à la fois, les suivants attendent
+# (évite la collision de containers entre deux runs concurrents)
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -17,5 +23,25 @@ jobs:
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H 95.216.198.241 >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@95.216.198.241 \
-            "cd /opt/momentum-app && git pull origin main && docker compose build app && docker compose up -d app db && docker image prune -f"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@95.216.198.241 'bash -s' <<'DEPLOY'
+          set -e
+          cd /opt/momentum-app
+
+          # Verrou : empêche deux déploiements simultanés (CI ou manuel)
+          exec 9>/tmp/momentum-deploy.lock
+          if ! flock -w 300 9; then
+            echo "Un déploiement est déjà en cours (timeout 300s)"; exit 1
+          fi
+
+          # Nettoyer les containers zombies laissés par un déploiement interrompu
+          # (noms préfixés par un hash, ex: 973104d5142e_momentum-app-app-1)
+          docker ps -a --format '{{.Names}}' \
+            | grep -E '_momentum-app-(app|db)-1$' \
+            | xargs -r docker rm -f || true
+
+          git pull origin main
+          docker compose build app
+          docker compose up -d app db
+          docker image prune -f
+          echo "Déploiement terminé avec succès"
+          DEPLOY
