@@ -1966,6 +1966,62 @@ def ibkr_portfolio_stats():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/perf/dashboard', methods=['GET'])
+@require_admin
+def perf_dashboard():
+    """
+    Retourne toutes les données nécessaires au tableau de bord Performance v2.0.
+    Agrège les snapshots, le benchmark, les positions, transactions et dividendes.
+    """
+    try:
+        from models import PortfolioSnapshot, MarketPriceBar, Transaction, Dividend
+        
+        # 1. Snapshots (Historique NAV)
+        snapshots = PortfolioSnapshot.query.order_by(PortfolioSnapshot.date.asc()).all()
+        
+        # 2. Benchmark (^GSPC)
+        benchmark = MarketPriceBar.query.filter_by(ticker='^GSPC')\
+            .order_by(MarketPriceBar.bar_date.asc()).all()
+        
+        # 3. Positions actuelles (Live IBKR)
+        positions = []
+        stats = {}
+        if ibkr_service.ensure_connected():
+            stats = ibkr_service.get_portfolio_stats()
+            positions = stats.get('positions', [])
+        
+        # 4. Transactions
+        transactions = Transaction.query.order_by(Transaction.date.desc()).all()
+        
+        # 5. Dividendes
+        dividends = Dividend.query.order_by(Dividend.date.desc()).all()
+        
+        return jsonify({
+            'success': True,
+            'metadata': {
+                'currency': 'USD',
+                'updated_at': datetime.now().isoformat()
+            },
+            'data_sources': {
+                'portfolio_timeseries': [s.to_dict() for s in snapshots],
+                'benchmark': [b.to_dict() for b in benchmark],
+                'positions': positions,
+                'transactions': [t.to_dict() for t in transactions],
+                'dividends': [d.to_dict() for d in dividends]
+            },
+            'summary': {
+                'total_value': stats.get('total_value', 0),
+                'total_pnl': stats.get('total_pnl', 0),
+                'unrealized_pnl': stats.get('total_unrealized_pnl', 0),
+                'realized_pnl': stats.get('total_realized_pnl', 0),
+                'return_pct': stats.get('return_pct', 0)
+            }
+        })
+    except Exception as e:
+        app.logger.exception('Erreur dans perf_dashboard')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/ibkr/rebalance', methods=['POST'])
 @require_admin
 def ibkr_rebalance():
@@ -2001,17 +2057,44 @@ def ibkr_rebalance():
 # =============================================================================
 
 def job_positions_ibkr():
-    """Récupère les positions IBKR et envoie un email de suivi."""
+    """Récupère les positions IBKR, envoie un email de suivi et enregistre un snapshot."""
     with app.app_context():
         print(f"[{datetime.now()}] 📊 Envoi email positions IBKR...")
         try:
             if not ibkr_service.ensure_connected():
                 print("⚠️ Reconnexion IBKR impossible, email non envoyé")
                 return
-            positions = ibkr_service.get_positions()
+            
+            # Récupérer les stats complètes pour le snapshot
+            stats = ibkr_service.get_portfolio_stats()
+            positions = stats.get('positions', [])
+            
             if not positions:
                 print("⚠️ Aucune position ouverte, email non envoyé")
                 return
+            
+            # Enregistrer le snapshot du jour
+            from models import PortfolioSnapshot
+            from datetime import date
+            today = date.today()
+            
+            # Vérifier si on a déjà un snapshot pour aujourd'hui (ou mettre à jour)
+            snapshot = PortfolioSnapshot.query.filter_by(date=today).first()
+            if not snapshot:
+                snapshot = PortfolioSnapshot(date=today)
+                db.session.add(snapshot)
+            
+            snapshot.nav = stats.get('total_value', 0)
+            snapshot.cash = stats.get('total_value', 0) - stats.get('total_cost', 0) # Simplification si on n'a pas le cash direct
+            # Pour invested_capital, on essaie de garder la valeur précédente ou d'initialiser
+            if snapshot.invested_capital is None:
+                prev = PortfolioSnapshot.query.filter(PortfolioSnapshot.date < today).order_by(PortfolioSnapshot.date.desc()).first()
+                snapshot.invested_capital = prev.invested_capital if prev else snapshot.nav
+            
+            db.session.commit()
+            print(f"✅ Snapshot enregistré pour {today} (NAV=${snapshot.nav:,.0f})")
+
+            # Envoi de l'email
             email_svc = get_email_service()
             if not email_svc.is_configured():
                 print("⚠️ Service email non configuré")
@@ -2023,6 +2106,42 @@ def job_positions_ibkr():
                 print(f"❌ Erreur email positions: {result['message']}")
         except Exception as e:
             print(f"❌ job_positions_ibkr: {e}")
+
+
+def job_update_benchmarks():
+    """Récupère les données historiques du S&P 500 (^GSPC)."""
+    with app.app_context():
+        print(f"[{datetime.now()}] 📈 Mise à jour du benchmark (^GSPC)...")
+        try:
+            if not ibkr_service.ensure_connected():
+                print("⚠️ Reconnexion IBKR impossible pour le benchmark")
+                return
+            
+            from models import MarketPriceBar
+            from datetime import date, timedelta
+            
+            # On récupère les 2 dernières années pour être sûr d'avoir l'historique nécessaire
+            bars = ibkr_service.get_daily_bars('^GSPC', duration='2 Y')
+            
+            count = 0
+            for b in bars:
+                bar_date = date.fromisoformat(b['date'])
+                existing = MarketPriceBar.query.filter_by(ticker='^GSPC', bar_date=bar_date).first()
+                if not existing:
+                    new_bar = MarketPriceBar(
+                        ticker='^GSPC',
+                        bar_date=bar_date,
+                        adj_close=b['adj_close'],
+                        close=b['close'],
+                        source='ibkr'
+                    )
+                    db.session.add(new_bar)
+                    count += 1
+            
+            db.session.commit()
+            print(f"✅ Benchmark ^GSPC mis à jour ({count} nouvelles barres)")
+        except Exception as e:
+            print(f"❌ job_update_benchmarks: {e}")
 
 
 # Initialiser le scheduler
@@ -2043,6 +2162,15 @@ scheduler.add_job(
     CronTrigger(hour='9,11,13,15', minute=30, day_of_week='mon-fri', timezone='America/New_York'),
     id='ibkr_positions',
     name='Positions IBKR toutes les 2h (heures marché US)',
+    replace_existing=True
+)
+
+# Mise à jour Benchmark : Tous les jours à 22h00 ET
+scheduler.add_job(
+    job_update_benchmarks,
+    CronTrigger(hour=22, minute=0, timezone='America/New_York'),
+    id='update_benchmarks',
+    name='Mise à jour Benchmark ^GSPC',
     replace_existing=True
 )
 

@@ -1370,43 +1370,152 @@
             color: var(--text-muted);
             line-height: 1.6;
         }
-        /* ── Performance dashboard ── */
-        .perf-drop-zone {
-            border: 2px dashed var(--border-color);
-            border-radius: var(--radius);
-            padding: 32px 20px;
-            text-align: center;
-            cursor: pointer;
-            transition: border-color .2s, background .2s;
-            margin-bottom: 20px;
+        /* ── Performance dashboard v2.0 ── */
+        .perf-dashboard {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
-        .perf-drop-zone:hover { border-color: var(--accent-long); background: rgba(34,197,94,.04); }
-        .perf-drop-zone .drop-icon { font-size: 32px; margin-bottom: 8px; }
-        .perf-drop-zone p { font-size: 13px; color: var(--text-muted); margin: 0; }
-        .perf-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-        .perf-kpi { background: var(--bg-secondary); border-radius: var(--radius-sm);
-                    padding: 14px; border: 1px solid var(--border-subtle); }
-        .perf-kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase;
-                          letter-spacing: .05em; margin-bottom: 4px; }
-        .perf-kpi-value { font-size: 22px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
-        .perf-kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+        .perf-range-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 4px;
+            background: var(--bg-secondary);
+            border-radius: 40px;
+            margin: 0 auto 12px;
+            width: fit-content;
+        }
+
+        .perf-pill {
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            background: transparent;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .perf-pill.active {
+            background: var(--text-primary);
+            color: var(--bg-primary);
+        }
+
+        .perf-pill:hover:not(.active) {
+            color: var(--text-primary);
+        }
+
+        .perf-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 8px;
+            margin-bottom: 0;
+        }
+
+        .perf-kpi-card {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 0.75rem 1rem;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .perf-kpi-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            margin-bottom: 6px;
+        }
+
+        .perf-kpi-value {
+            font-size: 18px;
+            font-weight: 700;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: -0.02em;
+        }
+
+        .perf-kpi-delta {
+            font-size: 10px;
+            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            margin-top: 4px;
+        }
+
+        .perf-kpi-delta.up { color: var(--accent-long); }
+        .perf-kpi-delta.down { color: var(--accent-short); }
+
+        .perf-chart-row {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        @media (min-width: 640px) {
+            .perf-chart-row.split {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .perf-chart-card {
+            background: var(--bg-card);
+            border: 0.5px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 1rem 1.25rem;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .perf-chart-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        .perf-chart-container {
+            flex: 1;
+            position: relative;
+            min-height: 200px;
+        }
+
+        /* Heatmap Grid */
+        .perf-heatmap-grid {
+            display: grid;
+            grid-template-columns: 40px repeat(12, 1fr);
+            gap: 4px;
+            font-size: 9px;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+
+        .heatmap-cell {
+            aspect-ratio: 1;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255,255,255,0.7);
+        }
+
+        .heatmap-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+        }
+
+        .text-green { color: var(--accent-long); }
+        .text-red { color: var(--accent-short); }
         .perf-pos { color: var(--accent-long); }
         .perf-neg { color: var(--accent-short); }
-        .perf-vs-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
-                         padding: 2px 8px; border-radius: 99px; margin-top: 4px; }
-        .perf-vs-badge.above { background: rgba(34,197,94,.12); color: var(--accent-long); }
-        .perf-vs-badge.below { background: rgba(239,68,68,.12); color: var(--accent-short); }
-        .perf-section-title { font-size: 12px; font-weight: 600; color: var(--text-secondary);
-                               text-transform: uppercase; letter-spacing: .05em; margin: 20px 0 10px; }
-        .perf-chart-wrap { background: var(--bg-secondary); border-radius: var(--radius-sm);
-                           border: 1px solid var(--border-subtle); padding: 16px; margin-bottom: 16px; }
-        .perf-ticker-row { display: flex; align-items: center; gap: 8px; padding: 8px 0;
-                           border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
-        .perf-ticker-row:last-child { border-bottom: none; }
-        .perf-ticker-name { font-weight: 600; width: 56px; font-family: 'IBM Plex Mono', monospace; }
-        .perf-ticker-bar-wrap { flex: 1; height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
-        .perf-ticker-bar { height: 100%; border-radius: 3px; }
-        .perf-ticker-amount { font-family: 'IBM Plex Mono', monospace; font-size: 12px; min-width: 70px; text-align: right; }
     </style>
 </head>
 <body>
@@ -2256,121 +2365,119 @@
         <!-- PAGE: Performance -->
         <div id="page-perf" class="page">
             <div class="header long" style="background: linear-gradient(135deg,#1e3a5f,#0f2027);">
-                <div class="header-label long">Analyse</div>
+                <div class="header-label long">Analyse v2.0</div>
                 <h1>Performance</h1>
-                <p id="perf-period-label">Positions et P&L en temps réel via IBKR</p>
+                <p id="perf-date-info">Chargement des données...</p>
             </div>
 
-            <!-- Prompt connexion IBKR -->
-            <div id="perf-connect-prompt" style="display:none;text-align:center;padding:40px 20px;">
-                <div style="font-size:40px;margin-bottom:12px;">📡</div>
-                <p style="color:var(--text-muted);margin-bottom:16px;">Connexion IBKR requise pour afficher les stats</p>
-                <button class="btn btn-primary" onclick="ibkrConnect().then(()=>setTimeout(loadPerfData,6000))">
-                    Connecter IBKR
-                </button>
-            </div>
-
-            <!-- Loading -->
-            <div id="perf-loading" style="text-align:center;padding:48px;">
-                <span class="spinner" style="width:36px;height:36px;border-width:3px;"></span>
-            </div>
-
-            <!-- Contenu -->
-            <div id="perf-content" style="display:none;">
-
-                <!-- KPIs ligne 1 -->
-                <div class="perf-kpi-grid">
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Valeur portefeuille</div>
-                        <div class="perf-kpi-value" id="kpi-nav">—</div>
-                        <div class="perf-kpi-sub" id="kpi-positions-count">—</div>
-                    </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Rendement total</div>
-                        <div class="perf-kpi-value" id="kpi-return-pct">—</div>
-                        <div class="perf-kpi-sub">vs coût d'acquisition</div>
-                    </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">P&amp;L non réalisé</div>
-                        <div class="perf-kpi-value" id="kpi-unrealized">—</div>
-                        <div class="perf-kpi-sub" id="kpi-winrate">—</div>
-                    </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">P&amp;L réalisé</div>
-                        <div class="perf-kpi-value" id="kpi-realized">—</div>
-                        <div class="perf-kpi-sub" id="kpi-pnl-total">—</div>
-                    </div>
+            <!-- Dashboard v2.0 -->
+            <div class="perf-dashboard">
+                
+                <!-- Global Range Selector -->
+                <div class="perf-range-selector">
+                    <button class="perf-pill" data-range="1W">1S</button>
+                    <button class="perf-pill" data-range="1M">1M</button>
+                    <button class="perf-pill" data-range="3M">3M</button>
+                    <button class="perf-pill" data-range="6M">6M</button>
+                    <button class="perf-pill active" data-range="1Y">1A</button>
+                    <button class="perf-pill" data-range="YTD">YTD</button>
+                    <button class="perf-pill" data-range="3Y">3A</button>
+                    <button class="perf-pill" data-range="ALL">Tout</button>
                 </div>
 
-                <!-- Bouton refresh + heure -->
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                    <button class="btn btn-secondary" style="flex:1;" onclick="loadPerfData()">Actualiser</button>
-                    <span id="perf-last-update" style="font-size:11px;color:var(--text-muted);"></span>
-                </div>
-
-                <!-- Stats secondaires -->
-                <div class="perf-kpi-grid" style="margin-bottom:4px;">
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Coût total investi</div>
-                        <div class="perf-kpi-value" id="kpi-cost" style="font-size:18px;">—</div>
+                <!-- KPI Strip -->
+                <div class="perf-kpi-strip">
+                    <div class="perf-kpi-card" id="kpi-total-value">
+                        <div class="perf-kpi-label">Valeur totale</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div class="perf-kpi-delta">—</div>
                     </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Meilleure position</div>
-                        <div class="perf-kpi-value perf-pos" id="kpi-best" style="font-size:16px;">—</div>
+                    <div class="perf-kpi-card" id="kpi-cagr">
+                        <div class="perf-kpi-label">CAGR</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div class="perf-kpi-delta">—</div>
                     </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Pire position</div>
-                        <div class="perf-kpi-value perf-neg" id="kpi-worst" style="font-size:16px;">—</div>
+                    <div class="perf-kpi-card" id="kpi-sharpe">
+                        <div class="perf-kpi-label">Sharpe</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">rendement/risque</div>
                     </div>
-                    <div class="perf-kpi">
-                        <div class="perf-kpi-label">Concentration top 3</div>
-                        <div class="perf-kpi-value" id="kpi-concentration" style="font-size:18px;">—</div>
-                        <div class="perf-kpi-sub" id="kpi-concentration-tickers"></div>
+                    <div class="perf-kpi-card" id="kpi-max-drawdown">
+                        <div class="perf-kpi-label">Max drawdown</div>
+                        <div class="perf-kpi-value text-red">—</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">période sélectionnée</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-unrealized-gains">
+                        <div class="perf-kpi-label">Plus-values latentes</div>
+                        <div class="perf-kpi-value">—</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-dividends">
+                        <div class="perf-kpi-label">Dividendes</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">période</div>
                     </div>
                 </div>
 
-                <!-- Projections -->
-                <div class="perf-section-title" style="margin-top:16px;">Projections à différents taux annuels</div>
-                <div class="card" style="padding:12px;overflow-x:auto;margin-bottom:12px;">
-                    <table id="perf-projections" style="width:100%;border-collapse:collapse;font-size:12px;font-family:'IBM Plex Mono',monospace;">
-                        <thead>
-                            <tr style="color:var(--text-muted);text-align:right;">
-                                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border-subtle);">Taux annuel</th>
-                                <th style="padding:6px 8px;border-bottom:1px solid var(--border-subtle);">1 an</th>
-                                <th style="padding:6px 8px;border-bottom:1px solid var(--border-subtle);">3 ans</th>
-                                <th style="padding:6px 8px;border-bottom:1px solid var(--border-subtle);">5 ans</th>
-                                <th style="padding:6px 8px;border-bottom:1px solid var(--border-subtle);">10 ans</th>
-                            </tr>
-                        </thead>
-                        <tbody id="perf-proj-body"></tbody>
-                    </table>
+                <!-- Row 1: Evolution (Full Width) -->
+                <div class="perf-chart-row full">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Évolution du portefeuille</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-evolution"></canvas>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Chart rendement % par position -->
-                <div class="perf-section-title">Rendement % par position</div>
-                <div class="perf-chart-wrap">
-                    <canvas id="chart-returns" height="180"></canvas>
+                <!-- Row 2: Relative Perf & Drawdown -->
+                <div class="perf-chart-row split">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Performance relative vs S&P 500</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-relative-perf"></canvas>
+                        </div>
+                    </div>
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Drawdown</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-drawdown-v2"></canvas>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Chart P&L par ticker -->
-                <div class="perf-section-title">P&amp;L non réalisé par position ($)</div>
-                <div class="perf-chart-wrap">
-                    <canvas id="chart-pnl" height="220"></canvas>
+                <!-- Row 3: P&L by position -->
+                <div class="perf-chart-row full">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Contribution par position (P&L)</div>
+                        <div class="perf-chart-container" style="min-height: 400px;">
+                            <canvas id="chart-pnl-by-pos"></canvas>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Allocation actuelle -->
-                <div class="perf-section-title">Allocation actuelle</div>
-                <div class="perf-chart-wrap" style="display:flex;align-items:center;gap:20px;">
-                    <canvas id="chart-alloc" style="max-width:160px;max-height:160px;"></canvas>
-                    <div id="alloc-legend" style="flex:1;font-size:12px;"></div>
+                <!-- Row 4: Heatmap & Dividends -->
+                <div class="perf-chart-row split">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Heatmap rendements mensuels</div>
+                        <div class="perf-chart-container" id="container-heatmap">
+                            <!-- Heatmap rendue en JS -->
+                            <div class="empty-state">Données insuffisantes</div>
+                        </div>
+                    </div>
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Dividendes perçus</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-dividends-v2"></canvas>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Tableau détaillé -->
-                <div class="perf-section-title">Détail par titre</div>
-                <div class="card" style="padding:0;overflow:hidden;">
-                    <div id="perf-ticker-table" style="padding:4px 16px;"></div>
+                <!-- IBKR Sync Info -->
+                <div style="text-align: center; margin-top: 10px;">
+                    <button class="btn btn-secondary btn-sm" onclick="loadPerfData()">
+                        🔄 Actualiser les données live
+                    </button>
+                    <p id="perf-last-update-v2" style="font-size: 11px; color: var(--text-muted); margin-top: 8px;"></p>
                 </div>
-
             </div>
         </div>
 

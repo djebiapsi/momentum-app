@@ -301,6 +301,77 @@ class OptionRecommendation(db.Model):
         }
 
 
+class PortfolioSnapshot(db.Model):
+    """
+    Instantané quotidien de la valeur du portefeuille.
+    Permet de tracer l'évolution de la NAV et du capital investi.
+    """
+    __tablename__ = 'portfolio_snapshots'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, unique=True, nullable=False, index=True)
+    nav = db.Column(db.Float, nullable=False)
+    cash = db.Column(db.Float)
+    invested_capital = db.Column(db.Float)  # Dépôts cumulés - Retraits
+    
+    def to_dict(self):
+        return {
+            'date': self.date.isoformat(),
+            'nav': self.nav,
+            'cash': self.cash,
+            'invested_capital': self.invested_capital
+        }
+
+
+class Transaction(db.Model):
+    """
+    Historique des transactions (achats, ventes).
+    Essentiel pour le calcul du P&L réalisé et de la contribution par position.
+    """
+    __tablename__ = 'transactions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.DateTime, nullable=False, index=True)
+    ticker = db.Column(db.String(12), nullable=False, index=True)
+    type = db.Column(db.String(10), nullable=False)  # 'BUY', 'SELL'
+    quantity = db.Column(db.Float, nullable=False)
+    price = db.Column(db.Float, nullable=False)
+    amount = db.Column(db.Float)  # Montant total (qty * price + frais)
+    currency = db.Column(db.String(3), default='USD')
+    
+    def to_dict(self):
+        return {
+            'date': self.date.isoformat(),
+            'ticker': self.ticker,
+            'type': self.type,
+            'quantity': self.quantity,
+            'price': self.price,
+            'amount': self.amount,
+            'currency': self.currency
+        }
+
+
+class Dividend(db.Model):
+    """
+    Historique des dividendes perçus.
+    """
+    __tablename__ = 'dividends'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False, index=True)
+    ticker = db.Column(db.String(12), nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False)
+    currency = db.Column(db.String(3), default='USD')
+    
+    def to_dict(self):
+        return {
+            'date': self.date.isoformat(),
+            'ticker': self.ticker,
+            'amount': self.amount,
+            'currency': self.currency
+        }
+
+
 class MarketPriceBar(db.Model):
     """
     Historique des prix de marché (barres journalières ajustées).
