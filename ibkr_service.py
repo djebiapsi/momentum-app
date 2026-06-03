@@ -288,13 +288,38 @@ class IBKRService:
         stats       = self.get_portfolio_stats()
         total_value = stats['total_value']
         current     = {p['ticker']: p for p in stats['positions']}
-
         target_tickers = {t['ticker'].upper() for t in targets}
+        # Exposition cible totale (peut dépasser 100% → levier intentionnel, conservé)
+        total_target_pct = sum(float(t.get('target_pct', 0)) for t in targets)
 
         async def fn():
             orders = []
+            # Contrats réels des positions actuelles (clé = ticker) — indispensable
+            # pour liquider correctement les warrants/instruments non-Stock standard.
+            real_contracts = {}
+            for item in self._ib.portfolio():
+                c = item.contract
+                real_contracts[c.localSymbol or c.symbol] = c
 
-            # 1) Ajuster / acheter les positions cibles
+            async def _place(contract, order, entry):
+                """Place un ordre en isolant les erreurs (ne bloque pas les autres)."""
+                if dry_run:
+                    entry['status'] = 'preview'
+                    return
+                try:
+                    qualified = await self._ib.qualifyContractsAsync(contract)
+                    if not qualified:
+                        entry['status'] = 'failed'
+                        entry['error'] = 'Contrat non qualifiable (ticker spécial ?)'
+                        return
+                    self._ib.placeOrder(contract, order)
+                    await asyncio.sleep(0.5)
+                    entry['status'] = 'placed'
+                except Exception as e:
+                    entry['status'] = 'failed'
+                    entry['error'] = str(e)[:160]
+
+            # 1) Acheter / ajuster les positions cibles (cashQty = montant USD)
             for t in targets:
                 ticker       = t['ticker'].upper()
                 target_pct   = float(t.get('target_pct', 0))
@@ -302,31 +327,24 @@ class IBKRService:
                 target_value = total_value * target_pct / 100
                 cur_value    = current.get(ticker, {}).get('market_value', 0) or 0
                 diff         = target_value - cur_value
-
                 if abs(diff) < 10:
                     continue
 
                 action   = 'BUY' if diff > 0 else 'SELL'
                 cash_qty = abs(round(diff, 2))
-                orders.append({
-                    'ticker':        ticker,
-                    'action':        action,
-                    'cash_qty_usd':  cash_qty,
-                    'current_value': round(cur_value, 2),
-                    'target_value':  round(target_value, 2),
-                    'liquidation':   False,
-                })
+                entry = {
+                    'ticker': ticker, 'action': action, 'cash_qty_usd': cash_qty,
+                    'current_value': round(cur_value, 2), 'target_value': round(target_value, 2),
+                    'liquidation': False, 'status': 'preview',
+                }
+                orders.append(entry)
+                # Contrat : réutiliser le contrat réel si on détient déjà, sinon Stock SMART
+                contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', currency)
+                order = Order(action=action, orderType='MKT', totalQuantity=0,
+                              cashQty=cash_qty, tif='DAY')
+                await _place(contract, order, entry)
 
-                if not dry_run:
-                    contract = Stock(ticker, 'SMART', currency)
-                    await self._ib.qualifyContractsAsync(contract)
-                    order = Order(action=action, orderType='MKT',
-                                  totalQuantity=0, cashQty=cash_qty, tif='DAY')
-                    self._ib.placeOrder(contract, order)
-                    await asyncio.sleep(0.5)
-
-            # 2) Liquider entièrement les positions du portefeuille HORS cibles
-            #    (vente de la quantité totale → ramène l'allocation à 0)
+            # 2) Liquider entièrement les positions HORS cibles (vente quantité totale)
             for ticker, p in current.items():
                 if ticker in target_tickers:
                     continue
@@ -334,26 +352,18 @@ class IBKRService:
                 if abs(qty) < 1e-6:
                     continue
                 mv = p.get('market_value') or 0
-                currency = p.get('currency', 'USD')
-                orders.append({
-                    'ticker':        ticker,
-                    'action':        'SELL' if qty > 0 else 'BUY',  # couvrir un short
-                    'cash_qty_usd':  round(abs(mv), 2),
-                    'current_value': round(mv, 2),
-                    'target_value':  0.0,
-                    'liquidation':   True,
-                })
+                entry = {
+                    'ticker': ticker, 'action': 'SELL' if qty > 0 else 'BUY',
+                    'cash_qty_usd': round(abs(mv), 2), 'current_value': round(mv, 2),
+                    'target_value': 0.0, 'liquidation': True, 'status': 'preview',
+                }
+                orders.append(entry)
+                contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', p.get('currency', 'USD'))
+                order = Order(action='SELL' if qty > 0 else 'BUY', orderType='MKT',
+                              totalQuantity=abs(qty), tif='DAY')
+                await _place(contract, order, entry)
 
-                if not dry_run:
-                    contract = Stock(ticker, 'SMART', currency)
-                    await self._ib.qualifyContractsAsync(contract)
-                    # Liquidation par quantité totale (plus fiable que cashQty)
-                    order = Order(action='SELL' if qty > 0 else 'BUY', orderType='MKT',
-                                  totalQuantity=abs(qty), tif='DAY')
-                    self._ib.placeOrder(contract, order)
-                    await asyncio.sleep(0.5)
-
-            return orders
+            return {'orders': orders, 'total_target_pct': round(total_target_pct, 1)}
 
         try:
             return self._submit(fn(), timeout=120)

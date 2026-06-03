@@ -2039,12 +2039,18 @@ def ibkr_rebalance():
     try:
         if not ibkr_service.ensure_connected():
             return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
-        orders = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run)
+        result = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run)
+        orders = result['orders']
+        placed = [o for o in orders if o.get('status') == 'placed']
+        failed = [o for o in orders if o.get('status') == 'failed']
         return jsonify({
             'success': True,
             'dry_run': dry_run,
             'orders': orders,
             'count': len(orders),
+            'placed_count': len(placed),
+            'failed_count': len(failed),
+            'total_target_pct': result.get('total_target_pct'),
         })
     except ConnectionError as e:
         return jsonify({'success': False, 'error': str(e)}), 503

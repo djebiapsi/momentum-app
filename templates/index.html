@@ -4100,12 +4100,29 @@
                 ).join('\n') + '\n';
             }
 
-            if (!confirm(`${preview.count} ordre(s) à passer :\n\n${summary}\nConfirmer l'exécution ?`)) return;
+            // Exposition totale (peut dépasser 100% = levier intentionnel)
+            const expo = preview.total_target_pct;
+            let warn = '';
+            if (expo != null && expo > 100) {
+                warn = `\n⚠️ EXPOSITION CIBLE : ${expo}% (levier ${(expo/100).toFixed(2)}×)\nNécessite de la marge sur le compte.\n`;
+            }
+
+            if (!confirm(`${preview.count} ordre(s) à passer :\n${warn}\n${summary}\nConfirmer l'exécution ?`)) return;
 
             showToast('Passage des ordres...', 'info');
             const result = await api('/ibkr/rebalance', { method: 'POST', body: JSON.stringify({ targets, dry_run: false }) });
             if (result && result.success) {
-                showToast(`${result.count} ordre(s) passé(s) avec succès`, 'success');
+                const placed = result.placed_count || 0;
+                const failed = result.failed_count || 0;
+                if (failed > 0) {
+                    const fails = result.orders.filter(o => o.status === 'failed')
+                        .map(o => `${o.ticker}: ${o.error || 'échec'}`).join('\n');
+                    showToast(`${placed} ordre(s) passé(s), ${failed} échec(s)`, failed >= placed ? 'error' : 'success');
+                    alert(`Ordres en échec :\n\n${fails}`);
+                } else {
+                    showToast(`${placed} ordre(s) passé(s) avec succès`, 'success');
+                }
+                loadPerfData();  // rafraîchir les positions
             } else {
                 showToast(result?.error || 'Erreur lors du passage des ordres', 'error');
             }
