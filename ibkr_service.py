@@ -17,17 +17,25 @@ class IBKRService:
     """
     Connexion à IB Gateway via ib_async.
 
-    Architecture (pattern prouvé, robuste) : chaque opération ouvre une connexion
-    fraîche dans un thread isolé via asyncio.run(), exécute la requête, puis ferme
-    proprement (disconnect). Aucune connexion persistante → aucun thread zombie,
-    aucun clientId bloqué côté gateway.
+    Architecture : UNE connexion persistante (self._ib) maintenue par un event loop
+    PERMANENT (run_forever) tournant dans un thread dédié. ib_async ne fonctionne pas
+    avec asyncio.run() dans un thread secondaire (gunicorn gthread) ; il faut un loop
+    unique auquel on soumet les coroutines, et créer l'objet IB() À L'INTÉRIEUR de ce
+    loop. Les opérations sont sérialisées par self._lock (une seule à la fois).
 
-    - clientId rotatif (1→32) pour éviter l'erreur 326 "client id already in use"
-    - les opérations sont sérialisées par un lock (une connexion à la fois)
-    - get_status() reflète la dernière opération réussie (TTL 5 min)
+    - clientId aléatoire (100→99999) à chaque (re)connexion : évite l'erreur 326
+      "client id already in use" si une ancienne socket traîne côté gateway. Comme
+      la connexion est persistante et fermée proprement, un seul clientId est actif
+      à la fois — on reste loin de la limite de 32 connexions simultanées d'IBKR.
+    - readonly=True par défaut (lecture seule, sécurité). La connexion bascule en
+      mode trading (readonly=False) uniquement pour exécuter des ordres réels.
+    - cooldown après échec pour ne pas marteler le gateway (51 tickers d'un calcul).
     """
 
     CONNECT_COOLDOWN = 60  # secondes avant de retenter après un échec
+
+    # Throttle pacing IBKR : ~60 requêtes historiques / 10 min → on espace de 0.4s
+    HIST_MIN_INTERVAL = 0.4
 
     def __init__(self, host='ib-gateway', port=4003, client_id=1):
         self.host = host
@@ -38,6 +46,8 @@ class IBKRService:
         self._last_error = None
         self._last_failed_at = None  # horodatage du dernier échec de connexion
         self._ib = None
+        self._readonly = True        # mode de la connexion courante
+        self._last_hist_call = 0.0   # throttle des requêtes historiques (pacing)
 
         # Event loop PERMANENT dans un thread dédié. ib_async ne fonctionne pas
         # avec asyncio.run() dans un thread secondaire (gunicorn gthread) : il faut
@@ -65,9 +75,10 @@ class IBKRService:
     # Connexion / statut
     # ------------------------------------------------------------------
 
-    def connect(self, force: bool = True) -> dict:
+    def connect(self, force: bool = True, readonly: bool = True) -> dict:
         with self._lock:
-            if not force and self._is_connected():
+            # Si déjà connecté dans le bon mode et pas de force → rien à faire
+            if not force and self._is_connected() and self._readonly == readonly:
                 return {'success': True}
 
             async def _connect():
@@ -84,7 +95,7 @@ class IBKRService:
                 try:
                     await ib.connectAsync(
                         self.host, self.port,
-                        clientId=cid, readonly=True, timeout=15,
+                        clientId=cid, readonly=readonly, timeout=15,
                     )
                 except Exception as e:
                     # connectAsync lance reqPositions/reqExecutions/reqAccountUpdates
@@ -98,6 +109,7 @@ class IBKRService:
                 if not ib.isConnected():
                     raise RuntimeError('Connexion non établie')
                 self._ib = ib
+                self._readonly = readonly
                 return cid
 
             try:
@@ -130,8 +142,8 @@ class IBKRService:
             if self._ib is not None:
                 try:
                     self._submit(self._async_disconnect(), timeout=10)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning('Erreur lors de la déconnexion IBKR : %s', e)
                 self._ib = None
             self._connected_at = None
 
@@ -208,20 +220,44 @@ class IBKRService:
     def get_daily_bars(self, ticker: str, duration: str = '2 Y') -> list:
         """
         Récupère les barres journalières ajustées (ADJUSTED_LAST) via IBKR.
+
+        Respecte le pacing IBKR (~60 requêtes historiques / 10 min) :
+          - espacement minimal entre requêtes (HIST_MIN_INTERVAL)
+          - retry unique avec back-off si violation de pacing (erreur 162)
+
         Returns: [{'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float}]
         """
         if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
 
         async def fn():
+            # Throttle : espacer les requêtes historiques pour éviter le pacing
+            elapsed = time.time() - self._last_hist_call
+            if elapsed < self.HIST_MIN_INTERVAL:
+                await asyncio.sleep(self.HIST_MIN_INTERVAL - elapsed)
+
             contract = Stock(ticker.upper(), 'SMART', 'USD')
             await self._ib.qualifyContractsAsync(contract)
-            return await self._ib.reqHistoricalDataAsync(
-                contract, endDateTime='', durationStr=duration,
-                barSizeSetting='1 day', whatToShow='ADJUSTED_LAST', useRTH=True,
-            )
 
-        bars = self._submit(fn(), timeout=60)
+            for attempt in range(2):
+                try:
+                    bars = await self._ib.reqHistoricalDataAsync(
+                        contract, endDateTime='', durationStr=duration,
+                        barSizeSetting='1 day', whatToShow='ADJUSTED_LAST', useRTH=True,
+                    )
+                    self._last_hist_call = time.time()
+                    return bars
+                except Exception as e:
+                    msg = str(e).lower()
+                    # Erreur 162 / pacing violation → back-off et retry une fois
+                    if attempt == 0 and ('pacing' in msg or '162' in msg):
+                        logger.warning('Pacing IBKR sur %s — back-off 12s', ticker)
+                        await asyncio.sleep(12)
+                        continue
+                    self._last_hist_call = time.time()
+                    raise
+
+        bars = self._submit(fn(), timeout=90)
         if not bars:
             raise RuntimeError(f'Aucune donnée historique IBKR pour {ticker}')
 
@@ -239,6 +275,14 @@ class IBKRService:
     def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> list:
         if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
+
+        # Exécution réelle : la connexion readonly rejette les ordres (le gateway
+        # renvoie une erreur). On bascule en mode trading (readonly=False) le temps
+        # de passer les ordres, puis on repassera en lecture seule.
+        if not dry_run and self._readonly:
+            res = self.connect(force=True, readonly=False)
+            if not res.get('success'):
+                raise ConnectionError(f"Passage en mode trading impossible : {res.get('error')}")
 
         stats       = self.get_portfolio_stats()
         total_value = stats['total_value']
@@ -276,9 +320,15 @@ class IBKRService:
                     await asyncio.sleep(0.5)
             return orders
 
-        # Note : la connexion est readonly → l'exécution réelle (dry_run=False)
-        # nécessitera une connexion non-readonly à mettre en place séparément.
-        return self._submit(fn(), timeout=120)
+        try:
+            return self._submit(fn(), timeout=120)
+        finally:
+            # Repasser en lecture seule après une exécution réelle (sécurité)
+            if not dry_run:
+                try:
+                    self.connect(force=True, readonly=True)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Internal helpers

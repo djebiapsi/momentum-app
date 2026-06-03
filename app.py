@@ -1719,8 +1719,10 @@ def quick_option_calc():
 
 @app.route('/api/ibkr/status', methods=['GET'])
 def ibkr_status():
-    """Retourne le statut de connexion à IB Gateway."""
-    return jsonify(ibkr_service.get_status())
+    """Retourne le statut de connexion à IB Gateway + le mode de trading courant."""
+    status = ibkr_service.get_status()
+    status['trading_mode'] = Settings.get('ibkr_trading_mode', 'live')
+    return jsonify(status)
 
 
 @app.route('/api/ibkr/connect', methods=['POST'])
@@ -1729,6 +1731,55 @@ def ibkr_connect():
     """Tente une connexion (ou reconnexion) à IB Gateway."""
     result = ibkr_service.connect()
     return jsonify(result), 200 if result['success'] else 503
+
+
+@app.route('/api/ibkr/trading-mode', methods=['POST'])
+@require_admin
+def ibkr_set_trading_mode():
+    """
+    Bascule entre live et paper. Recrée le gateway dans le nouveau mode
+    (→ 2FA requise) et repointe l'app sur le bon port socat.
+    Body JSON: { mode: 'live' | 'paper' }
+    """
+    data = request.get_json() or {}
+    mode = (data.get('mode') or '').lower()
+    if mode not in ('live', 'paper'):
+        return jsonify({'success': False, 'error': "mode doit être 'live' ou 'paper'"}), 400
+
+    current = Settings.get('ibkr_trading_mode', 'live')
+    if mode == current and ibkr_service.get_status()['connected']:
+        return jsonify({'success': True, 'mode': mode, 'message': f'Déjà en mode {mode}'})
+
+    # Récupérer les credentials chiffrés
+    secret = app.config.get('SECRET_KEY', '')
+    enc_user = Settings.get('ibkr_username_enc')
+    enc_pass = Settings.get('ibkr_password_enc')
+    if not enc_user or not enc_pass:
+        return jsonify({'success': False,
+                        'error': 'Identifiants IBKR absents — saisissez-les d\'abord'}), 400
+    try:
+        username = decrypt_credential(enc_user, secret)
+        password = decrypt_credential(enc_pass, secret)
+    except Exception:
+        return jsonify({'success': False,
+                        'error': 'Déchiffrement des identifiants impossible (SECRET_KEY changé ?)'}), 500
+
+    Settings.set('ibkr_trading_mode', mode)
+
+    # Notifier avant la 2FA
+    try:
+        get_email_service().envoyer_notification_gateway()
+    except Exception:
+        pass
+
+    _ibkr_update_env_and_restart(username, password, mode)
+
+    return jsonify({
+        'success': True,
+        'mode': mode,
+        'port': IBKR_SOCAT_PORT.get(mode),
+        'message': f'Bascule en {mode} — gateway en redémarrage (~90s), 2FA requise sur votre téléphone',
+    })
 
 
 @app.route('/api/ibkr/credentials', methods=['POST'])
@@ -1764,14 +1815,16 @@ def ibkr_save_credentials():
     return jsonify({'success': True, 'message': 'Identifiants sauvegardés — IB Gateway en cours de démarrage (~90s)'})
 
 
-def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str):
-    """Met à jour IB_USERNAME/PASSWORD dans le .env hôte et redémarre le gateway via SDK Docker."""
+# Port SOCAT du gateway (accessible depuis le réseau Docker) selon le mode.
+# Live  : API interne 4001 → socat 4003
+# Paper : API interne 4002 → socat 4004
+IBKR_SOCAT_PORT = {'live': 4003, 'paper': 4004}
+
+
+def _ibkr_set_env_vars(updates: dict):
+    """Met à jour des variables dans le .env hôte (monté en /app/.env.host)."""
     import re
-    import threading
-
     env_path = '/app/.env.host'
-    port = '4001' if trading_mode == 'live' else '4002'
-
     try:
         with open(env_path, 'r') as f:
             content = f.read()
@@ -1783,45 +1836,78 @@ def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str
                 return re.sub(pattern, replacement, text, flags=re.MULTILINE)
             return text + f'\n{key}={value}'
 
-        content = set_var(content, 'IB_USERNAME', username)
-        content = set_var(content, 'IB_PASSWORD', password)
-        content = set_var(content, 'IB_TRADING_MODE', trading_mode)
-        content = set_var(content, 'IB_GATEWAY_PORT', port)
+        for key, value in updates.items():
+            content = set_var(content, key, value)
 
         with open(env_path, 'w') as f:
             f.write(content)
+        return True
     except Exception as e:
-        app.logger.warning('_ibkr_update_env: %s', e)
-        return
+        app.logger.warning('_ibkr_set_env_vars: %s', e)
+        return False
+
+
+def _recreate_gateway(username: str, password: str, trading_mode: str):
+    """
+    Recrée le conteneur IB Gateway via le SDK Docker, en répliquant fidèlement
+    les options du docker-compose.yml (healthcheck, auto-restart, autoheal, etc.).
+    Lancé en thread car le gateway met ~90s à démarrer + 2FA.
+    """
+    import threading
 
     def _restart():
         try:
             import docker as docker_sdk
             client = docker_sdk.from_env()
-            # Arrêter et supprimer l'ancien conteneur si existant
             for c in client.containers.list(all=True, filters={'name': 'ib-gateway'}):
                 c.stop()
                 c.remove()
-            # Démarrer le nouveau conteneur
             client.containers.run(
                 'ghcr.io/gnzsnz/ib-gateway:stable',
                 name='momentum-app-ib-gateway-1',
                 detach=True,
                 restart_policy={'Name': 'unless-stopped'},
+                labels={'autoheal': 'true'},
                 environment={
                     'TWS_USERID': username,
                     'TWS_PASSWORD': password,
                     'TRADING_MODE': trading_mode,
                     'TWS_SETTINGS_PATH': '/home/ibgateway/Jts',
                     'VNC_SERVER_PASSWORD': 'changeme',
+                    'TWS_ACCEPT_INCOMING': 'accept',
+                    'AUTO_RESTART_TIME': '11:30 PM',
+                    'TIME_ZONE': 'America/New_York',
+                    'RELOGIN_AFTER_TWOFA_TIMEOUT': 'yes',
+                    'TWOFA_TIMEOUT_ACTION': 'restart',
+                },
+                ports={'5900/tcp': ('127.0.0.1', 5900)},
+                healthcheck={
+                    'test': ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4001' || exit 1"],
+                    'interval': 60_000_000_000, 'timeout': 10_000_000_000,
+                    'retries': 3, 'start_period': 180_000_000_000,
                 },
                 network='momentum-app_internal',
             )
-            app.logger.info('IB Gateway démarré via SDK Docker')
+            app.logger.info('IB Gateway recréé (mode=%s)', trading_mode)
         except Exception as e:
-            app.logger.warning('_ibkr_restart: %s', e)
+            app.logger.warning('_recreate_gateway: %s', e)
 
     threading.Thread(target=_restart, daemon=True).start()
+
+
+def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str):
+    """Met à jour le .env (credentials + mode + port socat) et recrée le gateway."""
+    port = IBKR_SOCAT_PORT.get(trading_mode, 4003)
+    _ibkr_set_env_vars({
+        'IB_USERNAME': username,
+        'IB_PASSWORD': password,
+        'IB_TRADING_MODE': trading_mode,
+        'IB_GATEWAY_PORT': port,
+    })
+    # Pointer l'app sur le bon port socat et forcer la reconnexion
+    ibkr_service.port = port
+    ibkr_service.disconnect()
+    _recreate_gateway(username, password, trading_mode)
 
 
 @app.route('/api/ibkr/positions', methods=['GET'])

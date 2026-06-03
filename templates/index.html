@@ -1983,6 +1983,26 @@
                     <span class="status-badge" id="ibkr-status-badge" style="background:var(--bg-hover);color:var(--text-muted)">Chargement...</span>
                 </div>
                 <div id="ibkr-status-detail" style="font-size:13px;color:var(--text-muted);margin-top:8px;">—</div>
+
+                <!-- Toggle Live / Paper -->
+                <div class="admin-only" style="margin-top:14px;">
+                    <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                        Mode de trading
+                        <span id="ibkr-mode-badge" style="font-size:10px;padding:2px 8px;border-radius:8px;"></span>
+                    </label>
+                    <div style="display:flex;gap:8px;margin-top:6px;">
+                        <button class="btn" id="ibkr-mode-paper" style="flex:1;" onclick="setTradingMode('paper')">
+                            Paper
+                        </button>
+                        <button class="btn" id="ibkr-mode-live" style="flex:1;" onclick="setTradingMode('live')">
+                            Live
+                        </button>
+                    </div>
+                    <p style="font-size:11px;color:var(--text-muted);margin-top:6px;">
+                        Changer de mode redémarre le gateway (~90s) et demande une 2FA.
+                    </p>
+                </div>
+
                 <button class="btn btn-secondary admin-only" style="margin-top:12px;" onclick="ibkrConnect()">
                     Reconnecter
                 </button>
@@ -3993,6 +4013,25 @@
                 badge.textContent = '✗ Déconnecté';
                 detail.textContent = data.last_error ? `Dernière erreur : ${data.last_error}` : 'Non connecté à IB Gateway';
             }
+
+            // Mode de trading (live / paper)
+            const mode = data.trading_mode || 'live';
+            const modeBadge = document.getElementById('ibkr-mode-badge');
+            if (modeBadge) {
+                const isLive = mode === 'live';
+                modeBadge.textContent = isLive ? 'LIVE (réel)' : 'PAPER (simu)';
+                modeBadge.style.cssText = isLive
+                    ? 'font-size:10px;padding:2px 8px;border-radius:8px;background:#450a0a;color:#f87171;'
+                    : 'font-size:10px;padding:2px 8px;border-radius:8px;background:#1e3a5f;color:#60a5fa;';
+            }
+            const btnLive  = document.getElementById('ibkr-mode-live');
+            const btnPaper = document.getElementById('ibkr-mode-paper');
+            if (btnLive && btnPaper) {
+                const active = 'background:var(--accent-blue);color:white;';
+                const idle   = 'background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);';
+                btnLive.style.cssText  = 'flex:1;' + (mode === 'live'  ? active : idle);
+                btnPaper.style.cssText = 'flex:1;' + (mode === 'paper' ? active : idle);
+            }
         }
 
         async function ibkrConnect() {
@@ -4000,6 +4039,16 @@
             const data = await api('/ibkr/connect', { method: 'POST' });
             if (!data) return;
             showToast(data.success ? 'IBKR connecté !' : `Erreur : ${data.error}`, data.success ? 'success' : 'error');
+            await loadIBKRStatus();
+        }
+
+        async function setTradingMode(mode) {
+            const label = mode === 'live' ? 'LIVE (réel)' : 'PAPER (simulation)';
+            if (!confirm(`Basculer en mode ${label} ?\n\nLe gateway va redémarrer (~90s) et une 2FA sera demandée sur votre téléphone.`)) return;
+            showToast(`Bascule en ${mode}...`, 'info');
+            const data = await api('/ibkr/trading-mode', { method: 'POST', body: JSON.stringify({ mode }) });
+            if (!data) return;
+            showToast(data.success ? data.message : `Erreur : ${data.error}`, data.success ? 'success' : 'error');
             await loadIBKRStatus();
         }
 
