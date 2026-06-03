@@ -1862,10 +1862,15 @@ def _recreate_gateway(username: str, password: str, trading_mode: str):
         try:
             import docker as docker_sdk
             client = docker_sdk.from_env()
+            net_name = 'momentum-app_internal'
             for c in client.containers.list(all=True, filters={'name': 'ib-gateway'}):
                 c.stop()
                 c.remove()
-            client.containers.run(
+            # Créer sans démarrer, puis connecter au réseau avec l'alias DNS
+            # 'ib-gateway' (sinon seul le nom du conteneur est résolvable, et l'app
+            # qui cherche 'ib-gateway' échoue avec "name resolution"). docker-compose
+            # crée cet alias automatiquement, mais le SDK doit le faire explicitement.
+            container = client.containers.create(
                 'ghcr.io/gnzsnz/ib-gateway:stable',
                 name='momentum-app-ib-gateway-1',
                 detach=True,
@@ -1889,9 +1894,11 @@ def _recreate_gateway(username: str, password: str, trading_mode: str):
                     'interval': 60_000_000_000, 'timeout': 10_000_000_000,
                     'retries': 3, 'start_period': 180_000_000_000,
                 },
-                network='momentum-app_internal',
             )
-            app.logger.info('IB Gateway recréé (mode=%s)', trading_mode)
+            network = client.networks.get(net_name)
+            network.connect(container, aliases=['ib-gateway'])
+            container.start()
+            app.logger.info('IB Gateway recréé (mode=%s, alias=ib-gateway)', trading_mode)
         except Exception as e:
             app.logger.warning('_recreate_gateway: %s', e)
 

@@ -124,11 +124,12 @@ class IBKRService:
                 # DNS / réseau : le conteneur Docker n'est pas démarré ou pas accessible
                 if any(k in raw for k in ('getaddrinfo', 'Errno 11001', 'Name or service not known',
                                           'nodename nor servname', 'ConnectionRefused', 'Connection refused',
-                                          'timed out', 'Errno 111', 'Errno 10061')):
+                                          'timed out', 'Errno 111', 'Errno 10061',
+                                          'Errno -3', 'name resolution', 'Temporary failure')):
                     friendly = (
                         f"IB Gateway non accessible (hôte '{self.host}:{self.port}'). "
-                        "Vérifiez que le conteneur Docker ib-gateway est démarré et que "
-                        "IB_GATEWAY_HOST/PORT sont corrects dans les variables d'environnement."
+                        "Le conteneur est peut-être en cours de redémarrage (~90s après un "
+                        "changement de mode). Réessayez dans une minute."
                     )
                 else:
                     friendly = raw or 'Connexion impossible'
