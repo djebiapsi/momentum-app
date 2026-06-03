@@ -406,6 +406,61 @@ class MarketPriceBar(db.Model):
         }
 
 
+class MarketEvent(db.Model):
+    """
+    Évènement de marché détecté par le moniteur (cron chaque minute).
+
+    Un évènement représente UN épisode continu où une métrique dépasse son seuil
+    (ex: VIX > 35, drawdown SPY < -4%). Il a un instant de début (started_at) et
+    de fin (ended_at, NULL tant que la condition reste vraie). Cette structure
+    évite le spam : tant que l'épisode dure, on ne crée pas de doublon.
+    """
+    __tablename__ = 'market_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    # VIX_HIGH | VIX_SPIKE | SPY_DRAWDOWN | PORTFOLIO_DRAWDOWN | POSITION_DROP
+    event_type = db.Column(db.String(32), nullable=False, index=True)
+    ticker = db.Column(db.String(12), nullable=True)  # pour POSITION_DROP
+    severity = db.Column(db.String(10), nullable=False, default='warning')  # warning | critical
+    threshold = db.Column(db.Float)        # seuil franchi
+    trigger_value = db.Column(db.Float)    # valeur à l'ouverture
+    peak_value = db.Column(db.Float)       # valeur la plus extrême vue pendant l'épisode
+    message = db.Column(db.Text)
+    started_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    ended_at = db.Column(db.DateTime, nullable=True, index=True)  # NULL = épisode en cours
+    last_checked_at = db.Column(db.DateTime, default=datetime.utcnow)
+    notified_open = db.Column(db.Boolean, default=False)
+    notified_close = db.Column(db.Boolean, default=False)
+
+    __table_args__ = (
+        db.Index('ix_event_open', 'event_type', 'ticker', 'ended_at'),
+    )
+
+    @property
+    def is_open(self) -> bool:
+        return self.ended_at is None
+
+    def to_dict(self):
+        duration_min = None
+        end = self.ended_at or datetime.utcnow()
+        if self.started_at:
+            duration_min = round((end - self.started_at).total_seconds() / 60.0, 1)
+        return {
+            'id': self.id,
+            'event_type': self.event_type,
+            'ticker': self.ticker,
+            'severity': self.severity,
+            'threshold': self.threshold,
+            'trigger_value': self.trigger_value,
+            'peak_value': self.peak_value,
+            'message': self.message,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'ended_at': self.ended_at.isoformat() if self.ended_at else None,
+            'is_open': self.is_open,
+            'duration_min': duration_min,
+        }
+
+
 def init_db(app, default_panel):
     """
     Initialise la base de données et charge les valeurs par défaut.

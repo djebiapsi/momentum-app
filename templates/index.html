@@ -1670,6 +1670,12 @@
                     ⚡ Rééquilibrer via IBKR
                 </button>
             </div>
+
+            <button class="btn btn-block" id="btn-download-momentum" style="display:none;margin-top:8px;
+                background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);"
+                onclick="downloadMomentum()">
+                ⬇️ Télécharger le momentum (CSV)
+            </button>
             
             <div class="card" style="margin-top: 20px;">
                 <div class="card-header">
@@ -2510,6 +2516,88 @@
             </div>
         </div>
 
+        <!-- PAGE: Marché (alertes & surveillance) -->
+        <div id="page-market" class="page">
+            <div class="header" style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);">
+                <div class="header-label">Surveillance</div>
+                <h1>Alertes & Marché</h1>
+                <p id="market-pulse-update">Mise à jour : —</p>
+            </div>
+
+            <!-- Bandeau live -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-regime">—</div>
+                    <div class="stat-label">Régime</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-vix">—</div>
+                    <div class="stat-label">VIX</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-spy">—</div>
+                    <div class="stat-label">SPY intraday</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-portfolio">—</div>
+                    <div class="stat-label">Portefeuille intraday</div>
+                </div>
+            </div>
+
+            <div id="pulse-disconnected" style="display:none;margin-bottom:16px;padding:12px 16px;border-radius:12px;
+                background:rgba(239,68,68,0.1);border:1px solid #ef4444;color:#ef4444;font-size:13px;">
+                ⚠️ IBKR non connecté — métriques temps réel indisponibles.
+            </div>
+
+            <div style="display:flex;gap:8px;margin-bottom:16px;">
+                <button class="btn btn-secondary btn-sm" onclick="loadMarketPage()" style="flex:1;">🔄 Actualiser</button>
+                <button class="btn btn-secondary btn-sm admin-only" onclick="runMonitorNow()" style="flex:1;">🛰️ Vérifier maintenant</button>
+            </div>
+
+            <!-- Alertes ouvertes -->
+            <div class="card" style="margin-top:8px;">
+                <div class="card-header">
+                    <span class="card-title">🔴 Alertes en cours</span>
+                </div>
+                <div id="market-open-events">
+                    <div class="empty-state">Aucune alerte active</div>
+                </div>
+            </div>
+
+            <!-- Historique des évènements -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Historique des évènements</span>
+                </div>
+                <div id="market-event-history">
+                    <div class="empty-state">Aucun évènement</div>
+                </div>
+            </div>
+
+            <!-- Briefing à la demande -->
+            <div class="card admin-only">
+                <div class="card-header">
+                    <span class="card-title">📨 Briefing à la demande</span>
+                </div>
+                <div style="display:flex;gap:8px;padding:4px 0;">
+                    <button class="btn btn-secondary btn-sm" onclick="sendBriefing('open')" style="flex:1;">Ouverture</button>
+                    <button class="btn btn-secondary btn-sm" onclick="sendBriefing('mid')" style="flex:1;">Mi-séance</button>
+                    <button class="btn btn-secondary btn-sm" onclick="sendBriefing('close')" style="flex:1;">Clôture</button>
+                </div>
+            </div>
+
+            <!-- Seuils d'alerte (admin) -->
+            <div class="card admin-only">
+                <div class="card-header">
+                    <span class="card-title">⚙️ Seuils d'alerte</span>
+                </div>
+                <div id="thresholds-form" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:8px 0;"></div>
+                <button class="btn btn-primary btn-block btn-sm admin-only" onclick="saveThresholds()" style="margin-top:8px;">
+                    Enregistrer les seuils
+                </button>
+            </div>
+        </div>
+
     </main>
 
     <!-- Navigation -->
@@ -2533,6 +2621,10 @@
         <button class="nav-tab" onclick="showPage('perf')">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
             Perf
+        </button>
+        <button class="nav-tab" onclick="showPage('market')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            Marché
         </button>
         <button class="nav-tab" onclick="showPage('settings')">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
@@ -3156,6 +3248,7 @@
                 loadFlexStatus();
             }
             if (pageName === 'perf') loadPerfData();
+            if (pageName === 'market') loadMarketPage();
         }
         
         // =================================================================
@@ -3289,12 +3382,152 @@
                 api('/history/latest'),
                 api('/market-regime')
             ]);
+            const dlBtn = document.getElementById('btn-download-momentum');
             if (data && data.details) {
                 if (regime) data.market_regime = regime;
                 displayRecommendations(data);
+                if (dlBtn) dlBtn.style.display = data.details.length ? 'block' : 'none';
             } else if (regime) {
                 displayRecommendations({ recommandations: [], market_regime: regime });
+                if (dlBtn) dlBtn.style.display = 'none';
             }
+        }
+
+        function downloadMomentum() {
+            // Route publique (GET) — téléchargement direct du CSV
+            window.location.href = '/api/history/latest/download';
+        }
+
+        // =================================================================
+        // PAGE MARCHÉ — pulse, évènements, seuils, briefings
+        // =================================================================
+
+        const EVENT_LABELS = {
+            VIX_HIGH: 'VIX élevé', VIX_SPIKE: 'Bond du VIX', SPY_DRAWDOWN: 'Chute S&P 500',
+            PORTFOLIO_DRAWDOWN: 'Chute portefeuille', POSITION_DROP: 'Chute position',
+        };
+
+        function fmtPct(v) {
+            return (typeof v === 'number') ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
+        }
+        function pctColor(v) {
+            if (typeof v !== 'number') return 'var(--text-secondary)';
+            return v >= 0 ? '#22c55e' : '#ef4444';
+        }
+
+        async function loadMarketPage() {
+            await Promise.all([loadMarketPulse(), loadMarketEvents(), loadThresholds()]);
+        }
+
+        async function loadMarketPulse() {
+            const data = await api('/market/pulse');
+            if (!data) return;
+            const reg = (data.regime && data.regime.regime) || '—';
+            const regEl = document.getElementById('pulse-regime');
+            regEl.textContent = reg;
+            regEl.style.color = reg === 'BULL' ? '#22c55e' : (reg === 'BEAR' ? '#ef4444' : 'var(--text-primary)');
+
+            const vixEl = document.getElementById('pulse-vix');
+            vixEl.textContent = (typeof data.vix === 'number') ? data.vix.toFixed(1) : '—';
+            vixEl.style.color = (typeof data.vix === 'number' && data.vix >= 25) ? '#ef4444' : 'var(--text-primary)';
+
+            const spyEl = document.getElementById('pulse-spy');
+            spyEl.textContent = fmtPct(data.spy_intraday_pct);
+            spyEl.style.color = pctColor(data.spy_intraday_pct);
+
+            const pEl = document.getElementById('pulse-portfolio');
+            pEl.textContent = fmtPct(data.portfolio_intraday_pct);
+            pEl.style.color = pctColor(data.portfolio_intraday_pct);
+
+            document.getElementById('pulse-disconnected').style.display = data.connected ? 'none' : 'block';
+            document.getElementById('market-pulse-update').textContent =
+                'Mise à jour : ' + new Date().toLocaleTimeString('fr-FR');
+        }
+
+        function renderEvent(e) {
+            const crit = e.severity === 'critical';
+            const accent = crit ? '#ef4444' : (e.is_open ? '#f97316' : '#22c55e');
+            const label = EVENT_LABELS[e.event_type] || e.event_type;
+            const started = e.started_at ? new Date(e.started_at).toLocaleString('fr-FR') : '—';
+            const dur = (typeof e.duration_min === 'number')
+                ? (e.duration_min >= 60 ? (e.duration_min / 60).toFixed(1) + ' h' : e.duration_min.toFixed(0) + ' min')
+                : '—';
+            const statusBadge = e.is_open
+                ? '<span style="background:#450a0a;color:#f87171;padding:2px 8px;border-radius:8px;font-size:10px;">EN COURS</span>'
+                : '<span style="background:#14532d;color:#4ade80;padding:2px 8px;border-radius:8px;font-size:10px;">RÉSOLU</span>';
+            return `<div style="padding:12px;border-left:3px solid ${accent};background:var(--bg-secondary);
+                        border-radius:8px;margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                    <strong>${label}${e.ticker ? ' · ' + e.ticker : ''}</strong> ${statusBadge}
+                </div>
+                <div style="font-size:13px;color:var(--text-secondary);">${e.message || ''}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">
+                    ${started} · durée ${dur}${typeof e.peak_value === 'number' ? ' · pic ' + e.peak_value : ''}</div>
+            </div>`;
+        }
+
+        async function loadMarketEvents() {
+            const data = await api('/market/events?status=all');
+            if (!data) return;
+            const open = data.events.filter(e => e.is_open);
+            const closed = data.events.filter(e => !e.is_open);
+            document.getElementById('market-open-events').innerHTML =
+                open.length ? open.map(renderEvent).join('') : '<div class="empty-state">Aucune alerte active</div>';
+            document.getElementById('market-event-history').innerHTML =
+                closed.length ? closed.slice(0, 30).map(renderEvent).join('') : '<div class="empty-state">Aucun évènement</div>';
+        }
+
+        const THRESHOLD_LABELS = {
+            vix_warn: 'VIX — alerte', vix_crit: 'VIX — critique', vix_spike_pct: 'Bond VIX (%)',
+            spy_dd_warn: 'SPY baisse — alerte (%)', spy_dd_crit: 'SPY baisse — critique (%)',
+            portfolio_dd_warn: 'Portef. baisse — alerte (%)', portfolio_dd_crit: 'Portef. baisse — critique (%)',
+            position_drop: 'Chute position (%)',
+        };
+
+        async function loadThresholds() {
+            const data = await api('/market/thresholds');
+            if (!data) return;
+            const form = document.getElementById('thresholds-form');
+            form.innerHTML = Object.entries(data.thresholds).map(([k, v]) => `
+                <label style="font-size:12px;color:var(--text-secondary);">
+                    ${THRESHOLD_LABELS[k] || k}
+                    <input type="number" step="0.5" id="thr-${k}" value="${v}"
+                        style="width:100%;margin-top:4px;padding:8px;border-radius:8px;
+                        background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);">
+                </label>`).join('');
+        }
+
+        async function saveThresholds() {
+            const inputs = document.querySelectorAll('[id^="thr-"]');
+            const thresholds = {};
+            inputs.forEach(i => { thresholds[i.id.replace('thr-', '')] = parseFloat(i.value); });
+            const data = await api('/market/thresholds', {
+                method: 'POST', body: JSON.stringify({ thresholds })
+            });
+            if (data && data.success) showToast('Seuils enregistrés', 'success');
+            else if (data) showToast(data.error || 'Erreur', 'error');
+        }
+
+        async function runMonitorNow() {
+            showToast('Vérification du marché...', 'info');
+            const data = await api('/market/monitor/run', { method: 'POST' });
+            if (!data) return;
+            if (data.success) {
+                showToast(`Monitor OK — ${data.opened} ouverte(s), ${data.closed} clôturée(s)`, 'success');
+                loadMarketPulse(); loadMarketEvents();
+            } else {
+                showToast(data.error || 'Erreur monitor', 'error');
+            }
+        }
+
+        async function sendBriefing(session) {
+            showToast('Envoi du briefing...', 'info');
+            const data = await api('/briefing/send', {
+                method: 'POST', body: JSON.stringify({ session })
+            });
+            if (!data) return;
+            showToast(data.success ? 'Briefing envoyé !' : (data.message || data.error || 'Erreur'),
+                      data.success ? 'success' : 'error');
         }
         
         async function calculateMomentum() {

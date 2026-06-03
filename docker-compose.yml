@@ -4,6 +4,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Résumé des news via Ollama (auto-hébergé). Fallback heuristique si indispo.
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
     ports:
       - "80:8000"
     volumes:
@@ -67,6 +71,18 @@ services:
       retries: 3
       start_period: 180s
 
+  # Ollama — petit LLM open-source auto-hébergé pour résumer/trier les news.
+  # Le modèle (OLLAMA_MODEL, défaut qwen2.5:3b ≈ 2 Go) est pull au 1er usage par
+  # l'app. Si ce service est indisponible, le briefing bascule sur un résumé
+  # heuristique sans planter. Prévoir ≥4 Go de RAM (sinon qwen2.5:1.5b).
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - internal
+
   # Autoheal — surveille les containers "unhealthy" et les redémarre automatiquement
   autoheal:
     image: willfarrell/autoheal:latest
@@ -106,6 +122,7 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:
 
 networks:
   internal:

@@ -8,7 +8,7 @@ import threading
 import time
 
 from cryptography.fernet import Fernet
-from ib_async import IB, Stock, Order
+from ib_async import IB, Stock, Index, Order
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,78 @@ class IBKRService:
                 'adj_close': float(b.close),
                 'close': float(b.close),
             })
+        return result
+
+    def get_quotes(self, tickers: list, include_vix: bool = True) -> dict:
+        """
+        Récupère un snapshot temps réel (ou différé) pour une liste de tickers
+        et, optionnellement, l'indice VIX.
+
+        On bascule en données différées (reqMarketDataType=3) en fallback pour ne
+        PAS exiger d'abonnement temps réel : le moniteur de marché tourne chaque
+        minute et n'a pas besoin de la précision tick.
+
+        Returns:
+            { 'AAPL': {'last': float|None, 'prev_close': float|None, 'pct': float|None},
+              'VIX':  {'last': ..., 'prev_close': ..., 'pct': ...}, ... }
+            Les tickers sans donnée exploitable sont omis.
+        """
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        symbols = [t.upper() for t in tickers if t]
+
+        async def fn():
+            contracts = {}
+            for sym in symbols:
+                contracts[sym] = Stock(sym, 'SMART', 'USD')
+            if include_vix:
+                contracts['VIX'] = Index('VIX', 'CBOE', 'USD')
+
+            # Qualifier les contrats (ignore ceux qui échouent)
+            valid = {}
+            for sym, c in contracts.items():
+                try:
+                    await self._ib.qualifyContractsAsync(c)
+                    valid[sym] = c
+                except Exception as e:
+                    logger.warning('get_quotes: contrat non qualifié %s (%s)', sym, e)
+
+            if not valid:
+                return {}
+
+            # 1 = temps réel ; 3 = différé (15 min). On tente le temps réel puis on
+            # laisse le différé prendre le relais si pas d'abonnement.
+            self._ib.reqMarketDataType(3)
+            tickers_data = await self._ib.reqTickersAsync(*valid.values())
+            return {c.symbol: t for c, t in zip(valid.values(), tickers_data)}
+
+        raw = self._submit(fn(), timeout=60)
+
+        def _num(x):
+            try:
+                if x is None:
+                    return None
+                xf = float(x)
+                # ib_async renvoie nan quand la donnée est absente
+                return None if xf != xf else xf
+            except (TypeError, ValueError):
+                return None
+
+        result = {}
+        for sym, t in (raw or {}).items():
+            last = _num(getattr(t, 'last', None))
+            if last is None:
+                last = _num(getattr(t, 'marketPrice', lambda: None)() if callable(getattr(t, 'marketPrice', None)) else None)
+            if last is None:
+                last = _num(getattr(t, 'close', None))
+            prev_close = _num(getattr(t, 'close', None))
+            pct = None
+            if last is not None and prev_close not in (None, 0):
+                pct = round((last - prev_close) / prev_close * 100, 2)
+            if last is None and prev_close is None:
+                continue
+            result[sym] = {'last': last, 'prev_close': prev_close, 'pct': pct}
         return result
 
     def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> list:

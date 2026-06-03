@@ -16,10 +16,10 @@ from apscheduler.triggers.cron import CronTrigger
 from functools import wraps
 from config import get_config
 from models import (
-    db, init_db, Settings, 
+    db, init_db, Settings,
     PanelAction, RecommendationHistory, RecommendationDetail,
     ShortPanelAction, ShortRecommendationHistory, ShortRecommendationDetail,
-    OptionRecommendation
+    OptionRecommendation, MarketEvent
 )
 from momentum_service import MomentumService
 from email_service import EmailService
@@ -28,7 +28,10 @@ from short_screener_service import ShortScreenerService
 from finviz_screener_service import FinvizScreenerService
 from options_service import OptionsService, estimate_historical_volatility
 from ibkr_service import IBKRService, encrypt_credential, decrypt_credential
+from market_monitor_service import MarketMonitorService
+from news_service import NewsService
 import flex_service
+import functools
 
 
 def require_admin(f):
@@ -87,6 +90,8 @@ email_service = None
 screener_service = None
 short_screener_service = None
 finviz_screener_service = None
+market_monitor_service = None
+news_service = None
 
 # Service IBKR — démarre une boucle asyncio dans un thread dédié
 ibkr_service = IBKRService(
@@ -118,6 +123,28 @@ def get_email_service():
             to_email=app.config.get('EMAIL_TO')
         )
     return email_service
+
+
+def get_news_service():
+    """Récupère ou crée le service news (RSS + résumé Ollama)."""
+    global news_service
+    if news_service is None:
+        news_service = NewsService(
+            ollama_host=app.config.get('OLLAMA_HOST') or os.environ.get('OLLAMA_HOST'),
+            model=app.config.get('OLLAMA_MODEL') or os.environ.get('OLLAMA_MODEL'),
+        )
+    return news_service
+
+
+def get_market_monitor():
+    """Récupère ou crée le service de surveillance du marché."""
+    global market_monitor_service
+    if market_monitor_service is None:
+        market_monitor_service = MarketMonitorService(
+            ibkr_service=ibkr_service,
+            momentum_service=get_momentum_service(),
+        )
+    return market_monitor_service
 
 
 def get_screener_service():
@@ -582,8 +609,48 @@ def get_latest():
     
     if not history:
         return jsonify({'message': 'Aucune recommandation disponible'}), 404
-    
+
     return jsonify(history.to_dict())
+
+
+def _momentum_csv_response(history):
+    """Construit une réponse CSV téléchargeable à partir d'un RecommendationHistory."""
+    import csv
+    import io
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['ticker', 'rang', 'momentum_pct', 'signal', 'allocation_pct',
+                     'perf_1m_pct', 'vol_annualisee_pct'])
+    details = sorted(history.details, key=lambda d: (d.rank if d.rank is not None else 999))
+    for d in details:
+        writer.writerow([
+            d.ticker, d.rank, round(d.momentum, 2), d.signal, d.allocation,
+            round(d.perf_recent_1m, 2) if d.perf_recent_1m is not None else '',
+            round(d.vol_annualisee, 2) if d.vol_annualisee is not None else '',
+        ])
+    date_str = history.calculation_date.strftime('%Y%m%d')
+    response = make_response(buf.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = f'attachment; filename=momentum_{date_str}.csv'
+    return response
+
+
+@app.route('/api/history/latest/download', methods=['GET'])
+def download_latest_momentum():
+    """Télécharge le dernier calcul de momentum au format CSV."""
+    history = RecommendationHistory.query\
+        .order_by(RecommendationHistory.created_at.desc())\
+        .first()
+    if not history:
+        return jsonify({'message': 'Aucune recommandation disponible'}), 404
+    return _momentum_csv_response(history)
+
+
+@app.route('/api/history/<int:history_id>/download', methods=['GET'])
+def download_momentum(history_id):
+    """Télécharge un calcul de momentum précis au format CSV."""
+    history = RecommendationHistory.query.get_or_404(history_id)
+    return _momentum_csv_response(history)
 
 
 # =============================================================================
@@ -1320,76 +1387,80 @@ def apply_short_panel():
 # TÂCHE PLANIFIÉE - MISE À JOUR MENSUELLE
 # =============================================================================
 
-def job_mensuel():
+def compute_and_save_momentum():
     """
-    Tâche exécutée le 1er de chaque mois.
-    Calcule le momentum et envoie les recommandations par email.
+    Calcule le momentum 12-1 à partir du panel actif et des variables enregistrées
+    (nb_top, vol scaling), persiste un RecommendationHistory + ses détails, et
+    retourne (recommandations_dict, history) — ou (None, None) en cas d'échec.
+
+    Réutilisé par le cron mensuel ET les déclenchements manuels.
+    """
+    service = get_momentum_service()
+    if not service:
+        print("❌ Service momentum non configuré")
+        return None, None
+
+    nb_top = int(Settings.get('nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
+    actions = PanelAction.query.filter_by(is_active=True).all()
+    panel = [a.ticker for a in actions]
+    if not panel:
+        print("❌ Panel vide")
+        return None, None
+
+    resultats = service.analyser_panel(panel, None)
+    if not resultats['success']:
+        print(f"❌ Échec du calcul: {resultats['erreurs']}")
+        return None, None
+
+    recommandations = service.generer_recommandations(resultats, nb_top,
+                                                      **_get_vol_scaling_settings())
+
+    regime = recommandations.get('market_regime')
+    history = RecommendationHistory(
+        calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
+        nb_top=nb_top,
+        market_regime=json.dumps(regime) if regime else None,
+    )
+    db.session.add(history)
+    db.session.flush()
+
+    for r in recommandations['recommandations']:
+        dm = r.get('details_mensuels')
+        pr = r.get('perf_recent_1m')
+        vol = r.get('vol_annualisee')
+        detail = RecommendationDetail(
+            history_id=history.id,
+            ticker=r['ticker'],
+            momentum=float(r['momentum']),
+            signal=r['signal'],
+            allocation=float(r['allocation']),
+            rank=int(r['rank']),
+            perf_recent_1m=float(pr) if pr is not None else None,
+            vol_annualisee=float(vol) if vol is not None else None,
+            details_mensuels=json.dumps(dm) if dm else None,
+        )
+        db.session.add(detail)
+
+    db.session.commit()
+    print(f"✅ Recommandations sauvegardées (ID: {history.id})")
+    return recommandations, history
+
+
+def job_rebalance_reminder():
+    """
+    Cron mensuel (1er du mois). Calcule le momentum, le sauvegarde, et envoie
+    l'email « C'est le moment de rééquilibrer ! » avec bouton de téléchargement.
     """
     with app.app_context():
-        print(f"[{datetime.now()}] 🚀 Démarrage du calcul mensuel automatique...")
-        
-        service = get_momentum_service()
-        if not service:
-            print("❌ API Tiingo non configurée")
+        print(f"[{datetime.now()}] 🔄 Rappel mensuel de rééquilibrage…")
+        recommandations, history = compute_and_save_momentum()
+        if not recommandations:
             return
-        
-        nb_top = int(Settings.get('nb_top', app.config.get('DEFAULT_NB_TOP', 5)))
-        
-        actions = PanelAction.query.filter_by(is_active=True).all()
-        panel = [a.ticker for a in actions]
-        
-        if not panel:
-            print("❌ Panel vide")
-            return
-        
-        # Calculer
-        resultats = service.analyser_panel(panel, None)
-        
-        if not resultats['success']:
-            print(f"❌ Échec du calcul: {resultats['erreurs']}")
-            return
-        
-        recommandations = service.generer_recommandations(resultats, nb_top,
-                                                          **_get_vol_scaling_settings())
 
-        # Sauvegarder
-        regime = recommandations.get('market_regime')
-        history = RecommendationHistory(
-            calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
-            nb_top=nb_top,
-            market_regime=json.dumps(regime) if regime else None,
-        )
-        db.session.add(history)
-        db.session.flush()
-
-        for r in recommandations['recommandations']:
-            dm = r.get('details_mensuels')
-            pr = r.get('perf_recent_1m')
-            vol = r.get('vol_annualisee')
-            detail = RecommendationDetail(
-                history_id=history.id,
-                ticker=r['ticker'],
-                momentum=float(r['momentum']),
-                signal=r['signal'],
-                allocation=float(r['allocation']),
-                rank=int(r['rank']),
-                perf_recent_1m=float(pr) if pr is not None else None,
-                vol_annualisee=float(vol) if vol is not None else None,
-                details_mensuels=json.dumps(dm) if dm else None,
-            )
-            db.session.add(detail)
-        
-        db.session.commit()
-        print(f"✅ Recommandations sauvegardées (ID: {history.id})")
-        
-        # Envoyer email
         email_svc = get_email_service()
         if email_svc.is_configured():
-            result = email_svc.envoyer_recommandations(recommandations)
-            if result['success']:
-                print(f"✅ Email envoyé: {result['message']}")
-            else:
-                print(f"❌ Erreur email: {result['message']}")
+            result = email_svc.envoyer_rebalance_reminder(recommandations, history.id)
+            print(f"{'✅' if result['success'] else '❌'} Email rééquilibrage: {result['message']}")
         else:
             print("⚠️ Service email non configuré")
 
@@ -2319,131 +2390,314 @@ def ibkr_rebalance():
 
 
 # =============================================================================
-# TÂCHE PLANIFIÉE - POSITIONS IBKR (toutes les 2h, heures de marché US)
+# SURVEILLANCE DU MARCHÉ — moteur d'évènements (anti-spam) & briefings
 # =============================================================================
 
-def job_positions_ibkr():
-    """Récupère les positions IBKR, envoie un email de suivi et enregistre un snapshot."""
-    with app.app_context():
-        print(f"[{datetime.now()}] 📊 Envoi email positions IBKR...")
-        try:
-            if not ibkr_service.ensure_connected():
-                print("⚠️ Reconnexion IBKR impossible, email non envoyé")
-                return
-            
-            # Récupérer les stats complètes pour le snapshot
-            stats = ibkr_service.get_portfolio_stats()
-            positions = stats.get('positions', [])
-            
-            if not positions:
-                print("⚠️ Aucune position ouverte, email non envoyé")
-                return
-            
-            # Enregistrer le snapshot du jour
-            from models import PortfolioSnapshot
-            from datetime import date
-            today = date.today()
-            
-            # Vérifier si on a déjà un snapshot pour aujourd'hui (ou mettre à jour)
-            snapshot = PortfolioSnapshot.query.filter_by(date=today).first()
-            if not snapshot:
-                snapshot = PortfolioSnapshot(date=today)
-                db.session.add(snapshot)
-            
-            snapshot.nav = stats.get('total_value', 0)
-            snapshot.cash = stats.get('total_value', 0) - stats.get('total_cost', 0) # Simplification si on n'a pas le cash direct
-            # Pour invested_capital, on essaie de garder la valeur précédente ou d'initialiser
-            if snapshot.invested_capital is None:
-                prev = PortfolioSnapshot.query.filter(PortfolioSnapshot.date < today).order_by(PortfolioSnapshot.date.desc()).first()
-                snapshot.invested_capital = prev.invested_capital if prev else snapshot.nav
-            
-            db.session.commit()
-            print(f"✅ Snapshot enregistré pour {today} (NAV=${snapshot.nav:,.0f})")
+def _more_extreme(value, current, event_type):
+    """Détermine si `value` est plus extrême que `current` pour un type d'évènement."""
+    if event_type in ('VIX_HIGH', 'VIX_SPIKE'):
+        return value > current        # VIX : plus haut = pire
+    return value < current            # drawdowns / chutes : plus négatif = pire
 
-            # Envoi de l'email
-            email_svc = get_email_service()
-            if not email_svc.is_configured():
-                print("⚠️ Service email non configuré")
-                return
-            result = email_svc.envoyer_positions(positions)
-            if result['success']:
-                print(f"✅ Email positions envoyé ({len(positions)} positions)")
-            else:
-                print(f"❌ Erreur email positions: {result['message']}")
+
+def run_market_monitor():
+    """
+    Collecte les métriques, évalue les seuils et gère le cycle de vie des
+    MarketEvent (création / mise à jour / clôture) avec anti-spam :
+      - 1 seul évènement ouvert par (type, ticker) → 1 seul email d'ouverture ;
+      - clôture (ended_at) + email court quand la condition disparaît.
+    Retourne un résumé exploitable par la route de test.
+    """
+    monitor = get_market_monitor()
+    metrics = monitor.collect_metrics()
+    breaches = monitor.evaluate(metrics)
+    now = datetime.utcnow()
+    email_svc = get_email_service()
+    configured = email_svc.is_configured()
+
+    open_events = MarketEvent.query.filter(MarketEvent.ended_at.is_(None)).all()
+    open_map = {(e.event_type, e.ticker): e for e in open_events}
+    breach_keys, opened = set(), []
+
+    for b in breaches:
+        key = (b['event_type'], b['ticker'])
+        breach_keys.add(key)
+        ev = open_map.get(key)
+        if ev:  # épisode déjà en cours → mise à jour silencieuse
+            ev.last_checked_at = now
+            if ev.peak_value is None or _more_extreme(b['value'], ev.peak_value, b['event_type']):
+                ev.peak_value = b['value']
+            if b['severity'] == 'critical' and ev.severity != 'critical':
+                ev.severity = 'critical'
+        else:  # nouvel épisode → créer + alerter une fois
+            ev = MarketEvent(
+                event_type=b['event_type'], ticker=b['ticker'], severity=b['severity'],
+                threshold=b['threshold'], trigger_value=b['value'], peak_value=b['value'],
+                message=b['message'], started_at=now, last_checked_at=now,
+            )
+            db.session.add(ev)
+            db.session.flush()
+            if configured:
+                try:
+                    email_svc.envoyer_alerte_marche(ev.to_dict())
+                    ev.notified_open = True
+                except Exception as e:
+                    print(f"❌ Email alerte: {e}")
+            opened.append(b)
+
+    # Clôturer les évènements dont la condition n'est plus remplie
+    closed = 0
+    for key, ev in open_map.items():
+        if key not in breach_keys:
+            ev.ended_at = now
+            ev.last_checked_at = now
+            if configured and not ev.notified_close:
+                try:
+                    email_svc.envoyer_alerte_resolue(ev.to_dict())
+                except Exception as e:
+                    print(f"❌ Email résolu: {e}")
+            ev.notified_close = True
+            closed += 1
+
+    db.session.commit()
+    return {'metrics': metrics, 'breaches': breaches,
+            'opened': opened, 'closed': closed}
+
+
+def build_briefing_payload(session):
+    """Construit le payload du briefing (régime, VIX, positions, news résumées)."""
+    monitor = get_market_monitor()
+    metrics = monitor.collect_metrics()
+
+    stats, positions = None, []
+    try:
+        if ibkr_service.ensure_connected():
+            s = ibkr_service.get_portfolio_stats()
+            stats = {k: s.get(k) for k in ('total_value', 'total_pnl', 'return_pct', 'positions_count')}
+            positions = s.get('positions', [])
+    except Exception as e:
+        print(f"⚠️ Briefing: positions indisponibles ({e})")
+
+    tickers = [p['ticker'] for p in positions if p.get('ticker')]
+    news_items, news_summary = [], ''
+    try:
+        ns = get_news_service()
+        news_items = ns.fetch_news(tickers)
+        regime = (metrics.get('regime') or {}).get('regime', '?')
+        ctx = f"régime {regime}, VIX {metrics.get('vix')}"
+        news_summary = ns.summarize(news_items, context=ctx)
+    except Exception as e:
+        print(f"⚠️ Briefing: news indisponibles ({e})")
+
+    return {
+        'session': session,
+        'regime': metrics.get('regime'),
+        'vix': metrics.get('vix'), 'vix_pct': metrics.get('vix_pct'),
+        'stats': stats, 'positions': positions,
+        'news_summary': news_summary, 'news_items': news_items,
+    }
+
+
+# =============================================================================
+# ROUTES - API MARCHÉ (pulse, évènements, seuils, déclencheurs de test)
+# =============================================================================
+
+@app.route('/api/market/pulse', methods=['GET'])
+def market_pulse():
+    """État courant du marché et du portefeuille (pour le bandeau live)."""
+    try:
+        metrics = get_market_monitor().collect_metrics()
+        return jsonify(metrics)
+    except Exception as e:
+        return jsonify({'error': str(e), 'connected': False}), 500
+
+
+@app.route('/api/market/events', methods=['GET'])
+def market_events():
+    """Liste des évènements de marché (status=open|all)."""
+    status = request.args.get('status', 'all')
+    q = MarketEvent.query
+    if status == 'open':
+        q = q.filter(MarketEvent.ended_at.is_(None))
+    events = q.order_by(MarketEvent.started_at.desc()).limit(100).all()
+    return jsonify({'count': len(events), 'events': [e.to_dict() for e in events]})
+
+
+@app.route('/api/market/thresholds', methods=['GET', 'POST'])
+def market_thresholds():
+    """Lit (GET) ou met à jour (POST, admin) les seuils d'alerte."""
+    monitor = get_market_monitor()
+    if request.method == 'GET':
+        return jsonify({'thresholds': monitor.get_thresholds(),
+                        'defaults': monitor.DEFAULT_THRESHOLDS})
+    # POST → protégé admin
+    decorated = require_admin(lambda: None)
+    auth = decorated()
+    if auth is not None:  # require_admin a renvoyé une 401
+        return auth
+    data = request.get_json(silent=True) or {}
+    merged = monitor.save_thresholds(data.get('thresholds', data))
+    return jsonify({'success': True, 'thresholds': merged})
+
+
+@app.route('/api/market/monitor/run', methods=['POST'])
+@require_admin
+def market_monitor_run():
+    """Exécute le moniteur une fois (test manuel)."""
+    try:
+        result = run_market_monitor()
+        return jsonify({
+            'success': True,
+            'breaches': result['breaches'],
+            'opened': len(result['opened']),
+            'closed': result['closed'],
+            'metrics': result['metrics'],
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/briefing/send', methods=['POST'])
+@require_admin
+def briefing_send():
+    """Envoie un briefing à la demande (test). Body: {session: open|mid|close}."""
+    data = request.get_json(silent=True) or {}
+    session = data.get('session', 'open')
+    try:
+        payload = build_briefing_payload(session)
+        email_svc = get_email_service()
+        if not email_svc.is_configured():
+            return jsonify({'success': False, 'message': 'Email non configuré'}), 400
+        result = email_svc.envoyer_briefing(payload)
+        return jsonify(result), (200 if result['success'] else 500)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================================================
+# TÂCHES PLANIFIÉES
+# =============================================================================
+
+def job_market_monitor():
+    """Cron minute (séance US) : surveille le marché et gère les alertes."""
+    with app.app_context():
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import time as dtime
+            now_et = datetime.now(ZoneInfo('America/New_York'))
+            if not (dtime(9, 30) <= now_et.time() < dtime(16, 0)):
+                return  # hors séance régulière
+            result = run_market_monitor()
+            if result['opened'] or result['closed']:
+                print(f"[{datetime.now()}] 🔔 Monitor: {len(result['opened'])} ouverte(s), "
+                      f"{result['closed']} clôturée(s)")
         except Exception as e:
-            print(f"❌ job_positions_ibkr: {e}")
+            print(f"❌ job_market_monitor: {e}")
 
 
-def job_update_benchmarks():
-    """Récupère les données historiques du S&P 500 (^GSPC)."""
+def job_briefing(session='open'):
+    """Cron briefing (ouverture / mi-séance / clôture)."""
     with app.app_context():
-        print(f"[{datetime.now()}] 📈 Mise à jour du benchmark (^GSPC)...")
+        print(f"[{datetime.now()}] 📨 Briefing '{session}'…")
+        try:
+            payload = build_briefing_payload(session)
+            email_svc = get_email_service()
+            if email_svc.is_configured():
+                res = email_svc.envoyer_briefing(payload)
+                print(f"{'✅' if res['success'] else '❌'} Briefing {session}: {res['message']}")
+            else:
+                print("⚠️ Service email non configuré")
+        except Exception as e:
+            print(f"❌ job_briefing: {e}")
+
+
+def job_refresh_prices():
+    """Cron nuit : rafraîchit le cache de prix (benchmark ^GSPC + panel)."""
+    with app.app_context():
+        print(f"[{datetime.now()}] 📈 Rafraîchissement du cache de prix…")
         try:
             if not ibkr_service.ensure_connected():
-                print("⚠️ Reconnexion IBKR impossible pour le benchmark")
+                print("⚠️ IBKR indisponible — cache non rafraîchi")
                 return
-            
             from models import MarketPriceBar
-            from datetime import date, timedelta
-            
-            # On récupère les 2 dernières années pour être sûr d'avoir l'historique nécessaire
+            from datetime import date
+
             bars = ibkr_service.get_daily_bars('^GSPC', duration='2 Y')
-            
             count = 0
             for b in bars:
                 bar_date = date.fromisoformat(b['date'])
-                existing = MarketPriceBar.query.filter_by(ticker='^GSPC', bar_date=bar_date).first()
-                if not existing:
-                    new_bar = MarketPriceBar(
-                        ticker='^GSPC',
-                        bar_date=bar_date,
-                        adj_close=b['adj_close'],
-                        close=b['close'],
-                        source='ibkr'
-                    )
-                    db.session.add(new_bar)
+                if not MarketPriceBar.query.filter_by(ticker='^GSPC', bar_date=bar_date).first():
+                    db.session.add(MarketPriceBar(
+                        ticker='^GSPC', bar_date=bar_date,
+                        adj_close=b['adj_close'], close=b['close'], source='ibkr'))
                     count += 1
-            
             db.session.commit()
-            print(f"✅ Benchmark ^GSPC mis à jour ({count} nouvelles barres)")
+            print(f"✅ Benchmark ^GSPC: {count} nouvelles barres")
+
+            # Réchauffe le cache de prix du panel (persiste les barres côté service)
+            service = get_momentum_service()
+            actions = PanelAction.query.filter_by(is_active=True).all()
+            panel = [a.ticker for a in actions]
+            if service and panel:
+                try:
+                    service.analyser_panel(panel, None)
+                    print(f"✅ Cache panel réchauffé ({len(panel)} tickers)")
+                except Exception as e:
+                    print(f"⚠️ Réchauffe panel: {e}")
         except Exception as e:
-            print(f"❌ job_update_benchmarks: {e}")
+            print(f"❌ job_refresh_prices: {e}")
 
 
-# Initialiser le scheduler
-scheduler = BackgroundScheduler()
+# Initialiser le scheduler (1 worker gunicorn + threads → pas de double-firing)
+scheduler = BackgroundScheduler(job_defaults={
+    'coalesce': True, 'max_instances': 1, 'misfire_grace_time': 60,
+})
+ET = 'America/New_York'
 
-# Planifier le job le 1er de chaque mois à 8h00 UTC
+# 1) Surveillance marché : chaque minute en séance (garde interne 9h30–16h00)
 scheduler.add_job(
-    job_mensuel,
-    CronTrigger(day=1, hour=8, minute=0),
-    id='monthly_momentum',
-    name='Calcul mensuel du momentum',
-    replace_existing=True
+    job_market_monitor,
+    CronTrigger(day_of_week='mon-fri', hour='9-16', minute='*', timezone=ET),
+    id='market_monitor', name='Surveillance marché (minute)', replace_existing=True,
 )
 
-# Positions IBKR : 9h30, 11h30, 13h30, 15h30 ET (Lun-Ven)
+# 2) Briefings : ouverture 9h35, mi-séance 12h30, clôture 16h05 ET
 scheduler.add_job(
-    job_positions_ibkr,
-    CronTrigger(hour='9,11,13,15', minute=30, day_of_week='mon-fri', timezone='America/New_York'),
-    id='ibkr_positions',
-    name='Positions IBKR toutes les 2h (heures marché US)',
-    replace_existing=True
+    functools.partial(job_briefing, 'open'),
+    CronTrigger(day_of_week='mon-fri', hour=9, minute=35, timezone=ET),
+    id='briefing_open', name="Briefing d'ouverture", replace_existing=True,
+)
+scheduler.add_job(
+    functools.partial(job_briefing, 'mid'),
+    CronTrigger(day_of_week='mon-fri', hour=12, minute=30, timezone=ET),
+    id='briefing_mid', name='Briefing mi-séance', replace_existing=True,
+)
+scheduler.add_job(
+    functools.partial(job_briefing, 'close'),
+    CronTrigger(day_of_week='mon-fri', hour=16, minute=5, timezone=ET),
+    id='briefing_close', name='Briefing de clôture', replace_existing=True,
 )
 
-# Mise à jour Benchmark : Tous les jours à 22h00 ET
+# 3) Rappel mensuel de rééquilibrage : 1er du mois à 8h00 ET
 scheduler.add_job(
-    job_update_benchmarks,
-    CronTrigger(hour=22, minute=0, timezone='America/New_York'),
-    id='update_benchmarks',
-    name='Mise à jour Benchmark ^GSPC',
-    replace_existing=True
+    job_rebalance_reminder,
+    CronTrigger(day=1, hour=8, minute=0, timezone=ET),
+    id='rebalance_reminder', name='Rappel mensuel de rééquilibrage', replace_existing=True,
 )
 
-# Démarrer le scheduler (fonctionne avec gunicorn en production)
+# 4) Rafraîchissement du cache de prix : chaque soir 22h00 ET (lun-ven)
+scheduler.add_job(
+    job_refresh_prices,
+    CronTrigger(day_of_week='mon-fri', hour=22, minute=0, timezone=ET),
+    id='refresh_prices', name='Rafraîchissement cache de prix', replace_existing=True,
+)
+
 scheduler.start()
-print("📅 Scheduler démarré - Mise à jour automatique le 1er de chaque mois à 8h00 UTC")
-print("📊 Scheduler IBKR - Positions envoyées à 9h30, 11h30, 13h30, 15h30 ET (Lun-Ven)")
+print("[scheduler] demarre - 4 crons actifs :")
+print("  - Surveillance marche : chaque minute (9h30-16h00 ET, lun-ven)")
+print("  - Briefings : 9h35 / 12h30 / 16h05 ET (lun-ven)")
+print("  - Rappel reequilibrage : 1er du mois 8h00 ET")
+print("  - Cache de prix : 22h00 ET (lun-ven)")
 
 
 # =============================================================================

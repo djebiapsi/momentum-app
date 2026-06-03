@@ -5,6 +5,7 @@ Service d'envoi d'emails
 Gère l'envoi des notifications par email via Resend.
 """
 
+import os
 import resend
 from datetime import datetime
 
@@ -355,6 +356,283 @@ Stratégie Momentum 12-1
             return {'success': True}
         except Exception as e:
             return {'success': False, 'message': str(e)}
+
+    # =====================================================================
+    # GABARIT COMMUN — identité visuelle cohérente & soignée
+    # =====================================================================
+    APP_BASE_URL = os.environ.get('APP_BASE_URL', '').rstrip('/')
+
+    def _send(self, subject, html, text=None):
+        """Envoi mutualisé via Resend avec gestion d'erreur uniforme."""
+        if not self.is_configured():
+            return {'success': False, 'message': 'Service email non configuré'}
+        try:
+            params = {
+                "from": self.from_email,
+                "to": [self.to_email],
+                "subject": subject,
+                "html": html,
+                "text": text or subject,
+            }
+            response = resend.Emails.send(params)
+            return {
+                'success': True,
+                'message': f'Email envoyé à {self.to_email}',
+                'email_id': response.get('id') if isinstance(response, dict) else str(response),
+            }
+        except Exception as e:
+            return {'success': False, 'message': f'Erreur: {str(e)}'}
+
+    def _html_shell(self, title, subtitle, body_html, accent='#1d4ed8,#7c3aed', emoji='📈'):
+        """
+        Enveloppe HTML commune (thème sombre, gradient, header + footer).
+        `accent` = 'couleur1,couleur2' pour le gradient du bandeau.
+        Styles inline uniquement → compatible Gmail / Apple Mail.
+        """
+        c1, c2 = accent.split(',')
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#09090b;">
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+              color:#fafafa;background:#09090b;max-width:600px;margin:0 auto;padding:24px;">
+    <div style="background:linear-gradient(135deg,{c1},{c2});color:#fff;padding:30px 24px;
+                border-radius:14px;text-align:center;margin-bottom:24px;
+                box-shadow:0 6px 20px rgba(0,0,0,0.35);">
+      <div style="font-size:30px;line-height:1;margin-bottom:8px;">{emoji}</div>
+      <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;">{title}</h1>
+      <p style="margin:10px 0 0;opacity:0.92;font-size:14px;">{subtitle}</p>
+    </div>
+    {body_html}
+    <div style="margin-top:28px;padding-top:18px;border-top:1px solid #27272a;
+                text-align:center;color:#71717a;font-size:12px;">
+      <p style="margin:0 0 4px;">Momentum Strategy App · Généré automatiquement</p>
+      <p style="margin:0;">⚠️ Ceci n'est pas un conseil financier</p>
+    </div>
+  </div>
+</body></html>"""
+
+    @staticmethod
+    def _kpi_card(label, value, color='#fafafa'):
+        """Carte KPI réutilisable (label + grande valeur)."""
+        return f"""<td style="padding:6px;" width="33%">
+          <div style="background:#18181b;border:1px solid #27272a;padding:16px;border-radius:10px;text-align:center;">
+            <div style="color:#a1a1aa;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">{label}</div>
+            <div style="font-size:20px;font-weight:700;color:{color};margin-top:4px;">{value}</div>
+          </div></td>"""
+
+    @staticmethod
+    def _badge(text, bg, fg):
+        return (f'<span style="background:{bg};color:{fg};padding:3px 12px;border-radius:9999px;'
+                f'font-size:12px;font-weight:600;">{text}</span>')
+
+    def _cta_button(self, label, path):
+        url = f"{self.APP_BASE_URL}{path}" if self.APP_BASE_URL else path
+        return f"""<div style="text-align:center;margin:24px 0;">
+          <a href="{url}" style="display:inline-block;background:linear-gradient(135deg,#1d4ed8,#7c3aed);
+             color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;
+             font-size:15px;box-shadow:0 4px 14px rgba(124,58,237,0.4);">{label}</a></div>"""
+
+    # =====================================================================
+    # ALERTES MARCHÉ
+    # =====================================================================
+    def envoyer_alerte_marche(self, event: dict) -> dict:
+        """Alerte à l'OUVERTURE d'un épisode (seuil franchi)."""
+        sev = event.get('severity', 'warning')
+        crit = sev == 'critical'
+        accent = '#dc2626,#7f1d1d' if crit else '#ea580c,#9a3412'
+        emoji = '🚨' if crit else '⚠️'
+        sev_label = 'CRITIQUE' if crit else 'Avertissement'
+        sev_bg, sev_fg = ('#7f1d1d', '#fecaca') if crit else ('#7c2d12', '#fed7aa')
+
+        val = event.get('trigger_value')
+        thr = event.get('threshold')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M ET')
+
+        body = f"""
+    <div style="margin-bottom:6px;">{self._badge(sev_label, sev_bg, sev_fg)}</div>
+    <div style="background:#18181b;border:1px solid #27272a;border-left:4px solid {'#dc2626' if crit else '#ea580c'};
+                padding:20px;border-radius:10px;margin:14px 0;">
+      <p style="margin:0 0 14px;font-size:16px;line-height:1.5;">{event.get('message','')}</p>
+      <table style="width:100%;border-collapse:collapse;"><tr>
+        {self._kpi_card('Valeur', f'{val:+.2f}' if isinstance(val,(int,float)) else '—',
+                        '#ef4444' if crit else '#f97316')}
+        {self._kpi_card('Seuil', f'{thr:.2f}' if isinstance(thr,(int,float)) else '—')}
+        {self._kpi_card('Détecté', now.split(' ')[1] + ' ET')}
+      </tr></table>
+    </div>
+    <p style="color:#a1a1aa;font-size:13px;">Tu recevras un email de clôture lorsque la métrique
+    repassera sous le seuil. Reste en gestion passive — pas d'action précipitée.</p>"""
+
+        html = self._html_shell('Alerte marché', now, body, accent=accent, emoji=emoji)
+        text = f"[{sev_label}] {event.get('message','')} — {now}"
+        return self._send(f"{emoji} Alerte marché — {event.get('event_type','')}", html, text)
+
+    def envoyer_alerte_resolue(self, event: dict) -> dict:
+        """Email court de CLÔTURE d'un épisode."""
+        dur = event.get('duration_min')
+        dur_str = f"{dur:.0f} min" if isinstance(dur, (int, float)) else '—'
+        peak = event.get('peak_value')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M ET')
+
+        body = f"""
+    <div style="background:#18181b;border:1px solid #27272a;border-left:4px solid #22c55e;
+                padding:20px;border-radius:10px;margin:14px 0;">
+      <p style="margin:0 0 14px;font-size:16px;">L'épisode est terminé : la métrique est repassée
+      sous son seuil.</p>
+      <p style="margin:0 0 14px;color:#a1a1aa;font-size:14px;">{event.get('message','')}</p>
+      <table style="width:100%;border-collapse:collapse;"><tr>
+        {self._kpi_card('Durée', dur_str)}
+        {self._kpi_card('Valeur pic', f'{peak:+.2f}' if isinstance(peak,(int,float)) else '—', '#f97316')}
+        {self._kpi_card('Clôturé', now.split(' ')[1] + ' ET', '#22c55e')}
+      </tr></table>
+    </div>"""
+
+        html = self._html_shell('Alerte résolue', now, body, accent='#16a34a,#065f46', emoji='✅')
+        text = f"[RÉSOLU] {event.get('message','')} — durée {dur_str}"
+        return self._send(f"✅ Alerte résolue — {event.get('event_type','')}", html, text)
+
+    # =====================================================================
+    # BRIEFING (ouverture / mi-séance / clôture)
+    # =====================================================================
+    def envoyer_briefing(self, payload: dict) -> dict:
+        """
+        Briefing de séance. payload attendu :
+        {
+            'session': 'open'|'mid'|'close',
+            'regime': {'regime','pct_vs_sma200',...} | None,
+            'vix': float|None, 'vix_pct': float|None,
+            'stats': {'total_value','total_pnl','return_pct','positions_count'} | None,
+            'positions': [{'ticker','market_value','return_pct','unrealized_pnl','allocation_pct'}],
+            'news_summary': str, 'news_items': [{'title','link','source','ticker'}],
+        }
+        """
+        session = payload.get('session', 'open')
+        titles = {'open': "Briefing d'ouverture", 'mid': 'Briefing mi-séance',
+                  'close': 'Briefing de clôture'}
+        emojis = {'open': '🔔', 'mid': '🕛', 'close': '🌙'}
+        now = datetime.now().strftime('%Y-%m-%d %H:%M ET')
+
+        # Cards régime / VIX / perf
+        regime = payload.get('regime') or {}
+        reg = regime.get('regime', 'UNKNOWN')
+        reg_color = {'BULL': '#22c55e', 'BEAR': '#ef4444'}.get(reg, '#a1a1aa')
+        reg_badge = self._badge(reg, '#052e16' if reg == 'BULL' else '#450a0a', reg_color)
+        vix = payload.get('vix')
+        vix_str = f"{vix:.1f}" if isinstance(vix, (int, float)) else '—'
+        vix_pct = payload.get('vix_pct')
+        vix_color = '#ef4444' if (isinstance(vix, (int, float)) and vix >= 25) else '#fafafa'
+        stats = payload.get('stats') or {}
+        pnl = stats.get('total_pnl')
+        pnl_color = '#22c55e' if (isinstance(pnl, (int, float)) and pnl >= 0) else '#ef4444'
+
+        cards = f"""<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><tr>
+        {self._kpi_card('Régime', reg_badge, reg_color)}
+        {self._kpi_card('VIX', (vix_str + (f' ({vix_pct:+.1f}%)' if isinstance(vix_pct,(int,float)) else '')), vix_color)}
+        {self._kpi_card('P&L total', f'{pnl:+,.0f}$' if isinstance(pnl,(int,float)) else '—', pnl_color)}
+      </tr></table>"""
+
+        # Table positions
+        positions = payload.get('positions') or []
+        rows = ''
+        for p in positions:
+            rp = p.get('return_pct')
+            rp_color = '#22c55e' if (isinstance(rp, (int, float)) and rp >= 0) else '#ef4444'
+            rp_str = f'<span style="color:{rp_color};font-weight:600;">{rp:+.1f}%</span>' if isinstance(rp, (int, float)) else '—'
+            mv = p.get('market_value') or 0
+            rows += f"""<tr>
+          <td style="padding:9px 12px;border-bottom:1px solid #27272a;font-family:monospace;font-weight:600;">{p.get('ticker','')}</td>
+          <td style="padding:9px 12px;border-bottom:1px solid #27272a;text-align:right;">${mv:,.0f}</td>
+          <td style="padding:9px 12px;border-bottom:1px solid #27272a;text-align:right;">{p.get('allocation_pct','—')}%</td>
+          <td style="padding:9px 12px;border-bottom:1px solid #27272a;text-align:right;">{rp_str}</td>
+        </tr>"""
+        positions_block = f"""
+    <h2 style="font-size:15px;color:#e4e4e7;margin:22px 0 10px;">📊 Tes positions</h2>
+    <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:10px;overflow:hidden;">
+      <thead><tr style="background:#27272a;">
+        <th style="padding:9px 12px;text-align:left;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Ticker</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Valeur</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Alloc.</th>
+        <th style="padding:9px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Perf.</th>
+      </tr></thead><tbody>{rows}</tbody>
+    </table>""" if positions else '<p style="color:#a1a1aa;">Aucune position ouverte.</p>'
+
+        # Section news
+        summary = (payload.get('news_summary') or '').strip()
+        summary_html = summary.replace('\n', '<br>') if summary else 'Aucune actualité notable.'
+        news_items = payload.get('news_items') or []
+        links = ''
+        for it in news_items[:8]:
+            tag = it.get('ticker') or 'MARCHÉ'
+            links += f"""<li style="margin-bottom:8px;">
+          <span style="font-size:11px;color:#a1a1aa;">[{tag}]</span>
+          <a href="{it.get('link','#')}" style="color:#93c5fd;text-decoration:none;">{it.get('title','')}</a>
+          <span style="font-size:11px;color:#52525b;"> · {it.get('source','')}</span></li>"""
+        news_block = f"""
+    <h2 style="font-size:15px;color:#e4e4e7;margin:22px 0 10px;">📰 News & marché</h2>
+    <div style="background:#18181b;border:1px solid #27272a;padding:16px;border-radius:10px;
+                font-size:14px;line-height:1.6;color:#d4d4d8;">{summary_html}</div>
+    {('<ul style="padding-left:18px;margin:14px 0 0;font-size:13px;">' + links + '</ul>') if links else ''}"""
+
+        body = cards + positions_block + news_block
+        html = self._html_shell(titles.get(session, 'Briefing'), now, body,
+                                accent='#1d4ed8,#7c3aed', emoji=emojis.get(session, '📈'))
+        text = f"{titles.get(session,'Briefing')} — {now}\nRégime: {reg} · VIX: {vix_str}\n\n{summary}"
+        return self._send(f"{emojis.get(session,'📈')} {titles.get(session,'Briefing')} — {now}", html, text)
+
+    # =====================================================================
+    # RAPPEL DE RÉÉQUILIBRAGE MENSUEL
+    # =====================================================================
+    def envoyer_rebalance_reminder(self, recommandations_data: dict, history_id=None) -> dict:
+        """« C'est le moment de rééquilibrer ! » + bouton de téléchargement du momentum."""
+        date_calcul = recommandations_data.get('date_calcul', datetime.now().strftime('%Y-%m-%d'))
+        recos = recommandations_data.get('recommandations', [])
+        investir = [r for r in recos if r.get('signal') == 'Investir']
+
+        def _card_cell(r):
+            mom = r.get('momentum', 0)
+            mom_color = '#22c55e' if mom >= 0 else '#ef4444'
+            return f"""<td style="padding:6px;" width="50%">
+            <div style="background:#18181b;border:1px solid #27272a;padding:14px 16px;border-radius:10px;">
+              <table style="width:100%;"><tr>
+                <td style="text-align:left;"><div style="font-family:monospace;font-weight:700;font-size:15px;">{r.get('ticker','')}</div>
+                   <div style="color:#a1a1aa;font-size:12px;">Alloc. {r.get('allocation','—')}%</div></td>
+                <td style="text-align:right;color:{mom_color};font-weight:700;font-size:15px;">{mom:+.1f}%</td>
+              </tr></table>
+            </div></td>"""
+
+        # Regrouper les cartes par lignes de 2
+        cards_rows = ''
+        top = investir[:10]
+        for i in range(0, len(top), 2):
+            pair = top[i:i + 2]
+            cells = ''.join(_card_cell(r) for r in pair)
+            if len(pair) == 1:
+                cells += '<td width="50%"></td>'
+            cards_rows += f'<tr>{cells}</tr>'
+        cards_block = (f'<table style="width:100%;border-collapse:collapse;margin-top:10px;">{cards_rows}</table>'
+                       if cards_rows else '<p style="color:#a1a1aa;">Aucune action à investir ce mois-ci.</p>')
+
+        dl_path = f"/api/history/{history_id}/download" if history_id else "/api/history/latest/download"
+        body = f"""
+    <div style="background:#18181b;border:1px solid #27272a;padding:20px;border-radius:10px;
+                text-align:center;margin-bottom:8px;">
+      <p style="margin:0;font-size:17px;font-weight:600;">📅 C'est le moment de rééquilibrer !</p>
+      <p style="margin:8px 0 0;color:#a1a1aa;font-size:14px;">
+        Nouveau calcul de momentum disponible ({date_calcul}). Voici le top à conserver/acheter.</p>
+    </div>
+    {cards_block}
+    {self._cta_button('⬇️ Télécharger le momentum (CSV)', dl_path)}
+    <p style="color:#a1a1aa;font-size:13px;text-align:center;">
+      Connecte-toi à l'app pour lancer le rééquilibrage IBKR en un clic.</p>"""
+
+        html = self._html_shell("C'est le moment de rééquilibrer !",
+                                f"Momentum du {date_calcul}", body,
+                                accent='#7c3aed,#1d4ed8', emoji='🔄')
+        text = (f"C'est le moment de rééquilibrer ! ({date_calcul})\n" +
+                "\n".join(f"{r.get('ticker'):8} {r.get('momentum',0):+.1f}%  alloc {r.get('allocation','—')}%"
+                          for r in investir[:10]) +
+                f"\n\nTéléchargement: {self.APP_BASE_URL}{dl_path}")
+        return self._send(f"🔄 C'est le moment de rééquilibrer ! — {date_calcul}", html, text)
 
     def envoyer_test(self):
         """
