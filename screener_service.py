@@ -181,15 +181,16 @@ class ScreenerService:
         
         all_tickers = list(iex_data.keys())
         report(30, 100, f"✅ {len(all_tickers)} tickers récupérés (1 appel API)")
-        
+
         # =================================================================
-        # ÉTAPE 2: Filtrage par ADV >= 5M$ (0 appel API)
+        # ÉTAPE 2: Filtrage par ADV >= 5M$ + symboles US valides (0 appel API)
         # =================================================================
         report(40, 100, "📈 Filtrage par ADV >= 5M$...")
-        
+
         tickers_above_adv = [
-            t for t in all_tickers 
+            t for t in all_tickers
             if iex_data[t]['adv'] >= self.min_adv
+            and self._is_valid_us_symbol(t)
         ]
         
         report(50, 100, f"✅ {len(tickers_above_adv)} tickers avec ADV >= 5M$")
@@ -255,6 +256,21 @@ class ScreenerService:
             'error': None
         }
     
+    @staticmethod
+    def _is_valid_us_symbol(ticker):
+        """
+        Vérifie qu'un symbole est une action/ETF US valide.
+        Exclut les codes numériques (actions chinoises Shanghai/Shenzhen comme
+        688981, 600519) que Tiingo inclut dans son univers IEX.
+
+        Règle : uniquement des lettres (point/tiret autorisés pour les classes
+        d'actions, ex: BRK.B, BRK-B), longueur 1-5.
+        """
+        if not ticker:
+            return False
+        core = ticker.replace('.', '').replace('-', '')
+        return core.isalpha() and 1 <= len(core) <= 5
+
     def _error_result(self, error_msg):
         """Retourne un résultat d'erreur formaté."""
         return {
