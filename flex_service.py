@@ -27,11 +27,14 @@ class FlexError(Exception):
 
 
 def _parse_flex_date(s):
-    """Parse une date Flex (formats 'YYYYMMDD' ou 'YYYY-MM-DD' ou avec heure)."""
+    """
+    Parse une date Flex. Gère les formats courants : yyyyMMdd (recommandé),
+    yyyy-MM-dd, MM/dd/yyyy, dd/MM/yyyy. Sépare aussi l'heure (séparée par ';' ou espace).
+    """
     if not s:
         return None
     s = s.split(';')[0].split(' ')[0].strip()  # enlever l'heure éventuelle
-    for fmt in ('%Y%m%d', '%Y-%m-%d'):
+    for fmt in ('%Y%m%d', '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y'):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
