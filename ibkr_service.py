@@ -78,11 +78,22 @@ class IBKRService:
                 # IB() créé DANS le loop permanent → apiStart lié au bon loop
                 ib = IB()
                 cid = self._next_cid()
-                await ib.connectAsync(
-                    self.host, self.port,
-                    clientId=cid, readonly=True, timeout=20,
-                )
+                try:
+                    await ib.connectAsync(
+                        self.host, self.port,
+                        clientId=cid, readonly=True, timeout=15,
+                    )
+                except Exception as e:
+                    # connectAsync lance reqPositions/reqExecutions/reqAccountUpdates
+                    # qui peuvent timeout sur ce gateway SANS empêcher la connexion
+                    # socket. Si la socket est connectée, on garde — portfolio()
+                    # fonctionne malgré ces warnings.
+                    if not ib.isConnected():
+                        raise
+                    logger.info('connectAsync : warnings de sync ignorés (%s)', e)
                 await asyncio.sleep(1.5)  # laisser arriver les données initiales
+                if not ib.isConnected():
+                    raise RuntimeError('Connexion non établie')
                 self._ib = ib
                 return cid
 
