@@ -453,11 +453,11 @@ def _migrate_add_columns(app, table_name, columns: dict):
                 db.session.execute(text(
                     f'ALTER TABLE {table_name} ADD COLUMN {name} {sql_type}'
                 ))
-                print(f"🔄 Migration: {table_name}.{name} ajoutée")
+                print(f"[migration] {table_name}.{name} ajoutee")
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        print(f"⚠️ Migration {table_name} échouée: {e}")
+        print(f"[migration] {table_name} echouee: {e}")
 
 
 def _migrate_add_strategy_type(app):
