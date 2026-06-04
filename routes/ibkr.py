@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Routes IBKR, Flex et tableau de bord Performance."""
+import asyncio
 import json
 from datetime import datetime
 from flask import Blueprint, jsonify, request, make_response, current_app
@@ -592,9 +593,10 @@ def flex_sync():
 @require_admin
 def ibkr_rebalance():
     """
-    Passe des ordres de rééquilibrage via IB Gateway.
+    Rééquilibrage via IB Gateway.
     Body JSON: { targets: [{ticker, target_pct, currency?}], dry_run: bool }
     dry_run=true (défaut) → aperçu sans exécution.
+    Utilise totalQuantity (actions calculées) — plus fiable que cashQty.
     """
     data = request.get_json() or {}
     targets = data.get('targets', [])
@@ -610,16 +612,113 @@ def ibkr_rebalance():
         placed = [o for o in orders if o.get('status') == 'placed']
         failed = [o for o in orders if o.get('status') == 'failed']
         return jsonify({
-            'success': True,
-            'dry_run': dry_run,
-            'orders': orders,
-            'count': len(orders),
-            'placed_count': len(placed),
-            'failed_count': len(failed),
+            'success': True, 'dry_run': dry_run, 'orders': orders,
+            'count': len(orders), 'placed_count': len(placed), 'failed_count': len(failed),
             'total_target_pct': result.get('total_target_pct'),
         })
     except ConnectionError as e:
         return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        current_app.logger.exception('Erreur rebalance')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/ibkr/order/single', methods=['POST'])
+@require_admin
+def ibkr_single_order():
+    """
+    Passe un ordre unique (test ou ordre manuel).
+    Body JSON: { ticker, action, qty, order_type?, limit_price?, currency?, tif? }
+    """
+    data = request.get_json() or {}
+    ticker     = (data.get('ticker') or '').strip().upper()
+    action     = (data.get('action') or 'BUY').upper()
+    order_type = (data.get('order_type') or 'MKT').upper()
+    currency   = (data.get('currency') or 'USD').upper()
+    tif        = (data.get('tif') or 'DAY').upper()
+
+    try:
+        qty         = float(data['qty'])
+        limit_price = float(data['limit_price']) if data.get('limit_price') else None
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'qty requis (nombre > 0)'}), 400
+
+    if not ticker:
+        return jsonify({'success': False, 'error': 'ticker requis'}), 400
+    if action not in ('BUY', 'SELL'):
+        return jsonify({'success': False, 'error': "action doit être BUY ou SELL"}), 400
+    if order_type not in ('MKT', 'LMT'):
+        return jsonify({'success': False, 'error': "order_type : MKT ou LMT"}), 400
+    if order_type == 'LMT' and not limit_price:
+        return jsonify({'success': False, 'error': "limit_price requis pour un ordre LMT"}), 400
+    if qty <= 0 or qty > 100_000:
+        return jsonify({'success': False, 'error': 'qty hors bornes (0–100 000)'}), 400
+
+    try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
+        result = ibkr_service.place_single_order(
+            ticker=ticker, action=action, qty=qty,
+            order_type=order_type, limit_price=limit_price,
+            currency=currency, tif=tif,
+        )
+        return jsonify(result)
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        current_app.logger.exception('Erreur ordre unique %s', ticker)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/ibkr/orders/open', methods=['GET'])
+@require_admin
+def ibkr_open_orders():
+    """Liste les ordres ouverts (en attente d'exécution) sur le compte."""
+    try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
+
+        async def fn():
+            await ibkr_service._ib.reqOpenOrdersAsync()
+            await asyncio.sleep(0.5)
+            return ibkr_service._ib.openOrders()
+
+        orders = ibkr_service._submit(fn(), timeout=15)
+        result = []
+        for o in (orders or []):
+            result.append({
+                'order_id':   o.orderId,
+                'ticker':     getattr(o, 'symbol', '') or '',
+                'action':     o.action,
+                'order_type': o.orderType,
+                'qty':        o.totalQuantity,
+                'lmt_price':  getattr(o, 'lmtPrice', None),
+                'status':     'open',
+            })
+        return jsonify({'success': True, 'orders': result, 'count': len(result)})
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/ibkr/orders/cancel/<int:order_id>', methods=['POST'])
+@require_admin
+def ibkr_cancel_order(order_id):
+    """Annule un ordre ouvert par son orderId."""
+    try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
+
+        async def fn():
+            order = ibkr_service._ib.Order()
+            order.orderId = order_id
+            ibkr_service._ib.cancelOrder(order)
+            await asyncio.sleep(0.5)
+            return True
+
+        ibkr_service._submit(fn(), timeout=10)
+        return jsonify({'success': True, 'cancelled': order_id})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

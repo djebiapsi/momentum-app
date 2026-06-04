@@ -351,107 +351,199 @@ class IBKRService:
             result[sym] = {'last': last, 'prev_close': prev_close, 'pct': pct}
         return result
 
-    def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> list:
+    def _ensure_trading(self) -> None:
+        """Bascule en mode trading (readonly=False) si nécessaire. Lève ConnectionError si impossible."""
         if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
-
-        # Exécution réelle : la connexion readonly rejette les ordres (le gateway
-        # renvoie une erreur). On bascule en mode trading (readonly=False) le temps
-        # de passer les ordres, puis on repassera en lecture seule.
-        if not dry_run and self._readonly:
+        if self._readonly:
             res = self.connect(force=True, readonly=False)
             if not res.get('success'):
                 raise ConnectionError(f"Passage en mode trading impossible : {res.get('error')}")
 
-        stats       = self.get_portfolio_stats()
-        total_value = stats['total_value']
-        current     = {p['ticker']: p for p in stats['positions']}
+    async def _qualify_and_place(self, contract, order, dry_run: bool) -> dict:
+        """Qualifie le contrat et place l'ordre. Retourne {'status', 'order_id'?, 'error'?}."""
+        if dry_run:
+            return {'status': 'preview'}
+        try:
+            qualified = await self._ib.qualifyContractsAsync(contract)
+            if not qualified:
+                return {'status': 'failed', 'error': 'Contrat non qualifiable'}
+            trade = self._ib.placeOrder(contract, order)
+            await asyncio.sleep(1.0)   # laisser le gateway accuser réception
+            order_id = getattr(trade.order, 'orderId', None)
+            order_status = getattr(trade.orderStatus, 'status', 'Submitted')
+            return {'status': 'placed', 'order_id': order_id, 'order_status': order_status}
+        except Exception as e:
+            return {'status': 'failed', 'error': str(e)[:200]}
+
+    async def _get_market_price(self, ticker: str, currency: str = 'USD') -> float | None:
+        """Prix marché en temps réel (ou différé) pour calculer la quantité en actions."""
+        try:
+            contract = Stock(ticker, 'SMART', currency)
+            await self._ib.qualifyContractsAsync(contract)
+            self._ib.reqMarketDataType(3)   # données différées si pas d'abonnement
+            tickers = await self._ib.reqTickersAsync(contract)
+            if not tickers:
+                return None
+            t = tickers[0]
+            for attr in ('last', 'close', 'bid', 'ask'):
+                v = getattr(t, attr, None)
+                try:
+                    f = float(v) if v is not None else None
+                    if f and f == f and f > 0:
+                        return f
+                except (TypeError, ValueError):
+                    pass
+            return None
+        except Exception as e:
+            logger.warning('_get_market_price %s : %s', ticker, e)
+            return None
+
+    def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> dict:
+        """
+        Rééquilibrage vers les cibles (ticker + target_pct du portefeuille).
+        Utilise totalQuantity (actions calculées depuis le prix live) — plus fiable
+        que cashQty qui n'est pas supporté sur tous les comptes/instruments IBKR.
+        """
+        if not dry_run:
+            self._ensure_trading()
+        elif not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        stats          = self.get_portfolio_stats()
+        total_value    = stats['total_value']
+        current        = {p['ticker']: p for p in stats['positions']}
         target_tickers = {t['ticker'].upper() for t in targets}
-        # Exposition cible totale (peut dépasser 100% → levier intentionnel, conservé)
         total_target_pct = sum(float(t.get('target_pct', 0)) for t in targets)
 
         async def fn():
             orders = []
-            # Contrats réels des positions actuelles (clé = ticker) — indispensable
-            # pour liquider correctement les warrants/instruments non-Stock standard.
+            # Contrats réels du portfolio (pour ventes exactes)
             real_contracts = {}
             for item in self._ib.portfolio():
                 c = item.contract
                 real_contracts[c.localSymbol or c.symbol] = c
 
-            async def _place(contract, order, entry):
-                """Place un ordre en isolant les erreurs (ne bloque pas les autres)."""
-                if dry_run:
-                    entry['status'] = 'preview'
-                    return
-                try:
-                    qualified = await self._ib.qualifyContractsAsync(contract)
-                    if not qualified:
-                        entry['status'] = 'failed'
-                        entry['error'] = 'Contrat non qualifiable (ticker spécial ?)'
-                        return
-                    self._ib.placeOrder(contract, order)
-                    await asyncio.sleep(0.5)
-                    entry['status'] = 'placed'
-                except Exception as e:
-                    entry['status'] = 'failed'
-                    entry['error'] = str(e)[:160]
-
-            # 1) Acheter / ajuster les positions cibles (cashQty = montant USD)
+            # 1) Positions cibles — calcul en nb d'actions depuis le prix live
             for t in targets:
                 ticker       = t['ticker'].upper()
                 target_pct   = float(t.get('target_pct', 0))
                 currency     = t.get('currency', 'USD')
                 target_value = total_value * target_pct / 100
                 cur_value    = current.get(ticker, {}).get('market_value', 0) or 0
-                diff         = target_value - cur_value
-                if abs(diff) < 10:
+                cur_qty      = current.get(ticker, {}).get('qty', 0) or 0
+                diff_usd     = target_value - cur_value
+
+                if abs(diff_usd) < 10:   # mouvement < $10 → on ignore
                     continue
 
-                action   = 'BUY' if diff > 0 else 'SELL'
-                cash_qty = abs(round(diff, 2))
+                action = 'BUY' if diff_usd > 0 else 'SELL'
+                contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', currency)
+
+                # Récupérer le prix pour calculer la quantité en actions
+                price = await self._get_market_price(ticker, currency) if not dry_run else None
+                if price is None:
+                    # En dry_run ou si prix indisponible : estimer depuis market_value/qty
+                    cur_price = current.get(ticker, {}).get('market_price')
+                    price = cur_price if cur_price else (abs(cur_value / cur_qty) if cur_qty else 100)
+
+                qty = max(1, int(abs(diff_usd) / price))
+                if action == 'SELL':
+                    qty = min(qty, int(abs(cur_qty)))   # ne pas vendre plus qu'on a
+
+                if qty < 1:
+                    continue
+
                 entry = {
-                    'ticker': ticker, 'action': action, 'cash_qty_usd': cash_qty,
+                    'ticker': ticker, 'action': action, 'qty': qty,
+                    'est_price': round(price, 2), 'est_value': round(qty * price, 2),
                     'current_value': round(cur_value, 2), 'target_value': round(target_value, 2),
                     'liquidation': False, 'status': 'preview',
                 }
                 orders.append(entry)
-                # Contrat : réutiliser le contrat réel si on détient déjà, sinon Stock SMART
-                contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', currency)
-                order = Order(action=action, orderType='MKT', totalQuantity=0,
-                              cashQty=cash_qty, tif='DAY')
-                await _place(contract, order, entry)
+                order = Order(action=action, orderType='MKT', totalQuantity=qty, tif='DAY')
+                result = await self._qualify_and_place(contract, order, dry_run)
+                entry.update(result)
 
-            # 2) Liquider entièrement les positions HORS cibles (vente quantité totale)
+            # 2) Liquidations — positions hors cibles, vente totalité
             for ticker, p in current.items():
                 if ticker in target_tickers:
                     continue
                 qty = p.get('qty') or 0
                 if abs(qty) < 1e-6:
                     continue
-                mv = p.get('market_value') or 0
+                mv       = p.get('market_value') or 0
+                action   = 'SELL' if qty > 0 else 'BUY'
                 entry = {
-                    'ticker': ticker, 'action': 'SELL' if qty > 0 else 'BUY',
-                    'cash_qty_usd': round(abs(mv), 2), 'current_value': round(mv, 2),
-                    'target_value': 0.0, 'liquidation': True, 'status': 'preview',
+                    'ticker': ticker, 'action': action, 'qty': abs(qty),
+                    'est_price': round(abs(mv / qty), 2) if qty else 0,
+                    'est_value': round(abs(mv), 2),
+                    'current_value': round(mv, 2), 'target_value': 0.0,
+                    'liquidation': True, 'status': 'preview',
                 }
                 orders.append(entry)
                 contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', p.get('currency', 'USD'))
-                order = Order(action='SELL' if qty > 0 else 'BUY', orderType='MKT',
-                              totalQuantity=abs(qty), tif='DAY')
-                await _place(contract, order, entry)
+                order = Order(action=action, orderType='MKT', totalQuantity=abs(qty), tif='DAY')
+                result = await self._qualify_and_place(contract, order, dry_run)
+                entry.update(result)
 
             return {'orders': orders, 'total_target_pct': round(total_target_pct, 1)}
 
         try:
             return self._submit(fn(), timeout=120)
         finally:
-            # Repasser en lecture seule après une exécution réelle (sécurité)
-            if not dry_run:
+            if not dry_run and not self._readonly:
                 try:
                     self.connect(force=True, readonly=True)
                 except Exception:
                     pass
+
+    def place_single_order(self, ticker: str, action: str, qty: float,
+                           order_type: str = 'MKT', limit_price: float = None,
+                           currency: str = 'USD', tif: str = 'DAY') -> dict:
+        """
+        Passe un ordre unique sur un ticker (utile pour tester la connectivité).
+        action: 'BUY' | 'SELL'
+        order_type: 'MKT' | 'LMT'
+        Retourne {'success', 'order_id'?, 'order_status'?, 'error'?}.
+        """
+        self._ensure_trading()
+
+        async def fn():
+            contract = Stock(ticker.upper(), 'SMART', currency)
+            qualified = await self._ib.qualifyContractsAsync(contract)
+            if not qualified:
+                return {'success': False, 'error': f'Contrat {ticker} non qualifiable'}
+
+            order = Order(
+                action=action.upper(),
+                orderType=order_type.upper(),
+                totalQuantity=float(qty),
+                tif=tif,
+            )
+            if order_type.upper() == 'LMT' and limit_price:
+                order.lmtPrice = round(float(limit_price), 2)
+
+            trade = self._ib.placeOrder(contract, order)
+            await asyncio.sleep(1.5)
+            order_id = getattr(trade.order, 'orderId', None)
+            status   = getattr(trade.orderStatus, 'status', 'Submitted')
+            logger.info('Ordre unique : %s %s %s qty=%s → orderId=%s status=%s',
+                        action, ticker, order_type, qty, order_id, status)
+            return {'success': True, 'order_id': order_id, 'order_status': status,
+                    'ticker': ticker, 'action': action, 'qty': qty,
+                    'order_type': order_type, 'limit_price': limit_price}
+
+        try:
+            result = self._submit(fn(), timeout=30)
+            return result
+        except Exception as e:
+            return {'success': False, 'error': str(e)[:300]}
+        finally:
+            try:
+                self.connect(force=True, readonly=True)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Internal helpers

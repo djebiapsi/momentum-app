@@ -278,28 +278,23 @@
 
             if (!preview.orders.length) { showToast('Aucun ordre nécessaire (portefeuille déjà équilibré)', 'success'); return; }
 
-            // Séparer rééquilibrages et liquidations (positions hors cibles → vendues)
             const ajustements = preview.orders.filter(o => !o.liquidation);
             const liquidations = preview.orders.filter(o => o.liquidation);
 
-            let summary = '';
-            if (ajustements.length) {
-                summary += '— Ajustements —\n' + ajustements.map(o =>
-                    `${o.action} ${o.ticker}: $${o.cash_qty_usd} (actuel $${o.current_value} → cible $${o.target_value})`
-                ).join('\n') + '\n';
-            }
-            if (liquidations.length) {
-                summary += '\n— Liquidations (hors stratégie) —\n' + liquidations.map(o =>
-                    `VENDRE TOUT ${o.ticker}: $${o.current_value}`
-                ).join('\n') + '\n';
-            }
+            const fmtOrder = o =>
+                `${o.action} ${o.qty} action(s) ${o.ticker} @ ~$${o.est_price} ≈ $${o.est_value}` +
+                `\n  (actuel $${o.current_value} → cible $${o.target_value})`;
 
-            // Exposition totale (peut dépasser 100% = levier intentionnel)
+            let summary = '';
+            if (ajustements.length)
+                summary += '— Ajustements —\n' + ajustements.map(fmtOrder).join('\n') + '\n';
+            if (liquidations.length)
+                summary += '\n— Liquidations (hors stratégie) —\n' +
+                    liquidations.map(o => `VENDRE TOUT ${o.qty} × ${o.ticker} ≈ $${o.est_value}`).join('\n') + '\n';
+
             const expo = preview.total_target_pct;
-            let warn = '';
-            if (expo != null && expo > 100) {
-                warn = `\n⚠️ EXPOSITION CIBLE : ${expo}% (levier ${(expo/100).toFixed(2)}×)\nNécessite de la marge sur le compte.\n`;
-            }
+            let warn = expo != null && expo > 100
+                ? `\n⚠️ EXPOSITION CIBLE : ${expo}% (levier ${(expo/100).toFixed(2)}×)\nNécessite de la marge.\n` : '';
 
             if (!confirm(`${preview.count} ordre(s) à passer :\n${warn}\n${summary}\nConfirmer l'exécution ?`)) return;
 
@@ -319,6 +314,103 @@
                 loadPerfData();  // rafraîchir les positions
             } else {
                 showToast(result?.error || 'Erreur lors du passage des ordres', 'error');
+            }
+        }
+
+        // =================================================================
+        // ORDRES DE TEST + ORDRE MANUEL
+        // =================================================================
+
+        function toggleLimitPrice() {
+            const type = document.getElementById('test-order-type').value;
+            document.getElementById('test-order-limit-wrap').style.display =
+                type === 'LMT' ? '' : 'none';
+        }
+
+        async function placeTestOrder() {
+            const ticker = (document.getElementById('test-order-ticker').value || '').trim().toUpperCase();
+            const action = document.getElementById('test-order-action').value;
+            const qty    = parseFloat(document.getElementById('test-order-qty').value) || 1;
+            const type   = document.getElementById('test-order-type').value;
+            const limit  = type === 'LMT' ? parseFloat(document.getElementById('test-order-limit').value) : null;
+
+            if (!ticker) { showToast('Ticker requis', 'error'); return; }
+            if (type === 'LMT' && !limit) { showToast('Prix limite requis pour LMT', 'error'); return; }
+
+            const resultDiv = document.getElementById('test-order-result');
+            resultDiv.style.display = 'block';
+            resultDiv.style.background = 'rgba(255,255,255,.04)';
+            resultDiv.textContent = '⏳ Passage de l\'ordre…';
+
+            const body = JSON.stringify({ ticker, action, qty, order_type: type,
+                                          limit_price: limit, currency: 'USD' });
+            const res = await api('/ibkr/order/single', { method: 'POST', body });
+
+            if (!res) { resultDiv.textContent = '⚠️ Pas de réponse'; return; }
+
+            if (res.success) {
+                resultDiv.style.background = 'rgba(29,158,117,.12)';
+                resultDiv.innerHTML =
+                    `✅ <b>Ordre passé</b> — orderId: <b>${res.order_id ?? '?'}</b> · status: <b>${res.order_status ?? '?'}</b><br>` +
+                    `${res.action} ${res.qty} × ${res.ticker} @ ${res.order_type}` +
+                    (res.limit_price ? ` $${res.limit_price}` : '');
+                showToast(`Ordre ${res.action} ${res.qty}×${res.ticker} passé`, 'success');
+                setTimeout(loadOpenOrders, 1500);
+            } else {
+                resultDiv.style.background = 'rgba(216,90,48,.12)';
+                resultDiv.innerHTML = `⚠️ <b>Échec</b> : ${res.error || 'erreur inconnue'}`;
+                showToast(res.error || 'Échec de l\'ordre', 'error');
+            }
+        }
+
+        async function loadOpenOrders() {
+            const cont = document.getElementById('open-orders-list');
+            cont.innerHTML = '<div class="empty-state" style="font-size:12px;">Chargement…</div>';
+            const res = await api('/ibkr/orders/open');
+            if (!res || !res.success) {
+                cont.innerHTML = `<div class="empty-state" style="font-size:12px;color:var(--accent-short);">${res?.error || 'Erreur IBKR'}</div>`;
+                return;
+            }
+            if (!res.orders.length) {
+                cont.innerHTML = '<div class="empty-state" style="font-size:12px;">Aucun ordre ouvert</div>';
+                return;
+            }
+            cont.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px;font-family:'IBM Plex Mono';">
+                <thead><tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border);">
+                    <th style="padding:5px 8px;">ID</th>
+                    <th style="padding:5px 8px;">Ticker</th>
+                    <th style="padding:5px 8px;">Sens</th>
+                    <th style="padding:5px 8px;">Qté</th>
+                    <th style="padding:5px 8px;">Type</th>
+                    <th style="padding:5px 8px;">Prix lim.</th>
+                    <th style="padding:5px 8px;"></th>
+                </tr></thead>
+                <tbody>${res.orders.map(o => `
+                <tr style="border-top:1px solid var(--border);">
+                    <td style="padding:5px 8px;color:var(--text-muted);">#${o.order_id}</td>
+                    <td style="padding:5px 8px;font-weight:600;color:var(--text-primary);">${o.ticker || '—'}</td>
+                    <td style="padding:5px 8px;color:${o.action==='BUY'?'var(--accent-long)':'var(--accent-short)'};">${o.action}</td>
+                    <td style="padding:5px 8px;">${o.qty}</td>
+                    <td style="padding:5px 8px;">${o.order_type}</td>
+                    <td style="padding:5px 8px;">${o.lmt_price ? '$'+o.lmt_price : '—'}</td>
+                    <td style="padding:5px 8px;">
+                        <button onclick="cancelOrder(${o.order_id})" style="font-size:10px;padding:2px 8px;border-radius:6px;
+                            background:rgba(216,90,48,.15);color:var(--accent-short);border:1px solid rgba(216,90,48,.3);cursor:pointer;">
+                            Annuler
+                        </button>
+                    </td>
+                </tr>`).join('')}</tbody>
+            </table>`;
+        }
+
+        async function cancelOrder(orderId) {
+            if (!confirm(`Annuler l'ordre #${orderId} ?`)) return;
+            const res = await api(`/ibkr/orders/cancel/${orderId}`, { method: 'POST' });
+            if (res?.success) {
+                showToast(`Ordre #${orderId} annulé`, 'success');
+                setTimeout(loadOpenOrders, 1000);
+            } else {
+                showToast(res?.error || 'Échec annulation', 'error');
             }
         }
 
