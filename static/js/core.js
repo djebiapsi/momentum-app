@@ -628,6 +628,20 @@
             if (pageName === 'market') loadMarketPage();
         }
         
+        // Bascule de thème clair / sombre (mémorisée)
+        function toggleTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const next = isDark ? 'light' : 'dark';
+            applyTheme(next);
+            try { localStorage.setItem('theme', next); } catch (e) {}
+        }
+        function applyTheme(theme) {
+            if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+            else document.documentElement.removeAttribute('data-theme');
+            const meta = document.getElementById('meta-theme-color');
+            if (meta) meta.setAttribute('content', theme === 'dark' ? '#09090b' : '#f5f7fa');
+        }
+
         // Feuille "Plus" (navigation mobile)
         function toggleNavMore() {
             const nav = document.getElementById('mainNav');

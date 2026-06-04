@@ -12,19 +12,27 @@
                 <div class="stats-grid o-1">
                     <div class="stat-card">
                         <div class="stat-value" id="stat-top">—</div>
-                        <div class="stat-label">Positions</div>
+                        <div class="stat-label">Positions
+                            <i class="tip" tabindex="0" data-tip="Nombre d'actions à détenir ce mois-ci selon la stratégie.">i</i>
+                        </div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-allocation">—</div>
-                        <div class="stat-label">Alloc. moy.</div>
+                        <div class="stat-label">Allocation max
+                            <i class="tip" tabindex="0" data-tip="Part du portefeuille investie sur la plus grosse position (en %).">i</i>
+                        </div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-momentum-avg">—</div>
-                        <div class="stat-label">Momentum moy.</div>
+                        <div class="stat-label">Tendance moy.
+                            <i class="tip" tabindex="0" data-tip="Momentum 12-1 : performance des positions sur ~11 mois (on saute le dernier mois). Plus c'est élevé, plus la tendance est forte.">i</i>
+                        </div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="stat-vol-avg">—</div>
-                        <div class="stat-label">Vol. moy.</div>
+                        <div class="stat-label">Volatilité moy.
+                            <i class="tip" tabindex="0" data-tip="Ampleur moyenne des variations de prix (sur un an). Plus c'est élevé, plus le portefeuille bouge fort.">i</i>
+                        </div>
                     </div>
                 </div>
 
@@ -72,21 +80,29 @@
                 <!-- Carte état du marché (masquée jusqu'au premier calcul) -->
                 <div id="market-card" class="market-card o-2" style="display:none;">
                     <div class="market-header">
-                        <span class="market-title">État du marché</span>
+                        <span class="market-title">État du marché
+                            <i class="tip" tabindex="0" data-tip="Indique si le marché US est globalement haussier (BULL) ou baissier (BEAR). La stratégie momentum marche mieux en marché haussier.">i</i>
+                        </span>
                         <span id="market-regime-badge" class="market-badge">—</span>
                     </div>
                     <div class="market-row">
                         <div class="market-metric">
                             <div class="market-metric-value" id="market-spy-price">—</div>
-                            <div class="market-metric-label">SPY</div>
+                            <div class="market-metric-label">S&amp;P 500
+                                <i class="tip" tabindex="0" data-tip="Prix de l'indice S&P 500 (via l'ETF SPY), baromètre du marché américain.">i</i>
+                            </div>
                         </div>
                         <div class="market-metric">
                             <div class="market-metric-value" id="market-sma200">—</div>
-                            <div class="market-metric-label">SMA 200</div>
+                            <div class="market-metric-label">Moy. 200 j
+                                <i class="tip" tabindex="0" data-tip="Moyenne du prix sur les 200 derniers jours. Au-dessus = tendance haussière, en-dessous = baissière.">i</i>
+                            </div>
                         </div>
                         <div class="market-metric">
                             <div class="market-metric-value" id="market-gap">—</div>
-                            <div class="market-metric-label">Écart</div>
+                            <div class="market-metric-label">Écart
+                                <i class="tip" tabindex="0" data-tip="Distance entre le prix actuel et la moyenne 200 jours, en %.">i</i>
+                            </div>
                         </div>
                     </div>
                     <div class="market-gauge">

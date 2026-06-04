@@ -180,9 +180,12 @@
 
             // --- Render invest list ---
             const investAndCash = [...invest, ...cash];
+            // Allocation max (pour dimensionner les barres relatives)
+            const maxAlloc = Math.max(1, ...invest.map(r => r.allocation || 0));
             if (investAndCash.length > 0) {
                 investList.innerHTML = investAndCash.map((r, i) => {
                     const isCash = r.signal === 'Cash';
+                    const barPct = isCash ? 0 : Math.round(((r.allocation || 0) / maxAlloc) * 100);
                     return `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
                         <div class="stock-rank ${isCash ? '' : 'top'}">${i + 1}</div>
@@ -191,6 +194,7 @@
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
                             </div>
                             <div class="stock-signal ${isCash ? 'cash' : 'buy'}">${isCash ? 'Cash (momentum <0)' : 'Acheter'}</div>
+                            ${!isCash ? `<div class="alloc-bar" title="Part du portefeuille : ${r.allocation}%"><span style="width:${barPct}%"></span></div>` : ''}
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">

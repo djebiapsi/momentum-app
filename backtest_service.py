@@ -62,6 +62,13 @@ class BacktestService:
     VOL_DEFAULT = 0.20         # vol par défaut si données insuffisantes (= live)
     MAX_ONDEMAND_FETCH = 40    # tickers récupérés au réseau par exécution (borne le temps)
 
+    # --- Hypothèses de réalisme (défauts ; surchargés par l'UI) -------------
+    DEFAULT_TX_COST_BPS = 5.0          # coût aller (commission+spread) sur |Δnotionnel|, en points de base
+    DEFAULT_MARGIN_RATE_PCT = 6.5      # taux d'emprunt annuel sur la partie financée (cash < 0)
+    DEFAULT_CASH_YIELD_PCT = 0.0       # rémunération annuelle du cash oisif (conservateur)
+    DEFAULT_MAINT_MARGIN_PCT = 25.0    # marge de maintenance Reg T (appel de marge sous ce seuil)
+    DEFAULT_POST_CALL_LEVERAGE = 1.0   # levier cible après liquidation forcée (1.0 = désendettement total)
+
     def __init__(self, momentum_service, screener_service):
         self.ms = momentum_service
         self.ss = screener_service
