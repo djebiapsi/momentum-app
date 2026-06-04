@@ -126,13 +126,12 @@ def get_email_service():
 
 
 def get_news_service():
-    """Récupère ou crée le service news (RSS + résumé Ollama)."""
+    """Récupère ou crée le service news (RSS + résumé via API LLM compatible OpenAI)."""
     global news_service
     if news_service is None:
-        news_service = NewsService(
-            ollama_host=app.config.get('OLLAMA_HOST') or os.environ.get('OLLAMA_HOST'),
-            model=app.config.get('OLLAMA_MODEL') or os.environ.get('OLLAMA_MODEL'),
-        )
+        # Les identifiants LLM (LLM_API_KEY / LLM_BASE_URL / LLM_MODEL) sont lus
+        # depuis l'environnement par NewsService.
+        news_service = NewsService()
     return news_service
 
 

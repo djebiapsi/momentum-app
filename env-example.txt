@@ -25,3 +25,11 @@ ADMIN_PASSWORD=123456
 # Environnement (development ou production)
 FLASK_ENV=development
 
+# Résumé des news (briefings) via API LLM compatible OpenAI
+# Sans LLM_API_KEY : repli automatique sur un résumé heuristique (titres groupés).
+# Exemples : OpenAI (défaut) | DeepSeek (base_url https://api.deepseek.com, model deepseek-chat)
+#            Gemini (base_url https://generativelanguage.googleapis.com/v1beta/openai, model gemini-2.0-flash)
+LLM_API_KEY=sk-xxxxxxxxxxxx
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+

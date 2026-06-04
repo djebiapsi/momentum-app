@@ -5,9 +5,10 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Résumé des news via Ollama (auto-hébergé). Fallback heuristique si indispo.
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:0.5b}
+      # Résumé des news via API LLM compatible OpenAI (GPT-4o-mini par défaut).
+      # LLM_API_KEY doit être défini dans le .env. Fallback heuristique si absent.
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
     ports:
       - "80:8000"
     volumes:
@@ -71,18 +72,6 @@ services:
       retries: 3
       start_period: 180s
 
-  # Ollama — petit LLM open-source auto-hébergé pour résumer/trier les news.
-  # Le modèle (OLLAMA_MODEL, défaut qwen2.5:0.5b ≈ 400 Mo) est pull au 1er usage
-  # par l'app. Si ce service est indisponible, le briefing bascule sur un résumé
-  # heuristique sans planter. Modèle léger choisi pour un serveur 3,7 Go sans swap.
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - internal
-
   # Autoheal — surveille les containers "unhealthy" et les redémarre automatiquement
   autoheal:
     image: willfarrell/autoheal:latest
@@ -122,7 +111,6 @@ services:
 
 volumes:
   postgres_data:
-  ollama_data:
 
 networks:
   internal:

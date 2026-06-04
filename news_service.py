@@ -5,10 +5,13 @@ Service d'agrégation et de résumé des news
 Récupère les actualités financières via des flux RSS gratuits (Yahoo Finance par
 ticker + flux marché global), puis produit un résumé trié par pertinence.
 
-Le résumé est généré par un petit LLM open-source auto-hébergé via **Ollama**
-(modèle configurable, ex: qwen2.5:3b). Si Ollama est injoignable, on retombe sur
-un résumé heuristique (regroupement + titres récents) — jamais d'erreur silencieuse
-bloquante qui empêcherait l'envoi du briefing.
+Le résumé est généré par une API LLM compatible OpenAI (par défaut GPT-4o-mini ;
+DeepSeek/Gemini/OpenRouter via base_url + model). Garde-fous anti-surfacturation :
+nombre d'articles borné, contenu tronqué, plafond de tokens en sortie. Sans clé API
+ou en cas d'échec, on retombe sur un résumé heuristique (titres groupés) — jamais
+d'erreur silencieuse bloquante qui empêcherait l'envoi du briefing.
+
+Variables d'environnement : LLM_API_KEY, LLM_BASE_URL, LLM_MODEL.
 """
 
 import os
@@ -27,11 +30,14 @@ GLOBAL_FEEDS = [
 
 
 class NewsService:
-    def __init__(self, ollama_host=None, model=None, timeout=90):
-        self.ollama_host = (ollama_host or os.environ.get('OLLAMA_HOST', 'http://ollama:11434')).rstrip('/')
-        self.model = model or os.environ.get('OLLAMA_MODEL', 'qwen2.5:3b')
+    def __init__(self, api_key=None, base_url=None, model=None, timeout=60):
+        # Client LLM compatible OpenAI (GPT-4o-mini par défaut ; DeepSeek/Gemini/
+        # OpenRouter fonctionnent en changeant base_url + model). Si aucune clé n'est
+        # fournie, on retombe directement sur le résumé heuristique.
+        self.api_key = api_key or os.environ.get('LLM_API_KEY', '')
+        self.base_url = (base_url or os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')).rstrip('/')
+        self.model = model or os.environ.get('LLM_MODEL', 'gpt-4o-mini')
         self.timeout = timeout
-        self._model_ready = False
         # Récupération du corps des articles (best-effort). Désactivable via env.
         self.fetch_articles = os.environ.get('NEWS_FETCH_ARTICLES', '1') not in ('0', 'false', 'False')
 
@@ -149,31 +155,36 @@ class NewsService:
         return news_items
 
     # ------------------------------------------------------------------
-    # Résumé via Ollama (avec fallback heuristique)
+    # Résumé via API LLM (compatible OpenAI) avec garde-fous de coût
     # ------------------------------------------------------------------
+
+    # Plafonds anti-surfacturation (bornent la taille de chaque appel)
+    MAX_ARTICLES = 10          # nb d'articles envoyés au modèle
+    MAX_CONTENT_CHARS = 1200   # contenu max par article
+    MAX_OUTPUT_TOKENS = 500    # plafond de tokens générés
+
     def summarize(self, news_items, context=''):
         """
         Produit un résumé en prose des news (en français), basé sur le contenu des
-        articles. Retombe sur l'heuristique si Ollama est indisponible.
+        articles. Retombe sur l'heuristique si aucune clé API n'est configurée ou
+        si l'appel échoue — jamais d'erreur bloquante.
         """
         if not news_items:
             return "Aucune actualité notable récupérée."
 
-        self._enrich_content(news_items)
-        summary = self._summarize_ollama(news_items, context)
-        if summary:
-            return summary
+        self._enrich_content(news_items, limit=self.MAX_ARTICLES)
+        if self.api_key:
+            summary = self._summarize_api(news_items, context)
+            if summary:
+                return summary
         return self._summarize_fallback(news_items)
 
-    def _summarize_ollama(self, news_items, context):
-        if not self._ensure_model():
-            return None
-
-        # Bloc détaillé : titre + source + contenu de l'article (tronqué)
+    def _build_messages(self, news_items, context):
+        """Construit les messages (system + user) en bornant la taille (coût)."""
         blocks = []
-        for it in news_items[:12]:
+        for it in news_items[:self.MAX_ARTICLES]:
             tag = it.get('ticker') or 'MARCHÉ'
-            body = (it.get('content') or it.get('summary') or '').strip()
+            body = (it.get('content') or it.get('summary') or '').strip()[:self.MAX_CONTENT_CHARS]
             block = f"[{tag}] {it['title']} (source: {it['source']})"
             if body:
                 block += f"\nContenu: {body}"
@@ -197,45 +208,39 @@ class NewsService:
             "3) signale tout signe de stress de marché.\n"
             "Sois factuel et concis. Rédige intégralement en français."
         )
+        return system_msg, user_msg
+
+    def _summarize_api(self, news_items, context):
+        """Appel à l'API LLM (compatible OpenAI /chat/completions)."""
+        system_msg, user_msg = self._build_messages(news_items, context)
         try:
             r = requests.post(
-                f'{self.ollama_host}/api/chat',
-                json={'model': self.model, 'stream': False,
-                      'options': {'temperature': 0.2},
-                      'messages': [
-                          {'role': 'system', 'content': system_msg},
-                          {'role': 'user', 'content': user_msg},
-                      ]},
+                f'{self.base_url}/chat/completions',
+                headers={'Authorization': f'Bearer {self.api_key}',
+                         'Content-Type': 'application/json'},
+                json={
+                    'model': self.model,
+                    'temperature': 0.2,
+                    'max_tokens': self.MAX_OUTPUT_TOKENS,
+                    'messages': [
+                        {'role': 'system', 'content': system_msg},
+                        {'role': 'user', 'content': user_msg},
+                    ],
+                },
                 timeout=self.timeout,
             )
             r.raise_for_status()
-            text = ((r.json().get('message') or {}).get('content') or '').strip()
+            data = r.json()
+            text = (data['choices'][0]['message']['content'] or '').strip()
+            usage = data.get('usage', {})
+            if usage:
+                logger.info('LLM news: %s tokens (in=%s, out=%s)',
+                            usage.get('total_tokens'), usage.get('prompt_tokens'),
+                            usage.get('completion_tokens'))
             return text or None
         except Exception as e:
-            logger.warning('Ollama indisponible, fallback heuristique (%s)', e)
+            logger.warning('API LLM indisponible, fallback heuristique (%s)', e)
             return None
-
-    def _ensure_model(self):
-        """Vérifie qu'Ollama est joignable et que le modèle est présent (pull sinon)."""
-        if self._model_ready:
-            return True
-        try:
-            tags = requests.get(f'{self.ollama_host}/api/tags', timeout=10)
-            tags.raise_for_status()
-            names = {m.get('name', '').split(':')[0] for m in tags.json().get('models', [])}
-            if self.model.split(':')[0] in names:
-                self._model_ready = True
-                return True
-            # Modèle absent → pull (bloquant mais une seule fois)
-            logger.info('Ollama: téléchargement du modèle %s…', self.model)
-            pull = requests.post(f'{self.ollama_host}/api/pull',
-                                 json={'name': self.model, 'stream': False}, timeout=600)
-            pull.raise_for_status()
-            self._model_ready = True
-            return True
-        except Exception as e:
-            logger.warning('Ollama non prêt (%s)', e)
-            return False
 
     @staticmethod
     def _summarize_fallback(news_items):
