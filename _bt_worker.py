@@ -24,6 +24,12 @@ import app as app_module
 application = app_module.create_app()
 
 with application.app_context():
+    # Désactiver IBKR dans ce subprocess : le gateway peut être lent ou
+    # indisponible, et chaque tentative de connexion bloquerait les fetches.
+    # On utilise uniquement le cache DB + Tiingo en repli.
+    from services import ibkr_service as _ib
+    _ib.ensure_connected = lambda: False
+
     from services import get_backtest_service
     svc = get_backtest_service()
 
