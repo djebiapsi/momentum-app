@@ -161,9 +161,21 @@
                             <input id="test-order-limit" type="number" min="0.01" step="0.01" placeholder="ex: 150.00"
                                    style="width:100px;padding:7px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
                         </div>
+                        <div>
+                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:3px;">TIF</label>
+                            <select id="test-order-tif"
+                                    style="padding:7px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);">
+                                <option value="GTC" selected>GTC (jusqu'annulation)</option>
+                                <option value="DAY">DAY (jour seul)</option>
+                                <option value="OPG">OPG (à l'ouverture)</option>
+                            </select>
+                        </div>
                         <button class="btn btn-primary" onclick="placeTestOrder()" style="height:35px;">
                             Passer l'ordre
                         </button>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">
+                        💡 GTC = l'ordre reste actif jusqu'à exécution à l'ouverture du marché · DAY = expire si marché fermé
                     </div>
                     <div id="test-order-result" style="display:none;margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12px;font-family:'IBM Plex Mono';"></div>
                 </div>

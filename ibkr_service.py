@@ -369,9 +369,12 @@ class IBKRService:
             if not qualified:
                 return {'status': 'failed', 'error': 'Contrat non qualifiable'}
             trade = self._ib.placeOrder(contract, order)
-            await asyncio.sleep(1.0)   # laisser le gateway accuser réception
-            order_id = getattr(trade.order, 'orderId', None)
+            await asyncio.sleep(1.5)
+            order_id     = getattr(trade.order, 'orderId', None)
             order_status = getattr(trade.orderStatus, 'status', 'Submitted')
+            if order_status in ('ValidationError', 'Inactive', 'ApiCancelled', 'Cancelled'):
+                return {'status': 'failed', 'order_id': order_id, 'order_status': order_status,
+                        'error': f'Ordre rejeté par IBKR ({order_status}) — marché fermé ?'}
             return {'status': 'placed', 'order_id': order_id, 'order_status': order_status}
         except Exception as e:
             return {'status': 'failed', 'error': str(e)[:200]}
@@ -461,7 +464,8 @@ class IBKRService:
                     'liquidation': False, 'status': 'preview',
                 }
                 orders.append(entry)
-                order = Order(action=action, orderType='MKT', totalQuantity=qty, tif='DAY')
+                order = Order(action=action, orderType='MKT', totalQuantity=qty,
+                              tif='GTC', outsideRth=False)
                 result = await self._qualify_and_place(contract, order, dry_run)
                 entry.update(result)
 
@@ -483,7 +487,8 @@ class IBKRService:
                 }
                 orders.append(entry)
                 contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', p.get('currency', 'USD'))
-                order = Order(action=action, orderType='MKT', totalQuantity=abs(qty), tif='DAY')
+                order = Order(action=action, orderType='MKT', totalQuantity=abs(qty),
+                              tif='GTC', outsideRth=False)
                 result = await self._qualify_and_place(contract, order, dry_run)
                 entry.update(result)
 
@@ -500,7 +505,7 @@ class IBKRService:
 
     def place_single_order(self, ticker: str, action: str, qty: float,
                            order_type: str = 'MKT', limit_price: float = None,
-                           currency: str = 'USD', tif: str = 'DAY') -> dict:
+                           currency: str = 'USD', tif: str = 'GTC') -> dict:
         """
         Passe un ordre unique sur un ticker (utile pour tester la connectivité).
         action: 'BUY' | 'SELL'
@@ -530,6 +535,19 @@ class IBKRService:
             status   = getattr(trade.orderStatus, 'status', 'Submitted')
             logger.info('Ordre unique : %s %s %s qty=%s → orderId=%s status=%s',
                         action, ticker, order_type, qty, order_id, status)
+
+            # ValidationError = ordre rejeté par le gateway (marché fermé + DAY, etc.)
+            error_statuses = ('ValidationError', 'Inactive', 'ApiCancelled', 'Cancelled')
+            if status in error_statuses:
+                why = {
+                    'ValidationError': 'Ordre rejeté (marché fermé ? Essaie avec GTC ou un ordre LMT).',
+                    'Inactive':        'Ordre inactif — compte insuffisamment alimenté ou permissions manquantes.',
+                    'ApiCancelled':    'Ordre annulé par l\'API IBKR.',
+                    'Cancelled':       'Ordre annulé.',
+                }.get(status, f'Statut inattendu : {status}')
+                return {'success': False, 'order_id': order_id, 'order_status': status,
+                        'error': why, 'ticker': ticker, 'action': action, 'qty': qty}
+
             return {'success': True, 'order_id': order_id, 'order_status': status,
                     'ticker': ticker, 'action': action, 'qty': qty,
                     'order_type': order_type, 'limit_price': limit_price}

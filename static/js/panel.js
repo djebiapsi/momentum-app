@@ -342,8 +342,9 @@
             resultDiv.style.background = 'rgba(255,255,255,.04)';
             resultDiv.textContent = '⏳ Passage de l\'ordre…';
 
+            const tif  = document.getElementById('test-order-tif').value;
             const body = JSON.stringify({ ticker, action, qty, order_type: type,
-                                          limit_price: limit, currency: 'USD' });
+                                          limit_price: limit, currency: 'USD', tif });
             const res = await api('/ibkr/order/single', { method: 'POST', body });
 
             if (!res) { resultDiv.textContent = '⚠️ Pas de réponse'; return; }
