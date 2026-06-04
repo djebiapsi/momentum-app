@@ -72,17 +72,19 @@ async function loadBacktestDefaults() {
 
 async function runBacktest() {
     const btn = document.getElementById('bt-run-btn');
-    const status = document.getElementById('bt-status');
+    const statusEl = document.getElementById('bt-status');
     const results = document.getElementById('bt-results');
+
     btn.disabled = true;
     btn.textContent = 'Calcul en cours…';
     results.style.display = 'none';
-    status.style.display = 'block';
-    status.textContent = '⏳ Backtest en cours… (la 1ʳᵉ exécution peut prendre 1 à 2 min : récupération de l\'historique)';
+    statusEl.style.display = 'block';
+    statusEl.textContent = '⏳ Lancement du backtest…';
 
     const numOrNull = id => {
-        const v = document.getElementById(id).value;
-        return v === '' || v == null ? null : parseFloat(v);
+        const el = document.getElementById(id);
+        if (!el) return null;
+        return el.value === '' ? null : parseFloat(el.value);
     };
     const body = JSON.stringify({
         capital: parseFloat(document.getElementById('bt-capital').value) || 10000,
@@ -91,20 +93,60 @@ async function runBacktest() {
         tx_cost_bps: numOrNull('bt-tx-cost'),
         margin_rate_pct: numOrNull('bt-margin-rate'),
         cash_yield_pct: numOrNull('bt-cash-yield'),
-        dca_amount: parseFloat(document.getElementById('bt-dca').value) || 0,
-        margin_call_enabled: document.getElementById('bt-margin-call').checked,
+        dca_amount: parseFloat(document.getElementById('bt-dca')?.value) || 0,
+        margin_call_enabled: document.getElementById('bt-margin-call')?.checked ?? true,
     });
-    const res = await api('/backtest/run', { method: 'POST', body });
 
+    // Lance en async — retourne job_id instantanément (pas de timeout gunicorn)
+    const launch = await api('/backtest/run', { method: 'POST', body });
+    if (!launch) { _btReset(btn, statusEl); return; }
+    if (launch.error) { _btShowError(btn, statusEl, launch.error); return; }
+
+    const jobId = launch.job_id;
+    let elapsed = 0;
+
+    const poll = setInterval(async () => {
+        elapsed += 3000;
+        const mins = Math.floor(elapsed / 60000);
+        const secs = Math.floor((elapsed % 60000) / 1000);
+        statusEl.textContent = `⏳ Backtest en cours… ${mins > 0 ? mins + 'min ' : ''}${secs}s`
+            + (elapsed < 20000 ? ' · récupération des données…' : '');
+
+        if (elapsed > 20 * 60 * 1000) {
+            clearInterval(poll);
+            _btShowError(btn, statusEl, 'Timeout : le backtest dépasse 20 minutes.');
+            return;
+        }
+
+        const st = await api('/backtest/status/' + jobId);
+        if (!st) { clearInterval(poll); _btReset(btn, statusEl); return; }
+        if (st.status === 'running') return;
+
+        clearInterval(poll);
+        btn.disabled = false;
+        btn.textContent = 'Lancer le backtest';
+        statusEl.style.display = 'none';
+
+        if (st.status === 'error' || st.error) {
+            _btShowError(btn, statusEl, st.error || 'Erreur inconnue');
+            return;
+        }
+        _btRender(st.result);
+        results.style.display = 'block';
+        showToast('Backtest terminé', 'success');
+    }, 3000);
+}
+
+function _btReset(btn, statusEl) {
     btn.disabled = false;
     btn.textContent = 'Lancer le backtest';
-    status.style.display = 'none';
-
-    if (!res) return;
-    if (res.error) { showToast(res.error, 'error'); status.style.display = 'block'; status.textContent = '⚠️ ' + res.error; return; }
-    _btRender(res);
-    results.style.display = 'block';
-    showToast('Backtest terminé', 'success');
+    if (statusEl) statusEl.style.display = 'none';
+}
+function _btShowError(btn, statusEl, msg) {
+    btn.disabled = false;
+    btn.textContent = 'Lancer le backtest';
+    if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = '⚠️ ' + msg; }
+    showToast(msg, 'error');
 }
 
 function _btRender(res) {
