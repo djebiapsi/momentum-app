@@ -7,7 +7,7 @@ services:
     environment:
       # Résumé des news via Ollama (auto-hébergé). Fallback heuristique si indispo.
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:0.5b}
     ports:
       - "80:8000"
     volumes:
@@ -72,9 +72,9 @@ services:
       start_period: 180s
 
   # Ollama — petit LLM open-source auto-hébergé pour résumer/trier les news.
-  # Le modèle (OLLAMA_MODEL, défaut qwen2.5:3b ≈ 2 Go) est pull au 1er usage par
-  # l'app. Si ce service est indisponible, le briefing bascule sur un résumé
-  # heuristique sans planter. Prévoir ≥4 Go de RAM (sinon qwen2.5:1.5b).
+  # Le modèle (OLLAMA_MODEL, défaut qwen2.5:0.5b ≈ 400 Mo) est pull au 1er usage
+  # par l'app. Si ce service est indisponible, le briefing bascule sur un résumé
+  # heuristique sans planter. Modèle léger choisi pour un serveur 3,7 Go sans swap.
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped

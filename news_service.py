@@ -12,6 +12,8 @@ bloquante qui empêcherait l'envoi du briefing.
 """
 
 import os
+import re
+import html as html_lib
 import logging
 import requests
 
@@ -25,11 +27,13 @@ GLOBAL_FEEDS = [
 
 
 class NewsService:
-    def __init__(self, ollama_host=None, model=None, timeout=45):
+    def __init__(self, ollama_host=None, model=None, timeout=90):
         self.ollama_host = (ollama_host or os.environ.get('OLLAMA_HOST', 'http://ollama:11434')).rstrip('/')
         self.model = model or os.environ.get('OLLAMA_MODEL', 'qwen2.5:3b')
         self.timeout = timeout
         self._model_ready = False
+        # Récupération du corps des articles (best-effort). Désactivable via env.
+        self.fetch_articles = os.environ.get('NEWS_FETCH_ARTICLES', '1') not in ('0', 'false', 'False')
 
     # ------------------------------------------------------------------
     # Récupération RSS
@@ -56,6 +60,8 @@ class NewsService:
                 return
             seen.add(key)
             published = getattr(entry, 'published', '') or getattr(entry, 'updated', '')
+            # Description / résumé fourni par le flux RSS (souvent un extrait de l'article)
+            desc = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
             items.append({
                 'title': title,
                 'link': getattr(entry, 'link', ''),
@@ -63,6 +69,7 @@ class NewsService:
                 'published_parsed': getattr(entry, 'published_parsed', None),
                 'source': source,
                 'ticker': ticker,
+                'summary': self._strip_html(desc)[:600],
             })
 
         # News par ticker (Yahoo Finance)
@@ -91,16 +98,68 @@ class NewsService:
         return items
 
     # ------------------------------------------------------------------
+    # Extraction du contenu des articles
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _strip_html(text):
+        """Retire les balises HTML et décode les entités → texte brut compact."""
+        if not text:
+            return ''
+        text = re.sub(r'(?is)<(script|style).*?</\1>', ' ', text)
+        text = re.sub(r'(?s)<[^>]+>', ' ', text)
+        text = html_lib.unescape(text)
+        return re.sub(r'\s+', ' ', text).strip()
+
+    def _fetch_article(self, url, max_chars=1800):
+        """
+        Extrait le corps d'un article via trafilatura (suppression du boilerplate :
+        menus, pubs, légendes). Renvoie '' si trafilatura est absent ou en cas
+        d'échec → l'appelant retombe alors sur la description RSS.
+        """
+        if not url:
+            return ''
+        try:
+            import trafilatura
+        except ImportError:
+            return ''  # dépendance absente → on utilisera la description RSS
+        try:
+            downloaded = trafilatura.fetch_url(url)
+            if not downloaded:
+                return ''
+            text = trafilatura.extract(downloaded, include_comments=False,
+                                       include_tables=False, favor_precision=True) or ''
+            return re.sub(r'\s+', ' ', text).strip()[:max_chars]
+        except Exception as e:
+            logger.debug('Article non récupéré (%s): %s', url, e)
+            return ''
+
+    def _enrich_content(self, news_items, limit=8):
+        """
+        Complète chaque item avec un champ 'content' = corps de l'article si
+        disponible, sinon la description RSS. Limité aux `limit` premiers items
+        pour borner le temps du briefing.
+        """
+        for i, it in enumerate(news_items):
+            content = ''
+            if self.fetch_articles and i < limit:
+                content = self._fetch_article(it.get('link', ''))
+            if not content:
+                content = it.get('summary', '')
+            it['content'] = content
+        return news_items
+
+    # ------------------------------------------------------------------
     # Résumé via Ollama (avec fallback heuristique)
     # ------------------------------------------------------------------
     def summarize(self, news_items, context=''):
         """
-        Produit un résumé en prose des news, trié par pertinence pour un investisseur
-        momentum passif. Retombe sur l'heuristique si Ollama est indisponible.
+        Produit un résumé en prose des news (en français), basé sur le contenu des
+        articles. Retombe sur l'heuristique si Ollama est indisponible.
         """
         if not news_items:
             return "Aucune actualité notable récupérée."
 
+        self._enrich_content(news_items)
         summary = self._summarize_ollama(news_items, context)
         if summary:
             return summary
@@ -110,33 +169,47 @@ class NewsService:
         if not self._ensure_model():
             return None
 
-        headlines = "\n".join(
-            f"- [{(it['ticker'] or 'MARCHÉ')}] {it['title']} ({it['source']})"
-            for it in news_items[:25]
+        # Bloc détaillé : titre + source + contenu de l'article (tronqué)
+        blocks = []
+        for it in news_items[:12]:
+            tag = it.get('ticker') or 'MARCHÉ'
+            body = (it.get('content') or it.get('summary') or '').strip()
+            block = f"[{tag}] {it['title']} (source: {it['source']})"
+            if body:
+                block += f"\nContenu: {body}"
+            blocks.append(block)
+        articles = "\n\n".join(blocks)
+
+        system_msg = (
+            "Tu es un analyste financier francophone. Tu réponds TOUJOURS et "
+            "EXCLUSIVEMENT en français, quelle que soit la langue des sources. "
+            "Tu ne dois écrire aucune phrase en anglais : traduis tout en français."
         )
-        prompt = (
-            "Tu es un analyste financier francophone. Voici des titres d'actualité "
-            "récents (souvent en anglais)"
+        user_msg = (
+            f"Voici des articles d'actualité financière récents"
             f"{(' — contexte: ' + context) if context else ''}.\n\n"
-            f"{headlines}\n\n"
-            "IMPORTANT : réponds EXCLUSIVEMENT en français. Traduis en français toute "
-            "information issue de titres en anglais ; n'écris aucune phrase en anglais.\n\n"
-            "Rédige un résumé court et structuré (4 à 6 puces) qui :\n"
-            "1) met en avant uniquement ce qui est pertinent pour un investisseur "
-            "momentum passif (tendances de fond, risques macro, mouvements majeurs),\n"
+            f"{articles}\n\n"
+            "À partir du CONTENU de ces articles (pas seulement des titres), rédige "
+            "en français un résumé structuré (4 à 6 puces) qui :\n"
+            "1) synthétise les informations importantes pour un investisseur momentum passif "
+            "(tendances de fond, résultats, risques macro, mouvements majeurs),\n"
             "2) ignore le bruit (clickbait, news mineures),\n"
             "3) signale tout signe de stress de marché.\n"
-            "Sois factuel et concis, et rédige intégralement en français."
+            "Sois factuel et concis. Rédige intégralement en français."
         )
         try:
             r = requests.post(
-                f'{self.ollama_host}/api/generate',
-                json={'model': self.model, 'prompt': prompt, 'stream': False,
-                      'options': {'temperature': 0.3}},
+                f'{self.ollama_host}/api/chat',
+                json={'model': self.model, 'stream': False,
+                      'options': {'temperature': 0.2},
+                      'messages': [
+                          {'role': 'system', 'content': system_msg},
+                          {'role': 'user', 'content': user_msg},
+                      ]},
                 timeout=self.timeout,
             )
             r.raise_for_status()
-            text = (r.json().get('response') or '').strip()
+            text = ((r.json().get('message') or {}).get('content') or '').strip()
             return text or None
         except Exception as e:
             logger.warning('Ollama indisponible, fallback heuristique (%s)', e)

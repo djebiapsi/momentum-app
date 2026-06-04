@@ -39,8 +39,9 @@ gunicorn
 # Screener Finviz pour stratégie Short
 finvizfinance
 
-# Agrégation des news (flux RSS)
+# Agrégation des news (flux RSS) + extraction du contenu des articles
 feedparser
+trafilatura
 
 # IBKR / Interactive Brokers
 ib_async

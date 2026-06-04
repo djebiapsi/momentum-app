@@ -41,7 +41,9 @@ jobs:
 
           git pull origin main
           docker compose build app
-          docker compose up -d app db
+          docker compose up -d app db ollama
+          # S'assure que le modèle de résumé des news est présent (pull idempotent)
+          docker compose exec -T ollama ollama pull "${OLLAMA_MODEL:-qwen2.5:0.5b}" || true
           docker image prune -f
           echo "Déploiement terminé avec succès"
           DEPLOY
