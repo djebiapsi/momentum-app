@@ -1,0 +1,81 @@
+        <!-- PAGE: Marché (alertes & surveillance) -->
+        <div id="page-market" class="page">
+            <div class="header" style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);">
+                <div class="header-label">Surveillance</div>
+                <h1>Alertes & Marché</h1>
+                <p id="market-pulse-update">Mise à jour : —</p>
+            </div>
+
+            <!-- Bandeau live -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-regime">—</div>
+                    <div class="stat-label">Régime</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-vix">—</div>
+                    <div class="stat-label">VIX</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-spy">—</div>
+                    <div class="stat-label">SPY intraday</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pulse-portfolio">—</div>
+                    <div class="stat-label">Portefeuille intraday</div>
+                </div>
+            </div>
+
+            <div id="pulse-disconnected" style="display:none;margin-bottom:16px;padding:12px 16px;border-radius:12px;
+                background:rgba(239,68,68,0.1);border:1px solid #ef4444;color:#ef4444;font-size:13px;">
+                ⚠️ IBKR non connecté — métriques temps réel indisponibles.
+            </div>
+
+            <div style="display:flex;gap:8px;margin-bottom:16px;">
+                <button class="btn btn-secondary btn-sm" onclick="loadMarketPage()" style="flex:1;">🔄 Actualiser</button>
+                <button class="btn btn-secondary btn-sm admin-only" onclick="runMonitorNow()" style="flex:1;">🛰️ Vérifier maintenant</button>
+            </div>
+
+            <!-- Alertes ouvertes -->
+            <div class="card" style="margin-top:8px;">
+                <div class="card-header">
+                    <span class="card-title">🔴 Alertes en cours</span>
+                </div>
+                <div id="market-open-events">
+                    <div class="empty-state">Aucune alerte active</div>
+                </div>
+            </div>
+
+            <!-- Historique des évènements -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Historique des évènements</span>
+                </div>
+                <div id="market-event-history">
+                    <div class="empty-state">Aucun évènement</div>
+                </div>
+            </div>
+
+            <!-- Briefing à la demande -->
+            <div class="card admin-only">
+                <div class="card-header">
+                    <span class="card-title">📨 Briefing à la demande</span>
+                </div>
+                <div style="display:flex;gap:8px;padding:4px 0;">
+                    <button class="btn btn-secondary btn-sm" onclick="sendBriefing('open')" style="flex:1;">Ouverture</button>
+                    <button class="btn btn-secondary btn-sm" onclick="sendBriefing('mid')" style="flex:1;">Mi-séance</button>
+                    <button class="btn btn-secondary btn-sm" onclick="sendBriefing('close')" style="flex:1;">Clôture</button>
+                </div>
+            </div>
+
+            <!-- Seuils d'alerte (admin) -->
+            <div class="card admin-only">
+                <div class="card-header">
+                    <span class="card-title">⚙️ Seuils d'alerte</span>
+                </div>
+                <div id="thresholds-form" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:8px 0;"></div>
+                <button class="btn btn-primary btn-block btn-sm admin-only" onclick="saveThresholds()" style="margin-top:8px;">
+                    Enregistrer les seuils
+                </button>
+            </div>
+        </div>

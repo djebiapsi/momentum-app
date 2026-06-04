@@ -1,0 +1,119 @@
+        <!-- PAGE: Panel -->
+        <div id="page-panel" class="page">
+            <!-- Tabs pour Long / Short -->
+            <div class="tab-group">
+                <button class="tab-btn long active" id="tab-long-panel" onclick="showPanelTab('long')">
+                    Long
+                </button>
+                <button class="tab-btn short" id="tab-short-panel" onclick="showPanelTab('short')">
+                    Short
+                </button>
+            </div>
+            
+            <!-- Panel LONG -->
+            <div id="panel-long-section">
+            <div class="card">
+                <div class="card-header">
+                        <span class="card-title">Génération automatique</span>
+                        <span class="status-badge warning">Finviz</span>
+                </div>
+                    <p class="info-box" style="margin-bottom: 14px;">
+                        <strong>Critères de sélection :</strong><br>
+                        • MarketCap ≥ $10B (grandes capitalisations)<br>
+                        • Avg Volume ≥ 1M actions<br>
+                        • ADV ≥ $5M (Prix × Volume)<br><br>
+                        <strong>Score :</strong> log(MarketCap) × log(ADV)<br>
+                        <span style="color: var(--text-muted);">Top 50 par score décroissant</span>
+                </p>
+                <button class="btn btn-generate btn-block admin-only" onclick="confirmGeneratePanel()">
+                        Générer 50 tickers
+                </button>
+            </div>
+            
+            <div class="card admin-only">
+                <div class="card-header">
+                        <span class="card-title">Ajouter manuellement</span>
+                </div>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="form-input" id="input-ticker" placeholder="AAPL" style="flex: 1; text-transform: uppercase;">
+                    <button class="btn btn-primary" onclick="addTicker()">Ajouter</button>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                        <span class="card-title">Panel actuel</span>
+                        <span class="status-badge success" id="panel-count">0</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <button class="btn btn-secondary" onclick="exportPanel('long')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↓</span> Exporter
+                        </button>
+                        <button class="btn btn-secondary admin-only" onclick="triggerImportPanel('long')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↑</span> Importer
+                        </button>
+                        <button class="btn btn-secondary admin-only" onclick="clearPanel('long')" style="flex: 1;">
+                            <span style="margin-right: 4px;">🗑️</span> Supprimer tout
+                        </button>
+                        <input type="file" id="import-long-file" accept=".json" style="display: none;" onchange="importPanel('long', this)">
+                </div>
+                <div id="panel-list">
+                        <div class="empty-state">Chargement...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Panel SHORT -->
+            <div id="panel-short-section" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Génération automatique</span>
+                        <span class="status-badge warning">Finviz</span>
+                    </div>
+                    <p class="info-box" style="margin-bottom: 14px;">
+                        <strong>Critères de sélection (stricts) :</strong><br>
+                        • MarketCap ≥ $2B (shortabilité)<br>
+                        • Avg Volume ≥ 500K, Price ≥ $5<br>
+                        • Perf 1M ≤ -8%, Perf 3M ≤ -15%<br>
+                        • Price &lt; SMA50 &lt; SMA200 (Death Cross)<br><br>
+                        <strong>Score :</strong> (Perf_1M × 0.4) + (Perf_3M × 0.6)<br>
+                        <span style="color: var(--text-muted);">Top 50 scores les plus négatifs</span>
+                    </p>
+                    <button class="btn btn-short btn-block admin-only" onclick="confirmGenerateShortPanel()">
+                        Générer 50 tickers
+                    </button>
+                </div>
+                
+                <div class="card admin-only">
+                    <div class="card-header">
+                        <span class="card-title">Ajouter manuellement</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="form-input" id="input-short-ticker" placeholder="XYZ" style="flex: 1; text-transform: uppercase;">
+                        <button class="btn btn-short" onclick="addShortTicker()">Ajouter</button>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Panel actuel</span>
+                        <span class="status-badge error" id="short-panel-count">0</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <button class="btn btn-secondary" onclick="exportPanel('short')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↓</span> Exporter
+                        </button>
+                        <button class="btn btn-secondary admin-only" onclick="triggerImportPanel('short')" style="flex: 1;">
+                            <span style="margin-right: 4px;">↑</span> Importer
+                        </button>
+                        <button class="btn btn-secondary admin-only" onclick="clearPanel('short')" style="flex: 1;">
+                            <span style="margin-right: 4px;">🗑️</span> Supprimer tout
+                        </button>
+                        <input type="file" id="import-short-file" accept=".json" style="display: none;" onchange="importPanel('short', this)">
+                    </div>
+                    <div id="short-panel-list">
+                        <div class="empty-state">Aucun ticker</div>
+                    </div>
+                </div>
+            </div>
+        </div>

@@ -1,0 +1,36 @@
+        <!-- PAGE: History -->
+        <div id="page-history" class="page">
+            <!-- Tabs pour Long / Short -->
+            <div class="tab-group">
+                <button class="tab-btn long active" id="tab-long-history" onclick="showHistoryTab('long')">
+                    Long
+                </button>
+                <button class="tab-btn short" id="tab-short-history" onclick="showHistoryTab('short')">
+                    Short
+                </button>
+            </div>
+            
+            <!-- Historique Long -->
+            <div id="history-long-section">
+            <div class="card">
+                <div class="card-header">
+                        <span class="card-title">Calculs précédents</span>
+                </div>
+                <div id="history-list">
+                        <div class="empty-state">Aucun historique</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Historique Short -->
+            <div id="history-short-section" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Calculs précédents</span>
+                    </div>
+                    <div id="short-history-list">
+                        <div class="empty-state">Aucun historique</div>
+                    </div>
+                </div>
+            </div>
+        </div>

@@ -1,0 +1,61 @@
+        <!-- PAGE: Short Dashboard -->
+        <div id="page-short" class="page">
+            <div class="header short">
+                <div class="header-label short">Stratégie Short</div>
+                <h1>Momentum Inversé</h1>
+                <p id="short-last-update">Mise à jour : —</p>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value short" id="short-stat-top">—</div>
+                    <div class="stat-label">Positions</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value short" id="short-stat-allocation">—</div>
+                    <div class="stat-label">Allocation</div>
+                </div>
+            </div>
+            
+            <button class="btn btn-short btn-block admin-only" id="btn-short-refresh" onclick="calculateShortMomentum()">
+                Calculer le momentum
+            </button>
+            
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-header">
+                    <span class="card-title">Vendre à découvert</span>
+                </div>
+                <div id="short-list">
+                    <div class="empty-state">
+                        Lancez un calcul pour voir les recommandations
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Ne pas shorter</span>
+                </div>
+                <div id="cover-list">
+                    <div class="empty-state">—</div>
+                </div>
+                <div class="toggle-all" id="toggle-all-short" onclick="toggleAllShortStocks()" style="display: none;">
+                    <span id="toggle-text-short">Voir tout le classement</span>
+                </div>
+            </div>
+            
+            <!-- Toutes les actions Short (masqué par défaut) -->
+            <div class="card" id="all-short-stocks-card" style="display: none;">
+                <div class="card-header">
+                    <span class="card-title">Classement complet</span>
+                    <span class="status-badge error" id="all-short-count">0</span>
+                </div>
+                <div class="search-container">
+                    <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" class="search-input" id="search-short-ticker" placeholder="Rechercher..." oninput="filterShortStocks()">
+                </div>
+                <div id="all-short-stocks-list"></div>
+            </div>
+        </div>

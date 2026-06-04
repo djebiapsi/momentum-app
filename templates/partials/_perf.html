@@ -1,0 +1,118 @@
+        <!-- PAGE: Performance -->
+        <div id="page-perf" class="page">
+            <div class="header long" style="background: linear-gradient(135deg,#1e3a5f,#0f2027);">
+                <div class="header-label long">Analyse v2.0</div>
+                <h1>Performance</h1>
+                <p id="perf-date-info">Chargement des données...</p>
+            </div>
+
+            <!-- Dashboard v2.0 -->
+            <div class="perf-dashboard">
+                
+                <!-- Global Range Selector -->
+                <div class="perf-range-selector">
+                    <button class="perf-pill" data-range="1W">1S</button>
+                    <button class="perf-pill" data-range="1M">1M</button>
+                    <button class="perf-pill" data-range="3M">3M</button>
+                    <button class="perf-pill" data-range="6M">6M</button>
+                    <button class="perf-pill active" data-range="1Y">1A</button>
+                    <button class="perf-pill" data-range="YTD">YTD</button>
+                    <button class="perf-pill" data-range="3Y">3A</button>
+                    <button class="perf-pill" data-range="ALL">Tout</button>
+                </div>
+
+                <!-- KPI Strip -->
+                <div class="perf-kpi-strip">
+                    <div class="perf-kpi-card" id="kpi-total-value">
+                        <div class="perf-kpi-label">Valeur totale</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div class="perf-kpi-delta">—</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-cagr">
+                        <div class="perf-kpi-label">CAGR</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div class="perf-kpi-delta">—</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-sharpe">
+                        <div class="perf-kpi-label">Sharpe</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">rendement/risque</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-max-drawdown">
+                        <div class="perf-kpi-label">Max drawdown</div>
+                        <div class="perf-kpi-value text-red">—</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">période sélectionnée</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-unrealized-gains">
+                        <div class="perf-kpi-label">Plus-values latentes</div>
+                        <div class="perf-kpi-value">—</div>
+                    </div>
+                    <div class="perf-kpi-card" id="kpi-dividends">
+                        <div class="perf-kpi-label">Dividendes</div>
+                        <div class="perf-kpi-value">—</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">période</div>
+                    </div>
+                </div>
+
+                <!-- Row 1: Evolution (Full Width) -->
+                <div class="perf-chart-row full">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Évolution du portefeuille</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-evolution"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: Relative Perf & Drawdown -->
+                <div class="perf-chart-row split">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Performance relative vs S&P 500</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-relative-perf"></canvas>
+                        </div>
+                    </div>
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Drawdown</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-drawdown-v2"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: P&L by position -->
+                <div class="perf-chart-row full">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Contribution par position (P&L)</div>
+                        <div class="perf-chart-container" style="min-height: 400px;">
+                            <canvas id="chart-pnl-by-pos"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: Heatmap & Dividends -->
+                <div class="perf-chart-row split">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Heatmap rendements mensuels</div>
+                        <div class="perf-chart-container" id="container-heatmap">
+                            <!-- Heatmap rendue en JS -->
+                            <div class="empty-state">Données insuffisantes</div>
+                        </div>
+                    </div>
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Dividendes perçus</div>
+                        <div class="perf-chart-container">
+                            <canvas id="chart-dividends-v2"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- IBKR Sync Info -->
+                <div style="text-align: center; margin-top: 10px;">
+                    <button class="btn btn-secondary btn-sm" onclick="loadPerfData()">
+                        🔄 Actualiser les données live
+                    </button>
+                    <p id="perf-last-update-v2" style="font-size: 11px; color: var(--text-muted); margin-top: 8px;"></p>
+                </div>
+            </div>
+        </div>

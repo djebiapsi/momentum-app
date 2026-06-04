@@ -148,7 +148,15 @@ En local, l'IB Gateway n'est pas disponible — les routes `/api/ibkr/*` renvoie
 
 ```
 momentum-app/
-├── app.py                    # Flask : 37+ routes API, APScheduler
+├── app.py                    # Point d'entrée mince : factory + enregistrement blueprints + scheduler
+├── auth.py                   # Décorateur @require_admin
+├── services.py               # Registre des services (singletons) + instance IBKR
+├── core.py                   # Logique métier partagée (routes + jobs)
+├── jobs.py                   # Corps des tâches planifiées
+├── scheduler.py              # Construction/démarrage de l'APScheduler (4 crons)
+├── routes/                   # Blueprints Flask par domaine
+│   ├── pages.py  settings.py  panel.py  momentum.py
+│   └── short.py  options.py   ibkr.py   market.py
 ├── config.py                 # Configuration et variables d'environnement
 ├── models.py                 # Modèles SQLAlchemy (Long, Short, Options, Settings)
 ├── momentum_service.py       # Calcul momentum 12-1 via Tiingo
@@ -158,15 +166,21 @@ momentum-app/
 ├── short_screener_service.py # Screener Short legacy
 ├── finviz_screener_service.py# Screener Long/Short via Finviz
 ├── options_service.py        # Black-Scholes PUT / PUT SPREAD
+├── market_monitor_service.py # Surveillance marché (VIX, drawdowns)
+├── news_service.py           # Agrégation RSS + résumé LLM des briefings
 ├── cache_utils.py            # Cache mémoire
 ├── Dockerfile                # Image Docker (python:3.11-slim + gunicorn)
 ├── docker-compose.yml        # Stack : app + PostgreSQL + IB Gateway + Traefik
 ├── .github/workflows/
 │   └── deploy.yml            # CI/CD : build → GHCR → SSH Hetzner
 ├── requirements.txt
-├── static/                   # PWA manifest, service worker, icônes
+├── static/
+│   ├── css/app.css           # Styles de la SPA
+│   ├── js/*.js               # JS vanilla (core, dashboard, panel, short, options, perf)
+│   └── manifest.json, sw.js, icons/   # PWA
 ├── templates/
-│   └── index.html            # Vue.js SPA (4700+ lignes)
+│   ├── index.html            # Squelette HTML (includes + liens assets)
+│   └── partials/*.html       # Un partiel par page + _modals, _nav
 └── docs/                     # Documentation de recherche (stratégies, méthodologie)
 ```
 
@@ -174,10 +188,12 @@ momentum-app/
 
 ## Automatisation
 
-| Job | Fréquence | Description |
+| Job | Fréquence (ET) | Description |
 |---|---|---|
-| `monthly_momentum` | 1er du mois à 8h00 UTC | Calcul momentum + email recommandations |
-| `ibkr_positions` | 9h30/11h30/13h30/15h30 ET (lun-ven) | Email récapitulatif positions IBKR |
+| `market_monitor` | chaque minute, 9h30–16h00 (lun-ven) | Surveillance VIX/drawdowns → alertes + évènements anti-spam |
+| `briefing_open/mid/close` | 9h35 / 12h30 / 16h05 (lun-ven) | Email briefing : perf positions, régime, news résumées (LLM) |
+| `rebalance_reminder` | 1er du mois à 8h00 | Calcul momentum + email « C'est le moment de rééquilibrer ! » |
+| `refresh_prices` | 22h00 (lun-ven) | Rafraîchit le cache de prix (benchmark + panel) |
 
 ---
 

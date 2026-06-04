@@ -1,0 +1,67 @@
+    <!-- Progress bar -->
+    <div id="progress-bar"></div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast"></div>
+    
+    <!-- Badge Admin -->
+    <div id="admin-badge" class="admin-badge logged-out" onclick="toggleLoginModal()">
+        <svg id="admin-icon-svg" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+        <span id="admin-text">Accès</span>
+    </div>
+    
+    <!-- Modal Login -->
+    <div id="login-modal-overlay" class="modal-overlay" onclick="closeLoginModal(event)">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 340px;">
+            <div class="modal-header">
+                <span class="modal-title">Authentification</span>
+                <button class="modal-close" onclick="closeLoginModal()">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="text-align: center; color: var(--text-muted); margin-bottom: 20px; font-size: 13px;">
+                    Entrez votre code pour débloquer les actions.
+                </p>
+                <div id="login-error" class="login-error" style="display: none;"></div>
+                <input type="password" class="login-input" id="admin-password" placeholder="• • • •" inputmode="numeric" pattern="[0-9]*" autocomplete="off" onkeypress="if(event.key==='Enter')doLogin()">
+                <button class="btn btn-primary btn-block" onclick="doLogin()">Continuer</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal détails ticker -->
+    <div id="modal-overlay" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header long" id="modal-header-style">
+                <span class="modal-title" id="modal-title">Détails</span>
+                <button class="modal-close" onclick="closeModal()">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal génération de panel -->
+    <div id="generate-modal-overlay" class="modal-overlay" onclick="closeGenerateModal(event)">
+        <div class="modal large" onclick="event.stopPropagation()">
+            <div class="modal-header" id="generate-modal-header">
+                <span class="modal-title" id="generate-modal-title">Générer le panel</span>
+                <button class="modal-close" onclick="closeGenerateModal()">
+                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body scrollable" id="generate-modal-body">
+                <!-- Contenu dynamique -->
+            </div>
+        </div>
+    </div>

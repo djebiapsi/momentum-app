@@ -41,3 +41,11 @@ Thumbs.db
 *.cache
 
 logs/
+
+# Node (outils de QA front : Playwright, etc.)
+node_modules/
+
+# Fichiers temporaires de refactor / QA
+_*.mjs
+_*.tmp
+.pytest_cache/
