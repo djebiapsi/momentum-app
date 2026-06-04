@@ -591,15 +591,26 @@
         // NAVIGATION
         // =================================================================
         
-        function showPage(pageName) {
+        function showPage(pageName, el) {
             // Hide all pages
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             // Show selected page
-            document.getElementById('page-' + pageName).classList.add('active');
-            // Update nav
+            const target = document.getElementById('page-' + pageName);
+            if (target) target.classList.add('active');
+            // Update nav : on cible l'onglet par data-page (robuste, sans dépendre de event)
             document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            
+            const moreBtn = document.querySelector('.nav-more-btn');
+            if (moreBtn) moreBtn.classList.remove('active');
+            const tab = document.querySelector('.nav-tab[data-page="' + pageName + '"]');
+            if (tab) {
+                tab.classList.add('active');
+                // Page secondaire (feuille "Plus") : on allume aussi le bouton "Plus" sur mobile
+                if (moreBtn && tab.closest('.nav-secondary-group')) moreBtn.classList.add('active');
+            }
+            // Ferme la feuille "Plus" (mobile) et remonte en haut
+            closeNavMore();
+            window.scrollTo({ top: 0, behavior: 'instant' in document.documentElement.style ? 'instant' : 'auto' });
+
             // Load data for specific pages
             if (pageName === 'dashboard') loadLatest();
             if (pageName === 'short') loadShortLatest();
@@ -617,6 +628,21 @@
             if (pageName === 'market') loadMarketPage();
         }
         
+        // Feuille "Plus" (navigation mobile)
+        function toggleNavMore() {
+            const nav = document.getElementById('mainNav');
+            const scrim = document.getElementById('navScrim');
+            if (!nav) return;
+            const open = nav.classList.toggle('show-more');
+            if (scrim) scrim.classList.toggle('show', open);
+        }
+        function closeNavMore() {
+            const nav = document.getElementById('mainNav');
+            const scrim = document.getElementById('navScrim');
+            if (nav) nav.classList.remove('show-more');
+            if (scrim) scrim.classList.remove('show');
+        }
+
         // =================================================================
         // TOAST NOTIFICATIONS
         // =================================================================

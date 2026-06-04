@@ -164,7 +164,7 @@
                 document.getElementById('market-explication').innerHTML = explications[key];
 
                 // Bordure de la carte selon régime
-                marketCard.className = 'market-card ' + (isBear ? 'bear' : 'bull');
+                marketCard.className = 'market-card o-2 ' + (isBear ? 'bear' : 'bull');
                 marketCard.style.display = 'block';
             } else {
                 marketCard.style.display = 'none';

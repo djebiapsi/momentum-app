@@ -5,183 +5,194 @@
                 <h1>Momentum 12-1</h1>
                 <p id="last-update">Mise à jour : —</p>
             </div>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-top">—</div>
-                    <div class="stat-label">Positions</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-allocation">—</div>
-                    <div class="stat-label">Alloc. moy.</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-momentum-avg">—</div>
-                    <div class="stat-label">Momentum moy.</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="stat-vol-avg">—</div>
-                    <div class="stat-label">Vol. moy.</div>
-                </div>
-            </div>
 
-            <!-- Exposition brute (mode volatility scaling uniquement) -->
-            <div id="exposure-banner" style="display:none;margin-bottom:16px;padding:12px 16px;border-radius:12px;background:var(--bg-secondary,#1a1a1a);border:1px solid var(--border,#333);display:none;align-items:center;justify-content:space-between;">
-                <span style="font-size:13px;color:var(--text-secondary,#888);">Exposition brute (volatility scaling)</span>
-                <span id="exposure-value" style="font-weight:600;"></span>
-            </div>
-
-            <!-- Carte état du marché (masquée jusqu'au premier calcul) -->
-            <div id="market-card" class="market-card" style="display:none;">
-                <div class="market-header">
-                    <span class="market-title">État du marché</span>
-                    <span id="market-regime-badge" class="market-badge">—</span>
-                </div>
-                <div class="market-row">
-                    <div class="market-metric">
-                        <div class="market-metric-value" id="market-spy-price">—</div>
-                        <div class="market-metric-label">SPY</div>
+            <div class="dash-grid">
+            <!-- Colonne principale : KPI + classements -->
+            <section class="dash-main">
+                <div class="stats-grid o-1">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-top">—</div>
+                        <div class="stat-label">Positions</div>
                     </div>
-                    <div class="market-metric">
-                        <div class="market-metric-value" id="market-sma200">—</div>
-                        <div class="market-metric-label">SMA 200</div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-allocation">—</div>
+                        <div class="stat-label">Alloc. moy.</div>
                     </div>
-                    <div class="market-metric">
-                        <div class="market-metric-value" id="market-gap">—</div>
-                        <div class="market-metric-label">Écart</div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-momentum-avg">—</div>
+                        <div class="stat-label">Momentum moy.</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-vol-avg">—</div>
+                        <div class="stat-label">Vol. moy.</div>
                     </div>
                 </div>
-                <div class="market-gauge">
-                    <div class="market-gauge-fill" id="market-gauge-fill"></div>
-                    <div class="market-gauge-marker" id="market-gauge-marker" style="left:50%"></div>
-                </div>
-                <div class="market-explication" id="market-explication"></div>
-            </div>
 
-            <button class="btn btn-primary btn-block admin-only" id="btn-refresh" onclick="calculateMomentum()">
-                Calculer le momentum
-            </button>
-
-            <button class="btn btn-secondary btn-block admin-only" style="margin-top: 8px;" onclick="calculateAndNotify()">
-                Calculer et notifier
-            </button>
-
-            <div id="btn-export-tws" style="display:none;margin-top:8px;">
-                <button class="btn btn-block admin-only" onclick="exportTWSFromReco()"
-                    style="background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);">
-                    ⬇ Exporter CSV TWS
-                </button>
-                <button class="btn btn-block admin-only" onclick="rebalanceViaAPI()"
-                    style="margin-top:6px;background:linear-gradient(135deg,#1d4ed8,#7c3aed);color:white;">
-                    ⚡ Rééquilibrer via IBKR
-                </button>
-            </div>
-
-            <button class="btn btn-block" id="btn-download-momentum" style="display:none;margin-top:8px;
-                background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);"
-                onclick="downloadMomentum()">
-                ⬇️ Télécharger le momentum (CSV)
-            </button>
-            
-            <div class="card" style="margin-top: 20px;">
-                <div class="card-header">
-                    <span class="card-title">Acheter</span>
-                </div>
-                <div id="invest-list">
-                    <div class="empty-state">
-                        Lancez un calcul pour voir les recommandations
+                <div class="card o-5" style="margin-top: 4px;">
+                    <div class="card-header">
+                        <span class="card-title">Acheter</span>
+                    </div>
+                    <div id="invest-list">
+                        <div class="empty-state">
+                            Lancez un calcul pour voir les recommandations
+                        </div>
                     </div>
                 </div>
-            </div>
-            
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">Ne pas détenir</span>
-                </div>
-                <div id="sell-list">
-                    <div class="empty-state">—</div>
-                </div>
-                <div class="toggle-all" id="toggle-all" onclick="toggleAllStocks()" style="display: none;">
-                    <span id="toggle-text">Voir tout le classement</span>
-                </div>
-            </div>
-            
-            <!-- Toutes les actions (masqué par défaut) -->
-            <div class="card" id="all-stocks-card" style="display: none;">
-                <div class="card-header">
-                    <span class="card-title">Classement complet</span>
-                    <span class="status-badge success" id="all-count">0</span>
-                </div>
-                <div class="search-container">
-                    <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                    </svg>
-                    <input type="text" class="search-input" id="search-ticker" placeholder="Rechercher..." oninput="filterStocks()">
-                </div>
-                <div id="all-stocks-list"></div>
+
+                <div class="card o-6">
+                    <div class="card-header">
+                        <span class="card-title">Ne pas détenir</span>
+                    </div>
+                    <div id="sell-list">
+                        <div class="empty-state">—</div>
+                    </div>
+                    <div class="toggle-all" id="toggle-all" onclick="toggleAllStocks()" style="display: none;">
+                        <span id="toggle-text">Voir tout le classement</span>
+                    </div>
                 </div>
 
-            <!-- Rééquilibrage de portefeuille -->
-            <div class="card" id="rebalance-card" style="margin-top: 20px;">
-                <div class="card-header">
-                    <span class="card-title">Rééquilibrage</span>
-                    <span class="status-badge warning">Bêta</span>
+                <!-- Toutes les actions (masqué par défaut) -->
+                <div class="card o-7" id="all-stocks-card" style="display: none;">
+                    <div class="card-header">
+                        <span class="card-title">Classement complet</span>
+                        <span class="status-badge success" id="all-count">0</span>
+                    </div>
+                    <div class="search-container">
+                        <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        <input type="text" class="search-input" id="search-ticker" placeholder="Rechercher..." oninput="filterStocks()">
+                    </div>
+                    <div id="all-stocks-list"></div>
                 </div>
-                <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.6;">
-                    Entrez votre portefeuille actuel. L'outil calcule exactement ce qu'il faut acheter ou vendre pour atteindre les pondérations recommandées.
-                </p>
+            </section>
 
-                <!-- Import IBKR -->
-                <div style="margin-bottom: 14px;">
-                    <label for="ibkr-file-input"
-                        style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
-                               background: var(--bg-secondary); border: 1px dashed var(--border-color);
-                               border-radius: var(--radius-sm); padding: 9px 16px; font-size: 13px;
-                               color: var(--text-secondary); transition: border-color 0.2s;"
-                        onmouseover="this.style.borderColor='var(--accent-long)'; this.style.color='var(--text-primary)'"
-                        onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-secondary)'">
-                        <span>📂</span> Importer relevé IBKR (.csv)
-                    </label>
-                    <input type="file" id="ibkr-file-input" accept=".csv"
-                        style="display: none;" onchange="importIBKR(this)">
-                    <span id="ibkr-import-status" style="font-size: 12px; color: var(--text-muted); margin-left: 10px;"></span>
-                </div>
-
-                <!-- Positions actuelles -->
-                <div id="rebalance-positions-list"></div>
-
-                <!-- Ligne d'ajout -->
-                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                    <input type="text" id="rb-ticker-input" placeholder="Ticker"
-                        style="width: 90px; background: var(--bg-secondary); border: 1px solid var(--border-color);
-                               border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text-primary);
-                               font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-transform: uppercase;"
-                        onkeypress="if(event.key==='Enter')addRebalanceRow()">
-                    <input type="number" id="rb-value-input" placeholder="Valeur ($)" min="0"
-                        style="flex:1; background: var(--bg-secondary); border: 1px solid var(--border-color);
-                               border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text-primary);
-                               font-size: 13px;"
-                        onkeypress="if(event.key==='Enter')addRebalanceRow()">
-                    <button onclick="addRebalanceRow()"
-                        style="background: var(--bg-hover); border: 1px solid var(--border-color);
-                               border-radius: var(--radius-sm); padding: 9px 14px; color: var(--text-primary);
-                               cursor: pointer; font-size: 18px; line-height: 1;">+</button>
+            <!-- Colonne latérale : marché + actions + rééquilibrage -->
+            <aside class="dash-side">
+                <!-- Carte état du marché (masquée jusqu'au premier calcul) -->
+                <div id="market-card" class="market-card o-2" style="display:none;">
+                    <div class="market-header">
+                        <span class="market-title">État du marché</span>
+                        <span id="market-regime-badge" class="market-badge">—</span>
+                    </div>
+                    <div class="market-row">
+                        <div class="market-metric">
+                            <div class="market-metric-value" id="market-spy-price">—</div>
+                            <div class="market-metric-label">SPY</div>
+                        </div>
+                        <div class="market-metric">
+                            <div class="market-metric-value" id="market-sma200">—</div>
+                            <div class="market-metric-label">SMA 200</div>
+                        </div>
+                        <div class="market-metric">
+                            <div class="market-metric-value" id="market-gap">—</div>
+                            <div class="market-metric-label">Écart</div>
+                        </div>
+                    </div>
+                    <div class="market-gauge">
+                        <div class="market-gauge-fill" id="market-gauge-fill"></div>
+                        <div class="market-gauge-marker" id="market-gauge-marker" style="left:50%"></div>
+                    </div>
+                    <div class="market-explication" id="market-explication"></div>
                 </div>
 
-                <!-- Cash -->
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
-                            background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 10px 14px;">
-                    <span style="font-size: 13px; color: var(--text-secondary); flex: 1;">Cash disponible ($)</span>
-                    <input type="number" id="rb-cash" placeholder="0" min="0"
-                        style="width: 130px; background: transparent; border: none; border-bottom: 1px solid var(--border-color);
-                               color: var(--accent-long); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
-                               font-weight: 600; text-align: right; outline: none; padding: 4px 0;">
+                <!-- Bloc d'actions -->
+                <div class="dash-actions o-3">
+                    <button class="btn btn-primary btn-block admin-only" id="btn-refresh" onclick="calculateMomentum()">
+                        Calculer le momentum
+                    </button>
+
+                    <button class="btn btn-secondary btn-block admin-only" onclick="calculateAndNotify()">
+                        Calculer et notifier
+                    </button>
+
+                    <div id="btn-export-tws" style="display:none;">
+                        <button class="btn btn-block admin-only" onclick="exportTWSFromReco()"
+                            style="background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);">
+                            ⬇ Exporter CSV TWS
+                        </button>
+                        <button class="btn btn-block admin-only" onclick="rebalanceViaAPI()"
+                            style="margin-top:6px;background:linear-gradient(135deg,#1d4ed8,#7c3aed);color:white;">
+                            ⚡ Rééquilibrer via IBKR
+                        </button>
+                    </div>
+
+                    <button class="btn btn-block" id="btn-download-momentum" style="display:none;
+                        background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-secondary);"
+                        onclick="downloadMomentum()">
+                        ⬇️ Télécharger le momentum (CSV)
+                    </button>
+
+                    <!-- Exposition brute (mode volatility scaling uniquement) -->
+                    <div id="exposure-banner" style="display:none;padding:12px 16px;border-radius:12px;background:var(--bg-secondary,#1a1a1a);border:1px solid var(--border,#333);align-items:center;justify-content:space-between;">
+                        <span style="font-size:13px;color:var(--text-secondary,#888);">Exposition brute (volatility scaling)</span>
+                        <span id="exposure-value" style="font-weight:600;"></span>
+                    </div>
                 </div>
 
-                <button class="btn btn-primary btn-block" onclick="calculateRebalance()">
-                    Calculer le rééquilibrage
-                </button>
+                <!-- Rééquilibrage de portefeuille -->
+                <div class="card o-8" id="rebalance-card">
+                    <div class="card-header">
+                        <span class="card-title">Rééquilibrage</span>
+                        <span class="status-badge warning">Bêta</span>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.6;">
+                        Entrez votre portefeuille actuel. L'outil calcule exactement ce qu'il faut acheter ou vendre pour atteindre les pondérations recommandées.
+                    </p>
 
-                <div id="rebalance-results" style="margin-top: 16px;"></div>
+                    <!-- Import IBKR -->
+                    <div style="margin-bottom: 14px;">
+                        <label for="ibkr-file-input"
+                            style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+                                   background: var(--bg-secondary); border: 1px dashed var(--border-color);
+                                   border-radius: var(--radius-sm); padding: 9px 16px; font-size: 13px;
+                                   color: var(--text-secondary); transition: border-color 0.2s;"
+                            onmouseover="this.style.borderColor='var(--accent-long)'; this.style.color='var(--text-primary)'"
+                            onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-secondary)'">
+                            <span>📂</span> Importer relevé IBKR (.csv)
+                        </label>
+                        <input type="file" id="ibkr-file-input" accept=".csv"
+                            style="display: none;" onchange="importIBKR(this)">
+                        <span id="ibkr-import-status" style="font-size: 12px; color: var(--text-muted); margin-left: 10px;"></span>
+                    </div>
+
+                    <!-- Positions actuelles -->
+                    <div id="rebalance-positions-list"></div>
+
+                    <!-- Ligne d'ajout -->
+                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                        <input type="text" id="rb-ticker-input" placeholder="Ticker"
+                            style="width: 90px; background: var(--bg-secondary); border: 1px solid var(--border-color);
+                                   border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text-primary);
+                                   font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-transform: uppercase;"
+                            onkeypress="if(event.key==='Enter')addRebalanceRow()">
+                        <input type="number" id="rb-value-input" placeholder="Valeur ($)" min="0"
+                            style="flex:1; background: var(--bg-secondary); border: 1px solid var(--border-color);
+                                   border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text-primary);
+                                   font-size: 13px;"
+                            onkeypress="if(event.key==='Enter')addRebalanceRow()">
+                        <button onclick="addRebalanceRow()"
+                            style="background: var(--bg-hover); border: 1px solid var(--border-color);
+                                   border-radius: var(--radius-sm); padding: 9px 14px; color: var(--text-primary);
+                                   cursor: pointer; font-size: 18px; line-height: 1;">+</button>
+                    </div>
+
+                    <!-- Cash -->
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+                                background: var(--bg-secondary); border-radius: var(--radius-sm); padding: 10px 14px;">
+                        <span style="font-size: 13px; color: var(--text-secondary); flex: 1;">Cash disponible ($)</span>
+                        <input type="number" id="rb-cash" placeholder="0" min="0"
+                            style="width: 130px; background: transparent; border: none; border-bottom: 1px solid var(--border-color);
+                                   color: var(--accent-long); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+                                   font-weight: 600; text-align: right; outline: none; padding: 4px 0;">
+                    </div>
+
+                    <button class="btn btn-primary btn-block" onclick="calculateRebalance()">
+                        Calculer le rééquilibrage
+                    </button>
+
+                    <div id="rebalance-results" style="margin-top: 16px;"></div>
+                </div>
+            </aside>
             </div>
         </div>
