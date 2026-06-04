@@ -281,13 +281,13 @@ RANGE_TO_DAYS = {
 @require_admin
 def perf_dashboard():
     """
-    Tableau de bord Performance : reconstruit l'évolution du portefeuille en
-    buy & hold des positions actuelles (qty × prix historiques persistés), calcule
-    les métriques (CAGR, Sharpe, max drawdown, drawdown série, rendements mensuels)
-    et compare au S&P 500 (SPY). Paramètre ?range=1W|1M|3M|6M|1Y|3Y|5Y|YTD|ALL.
+    Tableau de bord Performance. Paramètre ?range=1W|1M|3M|6M|1Y|3Y|5Y|YTD|ALL.
 
-    Note : approximation buy & hold (pas d'historique de transactions) — la série
-    suppose les positions actuelles détenues sur toute la période.
+    Source NAV : snapshots Flex réels (prioritaire, inclut cash) sinon reconstruction
+    buy & hold des positions actuelles + cash IBKR en cours.
+
+    Graphiques renvoyés en base 100 (rendement indexé) pour ne pas exposer la valeur
+    absolue du compte paper (initialisé à $1M fictif chez IBKR).
     """
     import pandas as pd
     range_key = (request.args.get('range') or '1Y').upper()
@@ -302,7 +302,6 @@ def perf_dashboard():
             return jsonify({'success': True, 'empty': True,
                             'message': 'Aucune position', 'summary': stats})
 
-        # Fenêtre temporelle
         from datetime import date as _date
         if range_key == 'YTD':
             nb_jours = (_date.today() - _date(_date.today().year, 1, 1)).days + 1
@@ -313,28 +312,31 @@ def perf_dashboard():
         cutoff = pd.Timestamp(datetime.now()) - pd.Timedelta(days=nb_jours)
 
         def _tz_naive(s):
-            """Normalise l'index d'une série en tz-naive (mix IBKR tz-aware / DB tz-naive)."""
             if getattr(s.index, 'tz', None) is not None:
                 s.index = s.index.tz_localize(None)
             return s
 
-        # Source de la NAV : snapshots Flex réels (prioritaire) sinon reconstruction
-        from models import PortfolioSnapshot
+        # Source NAV : Flex (prioritaire, inclut cash) sinon reconstruction
+        from models import PortfolioSnapshot, Dividend
         snaps = (PortfolioSnapshot.query
                  .filter(PortfolioSnapshot.date >= cutoff.date())
                  .order_by(PortfolioSnapshot.date.asc()).all())
         nav_source = 'flex'
+        cash_ibkr = None
         if len(snaps) >= 2:
             nav = pd.Series({pd.Timestamp(s.date): s.nav for s in snaps}).sort_index()
+            # Cash du dernier snapshot disponible
+            last_snap = max(snaps, key=lambda s: s.date)
+            cash_ibkr = last_snap.cash
         else:
-            # 1) Reconstruction buy & hold : Σ qty_i × prix_i(t)
+            # Reconstruction buy & hold : Σ qty_i × prix_i(t) + cash IBKR actuel
             nav_source = 'reconstruction'
             series = {}
             for p in positions:
                 ticker, qty = p['ticker'], (p.get('qty') or 0)
                 if abs(qty) < 1e-9:
                     continue
-                df, err = svc._fetch_daily_adjusted(ticker, nb_jours) if svc else (None, 'no svc')
+                df, _ = svc._fetch_daily_adjusted(ticker, nb_jours) if svc else (None, None)
                 if df is None or df.empty:
                     continue
                 series[ticker] = _tz_naive(df['adjClose'] * qty)
@@ -342,81 +344,94 @@ def perf_dashboard():
                 return jsonify({'success': True, 'empty': True,
                                 'message': 'Pas de prix historiques disponibles', 'summary': stats})
             nav_df = pd.DataFrame(series).sort_index().ffill().dropna(how='all')
-            nav = nav_df.sum(axis=1).dropna()
-            nav = nav[nav.index >= cutoff]
+            nav_positions = nav_df.sum(axis=1).dropna()
+            nav_positions = nav_positions[nav_positions.index >= cutoff]
+            # Ajouter le cash IBKR actuel (constant sur la période — approximation)
+            try:
+                acct = ibkr_service._ib.accountSummary() if ibkr_service._ib else []
+                cash_tag = next((a for a in acct if a.tag == 'TotalCashValue' and a.currency == 'USD'), None)
+                cash_ibkr = float(cash_tag.value) if cash_tag else 0.0
+            except Exception:
+                cash_ibkr = 0.0
+            nav = nav_positions + cash_ibkr
 
         nav = _tz_naive(nav)
         if len(nav) < 2:
             return jsonify({'success': True, 'empty': True,
                             'message': 'Historique insuffisant', 'summary': stats})
 
-        # 2) Benchmark S&P 500 (SPY), rebasé sur la valeur initiale du portefeuille
-        bench_series = None
-        if svc:
-            spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
-            if spy_df is not None and not spy_df.empty:
-                spy = _tz_naive(spy_df['adjClose'].copy())
-                spy = spy[spy.index >= cutoff]
-                if len(spy) >= 2:
-                    bench_series = (spy / spy.iloc[0]) * float(nav.iloc[0])
-
-        # 3) Métriques — basées sur le TWR (Time-Weighted Return) qui neutralise
-        # les dépôts/retraits. On chaîne les rendements quotidiens en mettant à 0
-        # les jours de flux de capitaux (variation > 25% = dépôt/retrait, pas perf).
+        # TWR : neutralise les gros flux (dépôts/retraits > 20%)
         raw_ret = nav.pct_change()
-        FLOW_THRESHOLD = 0.25
-        twr_ret = raw_ret.where(raw_ret.abs() <= FLOW_THRESHOLD, 0.0).fillna(0.0)
-        twr_index = (1 + twr_ret).cumprod()            # base 1.0 au départ
-        twr_index = twr_index / twr_index.iloc[0]
+        twr_ret = raw_ret.where(raw_ret.abs() <= 0.20, 0.0).fillna(0.0)
+        twr_index = (1 + twr_ret).cumprod()
+        twr_index = twr_index / twr_index.iloc[0]   # base 1.0 = base 100
 
-        daily_ret = twr_ret[twr_ret != 0.0]            # pour vol/sharpe (jours de marché)
+        daily_ret = twr_ret[twr_ret != 0.0]
         days = max(1, (nav.index[-1] - nav.index[0]).days)
         total_ret = float(twr_index.iloc[-1] - 1)
         cagr = float(twr_index.iloc[-1] ** (365.0 / days) - 1) if days >= 1 else 0.0
         vol_ann = float(daily_ret.std() * (252 ** 0.5)) if len(daily_ret) > 1 else 0.0
         rf = 0.04
         sharpe = float((cagr - rf) / vol_ann) if vol_ann > 1e-9 else 0.0
-        # Drawdown sur l'indice TWR (neutralise les flux)
         cummax = twr_index.cummax()
         drawdown = (twr_index - cummax) / cummax
         max_dd = float(drawdown.min())
 
-        # Bench CAGR pour comparaison
+        # Benchmark SPY, rebasé à 100 également
+        bench_index = None
         bench_cagr = None
-        if bench_series is not None and len(bench_series) >= 2:
-            bd = max(1, (bench_series.index[-1] - bench_series.index[0]).days)
-            bench_cagr = float((bench_series.iloc[-1] / bench_series.iloc[0]) ** (365.0 / bd) - 1)
+        if svc:
+            spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
+            if spy_df is not None and not spy_df.empty:
+                spy = _tz_naive(spy_df['adjClose'].copy())
+                spy = spy[spy.index >= cutoff]
+                if len(spy) >= 2:
+                    bench_index = spy / spy.iloc[0]   # base 1.0 comme twr_index
+                    bd = max(1, (bench_index.index[-1] - bench_index.index[0]).days)
+                    bench_cagr = float(bench_index.iloc[-1] ** (365.0 / bd) - 1)
 
-        # 4) Rendements mensuels (heatmap) — depuis l'indice TWR
+        # Rendements mensuels ET hebdomadaires (pour la heatmap)
         monthly = twr_index.resample('ME').last().pct_change().dropna()
         monthly_returns = [
             {'year': idx.year, 'month': idx.month, 'return_pct': round(float(v) * 100, 2)}
             for idx, v in monthly.items()
         ]
+        weekly = twr_index.resample('W').last().pct_change().dropna()
+        weekly_returns = [
+            {'year': idx.isocalendar()[0], 'week': idx.isocalendar()[1],
+             'return_pct': round(float(v) * 100, 2),
+             'date': idx.strftime('%Y-%m-%d')}
+            for idx, v in weekly.items()
+        ]
 
-        # 5) Séries pour les graphes
-        def _fmt(s):
-            return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v), 2)}
+        def _fmt_index(s):
+            """Série base-1 → liste [{date, value}] en base 100."""
+            return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 4)}
                     for idx, v in s.items()]
 
-        # Courbe de drawdown (en %) depuis l'indice TWR
-        drawdown_series = drawdown
-
-        # Dividendes réels sur la période (Flex)
-        from models import Dividend
+        # Dividendes sur la période
         div_rows = Dividend.query.filter(Dividend.date >= cutoff.date()).all()
         dividends_total = round(sum(d.amount for d in div_rows), 2)
-        dividends_by_period = {}
+        dividends_by_ticker = {}
         for d in div_rows:
-            key = d.date.strftime('%Y-%m')
-            dividends_by_period[key] = round(dividends_by_period.get(key, 0) + d.amount, 2)
+            dividends_by_ticker[d.ticker] = round(dividends_by_ticker.get(d.ticker, 0) + d.amount, 2)
+
+        # Statistiques de composition du portefeuille
+        total_value = stats.get('total_value', 0)
+        top5_alloc = sum(sorted([p.get('allocation_pct', 0) for p in positions], reverse=True)[:5])
+        best_pos = max(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None)
+        worst_pos = min(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None)
+        winners = [p for p in positions if (p.get('unrealized_pnl') or 0) > 0]
 
         return jsonify({
             'success': True,
             'range': range_key,
             'nav_source': nav_source,
             'kpis': {
-                'total_value': stats.get('total_value', 0),
+                'total_value': total_value,
+                'cash': round(cash_ibkr, 2) if cash_ibkr is not None else None,
+                'cash_pct': round(cash_ibkr / (total_value + cash_ibkr) * 100, 1)
+                            if cash_ibkr and total_value else None,
                 'total_return_pct': round(total_ret * 100, 2),
                 'cagr_pct': round(cagr * 100, 2),
                 'bench_cagr_pct': round(bench_cagr * 100, 2) if bench_cagr is not None else None,
@@ -426,21 +441,27 @@ def perf_dashboard():
                 'max_drawdown_pct': round(max_dd * 100, 2),
                 'unrealized_pnl': stats.get('total_unrealized_pnl', 0),
                 'realized_pnl': stats.get('total_realized_pnl', 0),
+                'positions_count': len(positions),
+                'winners_count': len(winners),
+                'top5_concentration_pct': round(top5_alloc, 1),
+                'best_position': {'ticker': best_pos['ticker'],
+                                  'pnl': round(best_pos['unrealized_pnl'], 2)} if best_pos else None,
+                'worst_position': {'ticker': worst_pos['ticker'],
+                                   'pnl': round(worst_pos['unrealized_pnl'], 2)} if worst_pos else None,
                 'dividends_total': dividends_total,
             },
-            'dividends_by_period': [{'period': k, 'amount': v}
-                                    for k, v in sorted(dividends_by_period.items())],
             'timeseries': {
-                'portfolio': _fmt(nav),
-                'benchmark': _fmt(bench_series) if bench_series is not None else [],
-                # Performance TWR en % (neutralise dépôts/retraits) pour la perf relative
-                'portfolio_twr_pct': [{'date': idx.strftime('%Y-%m-%d'), 'value': round((float(v) - 1) * 100, 2)}
-                                      for idx, v in twr_index.items()],
+                # Tout en base 100 — neutralise la valeur absolue fictive du compte paper
+                'portfolio': _fmt_index(twr_index),
+                'benchmark': _fmt_index(bench_index) if bench_index is not None else [],
             },
             'drawdown': [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
                          for idx, v in drawdown.items()],
             'monthly_returns': monthly_returns,
+            'weekly_returns': weekly_returns,
             'positions': positions,
+            'dividends_by_ticker': [{'ticker': t, 'amount': a}
+                                    for t, a in sorted(dividends_by_ticker.items(), key=lambda x: -x[1])],
             'summary': stats,
         })
     except Exception as e:
