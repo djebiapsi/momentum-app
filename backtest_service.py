@@ -93,19 +93,49 @@ class BacktestService:
     # 1) Pool candidat (univers de départ)
     # ------------------------------------------------------------------
     def build_candidate_pool(self, pool_size=None):
-        """Top-N tickers US les plus liquides aujourd'hui (ADV ≥ seuil) — pool de départ."""
+        """
+        Top-N tickers US les plus liquides (ADV ≥ seuil).
+        Si l'API IEX est indisponible ou rate-limitée (429), repli sur les tickers
+        déjà présents dans le cache DB (MarketPriceBar) — suffisant pour le backtest.
+        """
         pool_size = pool_size or self.POOL_SIZE
-        if self.ss is None:
-            raise RuntimeError("Screener non configuré (clé Tiingo manquante)")
-        data, err = self.ss.get_iex_bulk_data()
-        if err or not data:
-            raise RuntimeError(f"Univers indisponible : {err or 'aucune donnée IEX'}")
-        rows = [
-            (t, d['adv']) for t, d in data.items()
-            if d.get('adv', 0) >= self.MIN_ADV and ScreenerService._is_valid_us_symbol(t)
-        ]
-        rows.sort(key=lambda x: x[1], reverse=True)
-        return [t for t, _ in rows[:pool_size]]
+        if self.ss is not None:
+            data, err = self.ss.get_iex_bulk_data()
+            if data and not err:
+                rows = [
+                    (t, d['adv']) for t, d in data.items()
+                    if d.get('adv', 0) >= self.MIN_ADV and ScreenerService._is_valid_us_symbol(t)
+                ]
+                rows.sort(key=lambda x: x[1], reverse=True)
+                pool = [t for t, _ in rows[:pool_size]]
+                if pool:
+                    return pool
+            logger.warning('build_candidate_pool IEX indispo (%s) — repli cache DB', err)
+
+        # Repli : tickers les plus récents dans le cache DB, filtrés US valides
+        return self._pool_from_db(pool_size)
+
+    def _pool_from_db(self, pool_size):
+        """Pool candidat depuis le cache DB — utilisé quand IEX est rate-limité."""
+        try:
+            from models import MarketPriceBar, db
+            from sqlalchemy import func
+            rows = (db.session.query(MarketPriceBar.ticker,
+                                     func.count(MarketPriceBar.id).label('n'))
+                    .group_by(MarketPriceBar.ticker)
+                    .order_by(func.count(MarketPriceBar.id).desc())
+                    .limit(pool_size * 3).all())
+            pool = [r.ticker for r in rows
+                    if ScreenerService._is_valid_us_symbol(r.ticker)][:pool_size]
+            if pool:
+                logger.info('Pool candidat depuis cache DB : %d tickers', len(pool))
+                return pool
+        except Exception as e:
+            logger.warning('_pool_from_db échec : %s', e)
+        raise RuntimeError(
+            "Univers indisponible : API IEX rate-limitée et cache DB vide. "
+            "Réessaie dans quelques minutes."
+        )
 
     # ------------------------------------------------------------------
     # 2) Récupération de l'historique : cache DB d'abord, IBKR/Tiingo pour les trous
