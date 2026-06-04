@@ -28,16 +28,25 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
-# Backend matplotlib non interactif (quantstats importe matplotlib) — on n'utilise
-# que les fonctions de stats, jamais le plotting.
-import matplotlib
-matplotlib.use('Agg')
-import quantstats as qs  # noqa: E402
-
 from cache_utils import TTLCache
 from screener_service import ScreenerService
 
 logger = logging.getLogger(__name__)
+
+# Import paresseux de quantstats : il tire matplotlib (lourd). On l'importe au
+# premier calcul de stats — ainsi un éventuel souci d'import ne casse PAS le
+# démarrage de l'app, seulement la feature backtest.
+_qs = None
+
+
+def _get_qs():
+    global _qs
+    if _qs is None:
+        import matplotlib
+        matplotlib.use('Agg')
+        import quantstats as qs
+        _qs = qs
+    return _qs
 
 TRADING_DAYS = 252
 
@@ -472,6 +481,8 @@ class BacktestService:
                 for idx, v in m.items() if pd.notna(v)]
 
     def _stats(self, port_ret, bench_ret, equity, capital, meta):
+        qs = _get_qs()
+
         def safe(fn, *a, **k):
             try:
                 v = fn(*a, **k)
