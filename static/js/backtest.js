@@ -51,6 +51,15 @@ async function loadBacktestDefaults() {
     document.querySelectorAll('#bt-years .perf-pill').forEach(p => {
         p.classList.toggle('active', parseInt(p.dataset.years, 10) === d.years);
     });
+    // Pré-remplissage des hypothèses de réalisme
+    const a = d.assumptions || {};
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+    setVal('bt-tx-cost', a.tx_cost_bps);
+    setVal('bt-margin-rate', a.margin_rate_pct);
+    setVal('bt-cash-yield', a.cash_yield_pct);
+    const mc = document.getElementById('bt-margin-call');
+    if (mc) mc.checked = a.margin_call_enabled !== false;
+
     const c = d.config || {};
     const layers = [];
     if (c.vol_scaling) layers.push(`vol scaling (cible ${c.vol_target_pct}%, max ${c.max_exposure_pct}%)`);
@@ -71,10 +80,19 @@ async function runBacktest() {
     status.style.display = 'block';
     status.textContent = '⏳ Backtest en cours… (la 1ʳᵉ exécution peut prendre 1 à 2 min : récupération de l\'historique)';
 
+    const numOrNull = id => {
+        const v = document.getElementById(id).value;
+        return v === '' || v == null ? null : parseFloat(v);
+    };
     const body = JSON.stringify({
         capital: parseFloat(document.getElementById('bt-capital').value) || 10000,
         years: btYears,
         benchmark: document.getElementById('bt-benchmark').value,
+        tx_cost_bps: numOrNull('bt-tx-cost'),
+        margin_rate_pct: numOrNull('bt-margin-rate'),
+        cash_yield_pct: numOrNull('bt-cash-yield'),
+        dca_amount: parseFloat(document.getElementById('bt-dca').value) || 0,
+        margin_call_enabled: document.getElementById('bt-margin-call').checked,
     });
     const res = await api('/backtest/run', { method: 'POST', body });
 
@@ -113,14 +131,18 @@ function _btRender(res) {
     // Courbe d'équité
     const eq = (res.equity || []).map(p => ({ x: p.t, y: p.v }));
     const bench = (res.benchmark_equity || []).map(p => ({ x: p.t, y: p.v }));
+    const inv = (res.invested || []).map(p => ({ x: p.t, y: p.v }));
     const unit = btYears <= 3 ? 'month' : 'year';
+    const eqDatasets = [
+        { label: 'Stratégie', data: eq, borderColor: '#7C5CFF', backgroundColor: 'rgba(124,92,255,.08)', fill: true, borderWidth: 1.5, tension: .25, pointRadius: 0 },
+        { label: m.benchmark || 'Benchmark', data: bench, borderColor: '#1D9E75', borderDash: [2, 3], borderWidth: 1, tension: .25, pointRadius: 0, fill: false },
+    ];
+    if (inv.length) eqDatasets.push(
+        { label: 'Capital investi (DCA)', data: inv, borderColor: '#888', borderDash: [4, 4], borderWidth: 1, tension: 0, pointRadius: 0, fill: false });
     _btDestroy('equity');
     _btCharts.equity = new Chart(document.getElementById('bt-chart-equity'), {
         type: 'line',
-        data: { datasets: [
-            { label: 'Stratégie', data: eq, borderColor: '#7C5CFF', backgroundColor: 'rgba(124,92,255,.08)', fill: true, borderWidth: 1.5, tension: .25, pointRadius: 0 },
-            { label: m.benchmark || 'Benchmark', data: bench, borderColor: '#1D9E75', borderDash: [2, 3], borderWidth: 1, tension: .25, pointRadius: 0, fill: false },
-        ]},
+        data: { datasets: eqDatasets },
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
             plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
                 tooltip: { callbacks: { label: c => ` ${c.dataset.label}: $${Math.round(c.parsed.y).toLocaleString()}` } } },
@@ -143,17 +165,200 @@ function _btRender(res) {
     // Heatmap mensuelle
     _btHeatmap(res.monthly_returns || [], 'bt-container-heatmap');
 
+    // Levier dans le temps
+    _btLeverage(res.leverage || [], res.margin_calls || [], unit);
+
+    // Frictions & coûts
+    _btCosts(s);
+
+    // Bloc investisseur (DCA / TWR vs MWR)
+    _btDcaBlock(s);
+
+    // Appels de marge
+    _btMarginCalls(res.margin_calls || []);
+
+    // Rendements annuels + top drawdowns
+    _btYearly(res.yearly_returns || [], m.benchmark);
+    _btDrawdownPeriods(res.drawdown_periods || []);
+
+    // Grille de stats détaillée (strat vs benchmark)
+    _btStatsGrid(s, res.benchmark_stats || {}, m.benchmark);
+
     // Méta
     const cfg = m.config || {};
+    const a = m.assumptions || {};
     const alphaTxt = s.alpha != null ? `${_btFmtPct(s.alpha)} alpha · β ${s.beta != null ? s.beta.toFixed(2) : '—'}` : '—';
     document.getElementById('bt-meta').innerHTML = [
         `Période : <b>${m.start}</b> → <b>${m.end}</b>`,
         `Benchmark : <b>${m.benchmark}</b> · valeur finale benchmark : <b>${benchFinal != null ? _btFmtUsd(benchFinal) : '—'}</b>`,
         `vs benchmark : <b>${alphaTxt}</b>`,
-        `Calmar : <b>${s.calmar != null ? s.calmar.toFixed(2) : '—'}</b> · % mois positifs : <b>${s.pct_positive_months != null ? (s.pct_positive_months * 100).toFixed(0) + '%' : '—'}</b>`,
-        `Rééquilibrages : <b>${s.n_rebalances}</b> · changements d'univers : <b>${s.n_universe_changes}</b>`,
+        `Rééquilibrages : <b>${s.n_rebalances}</b> · changements d'univers : <b>${s.n_universe_changes}</b> · mois en cash (risk-off) : <b>${m.n_riskoff_months ?? '—'}</b>`,
         `Univers candidat : <b>${m.pool_size}</b> tickers · top ${cfg.nb_top} sélectionné chaque mois`,
+        `Hypothèses : coût <b>${a.tx_cost_bps}bps</b> · marge <b>${a.margin_rate_pct}%</b> · cash <b>${a.cash_yield_pct}%</b>`
+        + ` · appel de marge <b>${a.margin_call_enabled ? 'ON' : 'OFF'}</b> (maintenance ${a.maintenance_margin_pct}%)`
+        + (a.dca_amount > 0 ? ` · DCA <b>$${a.dca_amount}/mois</b>` : ''),
     ].join('<br>');
+}
+
+// --- Levier dans le temps + marqueurs d'appel de marge ----------------
+function _btLeverage(lev, calls, unit) {
+    const row = document.getElementById('bt-row-leverage');
+    if (!lev.length) { row.style.display = 'none'; _btDestroy('leverage'); return; }
+    row.style.display = '';
+    const data = lev.map(p => ({ x: p.t, y: p.v }));
+    const callSet = new Set(calls.map(c => c.date));
+    const pts = lev.map(p => ({ x: p.t, y: callSet.has(p.t) ? p.v : null }));
+    _btDestroy('leverage');
+    _btCharts.leverage = new Chart(document.getElementById('bt-chart-leverage'), {
+        type: 'line',
+        data: { datasets: [
+            { label: 'Levier (brut/equity)', data, borderColor: '#E0A030', backgroundColor: 'rgba(224,160,48,.08)', fill: true, borderWidth: 1.3, tension: .2, pointRadius: 0 },
+            { label: 'Appel de marge', data: pts, borderColor: '#D85A30', backgroundColor: '#D85A30', showLine: false, pointRadius: 5, pointStyle: 'triangle' },
+        ]},
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
+                tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(2) + '×' : '—'}` } } },
+            scales: { x: { type: 'time', time: { unit }, grid: { color: BT_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
+                y: { grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => v + '×' } } } }
+    });
+}
+
+// --- Frictions & coûts -------------------------------------------------
+function _btCosts(s) {
+    const usd = v => v != null ? _btFmtUsd(v) : '—';
+    const rows = [
+        ['Coûts de transaction', usd(s.tx_costs)],
+        ['Intérêts de marge (financement)', usd(s.financing_costs)],
+        ['Total frictions', `<b>${usd(s.total_costs)}</b>`],
+        ['Levier moyen / max', `${s.avg_leverage != null ? s.avg_leverage.toFixed(2) + '×' : '—'} / ${s.max_leverage != null ? s.max_leverage.toFixed(2) + '×' : '—'}`],
+        ['Temps à levier > 1×', s.pct_time_levered != null ? (s.pct_time_levered * 100).toFixed(0) + '%' : '—'],
+        ['Temps investi', s.pct_time_invested != null ? (s.pct_time_invested * 100).toFixed(0) + '%' : '—'],
+        ['Appels de marge', `<b style="color:${s.n_margin_calls ? 'var(--accent-short)' : 'inherit'}">${s.n_margin_calls}</b>`],
+    ];
+    document.getElementById('bt-costs').innerHTML = rows.map(
+        r => `<div style="display:flex;justify-content:space-between;gap:12px;"><span>${r[0]}</span><span style="color:var(--text-primary)">${r[1]}</span></div>`
+    ).join('');
+}
+
+// --- Bloc investisseur : capital investi, TWR vs MWR -------------------
+function _btDcaBlock(s) {
+    const usd = v => v != null ? _btFmtUsd(v) : '—';
+    const title = document.getElementById('bt-dca-title');
+    const hasDca = s.contributions > 0;
+    title.textContent = hasDca ? 'Investisseur (DCA)' : 'Investisseur (apport unique)';
+    const rows = [
+        ['Capital total investi', usd(s.total_invested)],
+        ['Valeur finale', `<b>${usd(s.final_value)}</b>`],
+        ['Plus-value nette', `<b style="color:${s.profit >= 0 ? 'var(--accent-long)' : 'var(--accent-short)'}">${usd(s.profit)}</b>`],
+    ];
+    if (hasDca) rows.splice(1, 0, ['dont apports DCA', usd(s.contributions)]);
+    rows.push(['Rendement pondéré-temps (TWR)', _btFmtPct(s.twr_total_return)]);
+    rows.push(['Rendement actuariel (MWR / XIRR, annualisé)',
+        s.money_weighted_return != null ? `<b>${_btFmtPct(s.money_weighted_return)}</b>` : '—']);
+    document.getElementById('bt-dca-block').innerHTML = rows.map(
+        r => `<div style="display:flex;justify-content:space-between;gap:12px;"><span>${r[0]}</span><span style="color:var(--text-primary)">${r[1]}</span></div>`
+    ).join('');
+}
+
+// --- Tableau des appels de marge --------------------------------------
+function _btMarginCalls(calls) {
+    const card = document.getElementById('bt-card-margin');
+    if (!calls.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+        + '<thead><tr style="color:var(--text-muted);text-align:left;">'
+        + '<th style="padding:4px 8px;">Date</th><th style="padding:4px 8px;">Levier avant</th>'
+        + '<th style="padding:4px 8px;">Liquidé</th><th style="padding:4px 8px;">Equity après</th></tr></thead><tbody>';
+    calls.forEach(c => {
+        html += `<tr style="border-top:1px solid var(--border);">`
+            + `<td style="padding:4px 8px;">${c.date}</td>`
+            + `<td style="padding:4px 8px;color:var(--accent-short);">${c.leverage_before}×</td>`
+            + `<td style="padding:4px 8px;">${_btFmtUsd(c.liquidated)}</td>`
+            + `<td style="padding:4px 8px;">${_btFmtUsd(c.equity)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('bt-margin-calls').innerHTML = html;
+}
+
+// --- Rendements annuels strat vs benchmark ----------------------------
+function _btYearly(yearly, benchName) {
+    const cont = document.getElementById('bt-yearly');
+    if (!yearly.length) { cont.innerHTML = '<div class="empty-state">—</div>'; return; }
+    const bar = (v) => {
+        if (v == null) return '—';
+        const col = v >= 0 ? 'var(--accent-long)' : 'var(--accent-short)';
+        return `<span style="color:${col};">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+    };
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+        + `<thead><tr style="color:var(--text-muted);text-align:right;"><th style="text-align:left;padding:4px 8px;">Année</th>`
+        + `<th style="padding:4px 8px;">Stratégie</th><th style="padding:4px 8px;">${benchName || 'Bench'}</th>`
+        + `<th style="padding:4px 8px;">Écart</th></tr></thead><tbody>`;
+    yearly.forEach(y => {
+        const diff = (y.benchmark_pct != null) ? y.strategy_pct - y.benchmark_pct : null;
+        html += `<tr style="border-top:1px solid var(--border);text-align:right;">`
+            + `<td style="text-align:left;padding:4px 8px;">${y.year}</td>`
+            + `<td style="padding:4px 8px;">${bar(y.strategy_pct)}</td>`
+            + `<td style="padding:4px 8px;">${bar(y.benchmark_pct)}</td>`
+            + `<td style="padding:4px 8px;">${bar(diff)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    cont.innerHTML = html;
+}
+
+// --- Top drawdowns ----------------------------------------------------
+function _btDrawdownPeriods(periods) {
+    const cont = document.getElementById('bt-dd-periods');
+    if (!periods.length) { cont.innerHTML = '<div class="empty-state">—</div>'; return; }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+        + '<thead><tr style="color:var(--text-muted);text-align:left;">'
+        + '<th style="padding:4px 6px;">Profondeur</th><th style="padding:4px 6px;">Creux</th>'
+        + '<th style="padding:4px 6px;">Durée</th><th style="padding:4px 6px;">Récupéré</th></tr></thead><tbody>';
+    periods.forEach(p => {
+        html += `<tr style="border-top:1px solid var(--border);">`
+            + `<td style="padding:4px 6px;color:var(--accent-short);">${p.depth_pct.toFixed(1)}%</td>`
+            + `<td style="padding:4px 6px;">${p.valley}</td>`
+            + `<td style="padding:4px 6px;">${p.days} j</td>`
+            + `<td style="padding:4px 6px;">${p.recovered ? '✓' : '<span style="color:var(--accent-short)">en cours</span>'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    cont.innerHTML = html;
+}
+
+// --- Grille de stats détaillée ----------------------------------------
+function _btStatsGrid(s, b, benchName) {
+    const pct = (v, d = 1) => v == null ? '—' : (v * 100).toFixed(d) + '%';
+    const num = (v, d = 2) => v == null ? '—' : v.toFixed(d);
+    const items = [
+        ['CAGR', pct(s.cagr), pct(b.cagr)],
+        ['Volatilité', pct(s.volatility), pct(b.volatility)],
+        ['Sharpe', num(s.sharpe), num(b.sharpe)],
+        ['Sortino', num(s.sortino), num(b.sortino)],
+        ['Calmar', num(s.calmar), num(b.calmar)],
+        ['Max drawdown', pct(s.max_drawdown), pct(b.max_drawdown)],
+        ['Ulcer index', num(s.ulcer_index, 3), null],
+        ['VaR 95% (jour)', pct(s.var_95), null],
+        ['CVaR 95% (jour)', pct(s.cvar_95), null],
+        ['Omega', num(s.omega), null],
+        ['Gain/Pain', num(s.gain_to_pain), null],
+        ['Tail ratio', num(s.tail_ratio), null],
+        ['Skew', num(s.skew), null],
+        ['Kurtosis', num(s.kurtosis), null],
+        ['Meilleur jour', pct(s.best_day), null],
+        ['Pire jour', pct(s.worst_day), null],
+        ['Meilleur mois', pct(s.best_month), null],
+        ['Pire mois', pct(s.worst_month), null],
+        ['% jours gagnants', pct(s.win_rate_daily, 0), null],
+        ['% mois positifs', pct(s.pct_positive_months, 0), null],
+        ['Profit factor', num(s.profit_factor), null],
+        ['Alpha (vs bench)', pct(s.alpha), null],
+        ['Beta (vs bench)', num(s.beta), null],
+    ];
+    document.getElementById('bt-stats-grid').innerHTML = items.map(it => {
+        const benchTxt = it[2] != null ? `<span style="color:var(--text-muted);font-size:10px;"> · ${benchName || 'B'} ${it[2]}</span>` : '';
+        return `<div style="display:flex;flex-direction:column;gap:1px;">`
+            + `<span style="color:var(--text-muted);font-size:10px;">${it[0]}</span>`
+            + `<span style="color:var(--text-primary);">${it[1]}${benchTxt}</span></div>`;
+    }).join('');
 }
 
 // Heatmap locale (réutilise le format {year, month, return_pct} du serveur)

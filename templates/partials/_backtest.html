@@ -37,6 +37,43 @@
                             Lancer le backtest
                         </button>
                     </div>
+
+                    <!-- Hypothèses de réalisme -->
+                    <details id="bt-assumptions" style="margin-top:14px;">
+                        <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);user-select:none;">
+                            ⚙️ Hypothèses de réalisme (coûts, levier, DCA, appel de marge)
+                        </summary>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:12px 2px 2px;">
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Coût transaction (bps, aller)</label>
+                                <input id="bt-tx-cost" type="number" min="0" max="100" step="0.5"
+                                       style="width:110px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Taux d'emprunt marge (%/an)</label>
+                                <input id="bt-margin-rate" type="number" min="0" max="100" step="0.25"
+                                       style="width:110px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Rémunération cash (%/an)</label>
+                                <input id="bt-cash-yield" type="number" min="0" max="100" step="0.25"
+                                       style="width:110px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Apport mensuel DCA ($)</label>
+                                <input id="bt-dca" type="number" min="0" step="50" value="0" placeholder="0 = aucun"
+                                       style="width:120px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                            </div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);height:38px;cursor:pointer;">
+                                <input id="bt-margin-call" type="checkbox" checked style="width:16px;height:16px;">
+                                Appels de marge (liquidation forcée)
+                            </label>
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
+                            Maintenance Reg T 25 % · appel évalué sur clôture · TWR pour les ratios, MWR (XIRR) pour l'investisseur DCA.
+                        </div>
+                    </details>
+
                     <div id="bt-live-config" style="font-size:12px;color:var(--text-muted);margin-top:10px;">—</div>
                 </div>
 
@@ -107,9 +144,57 @@
                         </div>
                     </div>
 
+                    <!-- Levier dans le temps (affiché si stratégie à levier) -->
+                    <div class="perf-chart-row full" id="bt-row-leverage" style="display:none;">
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Exposition brute (levier) dans le temps · ▲ = appel de marge</div>
+                            <div class="perf-chart-container">
+                                <canvas id="bt-chart-leverage"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Coûts/frictions + DCA -->
+                    <div class="perf-chart-row split">
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Frictions & coûts réels</div>
+                            <div id="bt-costs" style="font-size:12px;color:var(--text-muted);line-height:1.9;"></div>
+                        </div>
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title" id="bt-dca-title">Investisseur (DCA)</div>
+                            <div id="bt-dca-block" style="font-size:12px;color:var(--text-muted);line-height:1.9;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Appels de marge (affiché si ≥ 1) -->
+                    <div class="perf-chart-card" id="bt-card-margin" style="display:none;margin-bottom:16px;
+                         border:1px solid rgba(216,90,48,.35);background:rgba(216,90,48,.05);">
+                        <div class="perf-chart-title" style="color:var(--accent-short);">🛑 Appels de marge (liquidations forcées)</div>
+                        <div id="bt-margin-calls" style="font-size:12px;color:var(--text-muted);"></div>
+                    </div>
+
+                    <!-- Rendements annuels + Top drawdowns -->
+                    <div class="perf-chart-row split">
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Rendements annuels · stratégie vs benchmark</div>
+                            <div id="bt-yearly" style="font-size:12px;color:var(--text-muted);"></div>
+                        </div>
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Pires drawdowns (TWR)</div>
+                            <div id="bt-dd-periods" style="font-size:12px;color:var(--text-muted);"></div>
+                        </div>
+                    </div>
+
+                    <!-- Grille de stats étendue -->
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Statistiques détaillées (stratégie vs benchmark)</div>
+                        <div id="bt-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+                             gap:10px 18px;font-size:12px;margin-top:6px;"></div>
+                    </div>
+
                     <!-- Méta -->
                     <div class="perf-chart-card">
-                        <div class="perf-chart-title">Détails</div>
+                        <div class="perf-chart-title">Détails & hypothèses</div>
                         <div id="bt-meta" style="font-size:12px;color:var(--text-muted);line-height:1.8;"></div>
                     </div>
                 </div>

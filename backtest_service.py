@@ -13,13 +13,27 @@ Spécificités (validées avec l'utilisateur) :
     et appliqués (formules de `momentum_service.generer_recommandations` recalculées
     point-in-time, sans appel API « now »).
 
-Moteur : rééquilibrage mensuel vectorisé (pandas) → série de rendements journaliers ;
-métriques pro via **quantstats** (CAGR, Sharpe, Sortino, max drawdown, Calmar,
-alpha/beta vs benchmark). Aucune dépendance lourde supplémentaire bloquante.
+Moteur de simulation **réaliste, jour par jour** (inspiré des bonnes pratiques de
+backtesting — Bailey & López de Prado, Frazzini-Israel-Moskowitz « Trading Costs »,
+Harvey & Liu) :
+  - **coûts de transaction** sur le turnover (commission + spread, en bps) ;
+  - **intérêts d'emprunt** sur la partie financée quand on est à levier (cash < 0),
+    et **rémunération** du cash oisif ;
+  - **apports périodiques (DCA)** optionnels, avec séparation propre **TWR**
+    (performance de la stratégie, base des ratios) / **MWR/XIRR** (expérience de
+    l'investisseur qui verse régulièrement) ;
+  - **appels de marge** : si, sur une clôture, `equity < taux_maintenance × exposition
+    brute`, liquidation forcée (désendettement) avec coûts — exactement le scénario
+    d'un mois où l'on est surexposé et où le marché décroche ;
+  - **risk-off = cash** : un mois sans momentum positif passe réellement en liquidités.
+
+Métriques pro via **quantstats** + calculs maison (VaR/CVaR, Omega, Ulcer, durées de
+drawdown, levier moyen, coûts payés…). Import paresseux de quantstats (matplotlib).
 
 Limites assumées (affichées dans l'UI) : biais de survivance résiduel (univers
 candidat = tickers existant aujourd'hui), screen de liquidité (pas fondamental),
-1ʳᵉ exécution lente (fetch Tiingo). Nécessite `TIINGO_API_KEY`.
+appel de marge évalué sur cours de clôture (pas de plus-bas intra-séance), 1ʳᵉ
+exécution lente (fetch Tiingo). Nécessite `TIINGO_API_KEY`.
 """
 
 import math
@@ -346,6 +360,7 @@ class BacktestService:
         weights = {}
         universe = None
         n_universe_changes = 0
+        n_riskoff = 0
         first_month = month_ends[0].to_period('M') if month_ends else None
 
         for d in month_ends:
@@ -360,33 +375,207 @@ class BacktestService:
             if not universe:
                 continue
             w = self.compute_weights(d, universe, monthly_px, daily_ret, params)
-            if not w.empty:
-                weights[d] = w
+            # Risk-off (aucun momentum positif) → on passe réellement en cash
+            # (ligne de poids nulle), au lieu de conserver le panier du mois précédent.
+            if w.empty:
+                w = pd.Series(0.0, index=universe)
+                n_riskoff += 1
+            weights[d] = w
 
+        meta = {'n_rebalances': 0, 'n_universe_changes': n_universe_changes,
+                'n_riskoff_months': n_riskoff}
         if not weights:
-            return pd.DataFrame(), {'n_rebalances': 0, 'n_universe_changes': n_universe_changes}
+            return pd.DataFrame(), meta
         wdf = pd.DataFrame(weights).T.reindex(columns=monthly_px.columns).fillna(0.0)
         wdf = wdf.sort_index()
-        return wdf, {'n_rebalances': len(weights), 'n_universe_changes': n_universe_changes}
+        meta['n_rebalances'] = len(weights)
+        return wdf, meta
 
     # ------------------------------------------------------------------
-    # 6) Simulation (compounding journalier, sans lookahead)
+    # 6) Moteur de simulation réaliste (jour par jour, stateful)
     # ------------------------------------------------------------------
-    @staticmethod
-    def simulate(weights_df, daily_ret, start, end):
+    def _simulate(self, weights_df, daily_ret, start, end, capital, p):
         """
-        Applique les poids mensuels (forward-fill) aux rendements journaliers, décalés
-        d'un jour (les poids décidés en fin de mois s'appliquent dès le lendemain → pas
-        de lookahead). Retourne la série de rendements journaliers du portefeuille.
+        Simulation jour par jour, sans lookahead (les poids décidés en fin de mois
+        s'appliquent au 1ᵉʳ jour de bourse suivant). Modélise :
+          - variation de marché des positions (notionnel $ par titre) ;
+          - intérêts d'emprunt si cash < 0 (levier), rémunération si cash > 0 ;
+          - **appel de marge** sur clôture : equity < maint × exposition brute →
+            désendettement forcé vers `post_call_leverage` (coûts inclus) ;
+          - **apports DCA** mensuels (alignés sur les rebalances) ;
+          - **coûts de transaction** sur le turnover à chaque rééquilibrage.
+        Sépare le rendement TWR (hors flux, pour les ratios) du parcours en € (avec flux,
+        pour le XIRR/MWR). Retourne un dict de séries + agrégats, ou None si vide.
         """
-        if weights_df.empty:
-            return pd.Series(dtype=float)
         daily = daily_ret.loc[start:end]
         cols = [c for c in weights_df.columns if c in daily.columns]
+        if not cols:
+            return None
         daily = daily[cols].fillna(0.0)
-        w_daily = weights_df[cols].reindex(daily.index, method='ffill').fillna(0.0)
-        port_ret = (w_daily.shift(1) * daily).sum(axis=1)
-        return port_ret.dropna()
+        dates = daily.index
+        if len(dates) == 0:
+            return None
+
+        # Dates d'application = 1ᵉʳ jour de bourse STRICTEMENT après la fin de mois.
+        col_pos = {c: i for i, c in enumerate(cols)}
+        apply_vec = {}
+        for d in weights_df.index:
+            fut = dates[dates > d]
+            if len(fut):
+                arr = np.zeros(len(cols))
+                row = weights_df.loc[d]
+                for t, val in row.items():
+                    j = col_pos.get(t)
+                    if j is not None and pd.notna(val):
+                        arr[j] = float(val)
+                apply_vec.setdefault(fut[0], arr)
+        apply_days = sorted(apply_vec.keys())
+
+        # Apports DCA : à chaque rebalance sauf le 1ᵉʳ (le capital initial est déjà versé).
+        dca_amount = float(p['dca_amount'])
+        dca_days = set(apply_days[1:]) if dca_amount > 0 else set()
+
+        # Taux journaliers (composition quotidienne sur base 252).
+        cost = p['tx_cost_bps'] / 10000.0
+        fin_daily = (1.0 + p['margin_rate_pct'] / 100.0) ** (1.0 / TRADING_DAYS) - 1.0
+        cash_daily = (1.0 + p['cash_yield_pct'] / 100.0) ** (1.0 / TRADING_DAYS) - 1.0
+        maint = p['maintenance_margin_pct'] / 100.0
+        post_lev = float(p['post_call_leverage'])
+        margin_on = bool(p['margin_call_enabled'])
+
+        mat = daily.to_numpy(dtype=float)
+        N = len(cols)
+        pos = np.zeros(N)              # notionnel $ par titre
+        cash = float(capital)         # capital initial en cash dès J0
+        equity_prev = float(capital)
+        invested = float(capital)
+
+        twr_list, eq_list, lev_list, inv_list, idx_list = [], [], [], [], []
+        cashflows = [(dates[0], -float(capital))]
+        margin_calls = []
+        tx_total = fin_total = contrib_total = 0.0
+        ruined = False
+
+        for i in range(len(dates)):
+            dt = dates[i]
+            r = mat[i]
+            # 1) variation de marché
+            pos = pos * (1.0 + r)
+            # 2) intérêts (levier) / rémunération (cash)
+            if cash >= 0:
+                cash *= (1.0 + cash_daily)
+            else:
+                interest = -cash * fin_daily
+                fin_total += interest
+                cash *= (1.0 + fin_daily)
+            equity = float(pos.sum() + cash)
+
+            # Ruine : l'equity passe à zéro (levier balayé par une chute violente).
+            if equity <= 0:
+                twr_list.append(-1.0 if equity_prev > 0 else 0.0)
+                eq_list.append(0.0); lev_list.append(0.0)
+                inv_list.append(invested); idx_list.append(dt)
+                ruined = True
+                break
+
+            flow_today = 0.0
+            # 3) APPEL DE MARGE (sur clôture) : equity < maint × exposition brute
+            gross = float(np.abs(pos).sum())
+            if margin_on and gross > 0 and equity < maint * gross:
+                lev_before = gross / equity
+                target_gross = max(0.0, equity * post_lev)
+                scale = target_gross / gross if gross > 0 else 0.0
+                liquidated = float(np.abs(pos - pos * scale).sum())
+                c = liquidated * cost
+                tx_total += c
+                pos = pos * scale
+                cash = equity - float(pos.sum()) - c
+                equity = float(pos.sum() + cash)
+                margin_calls.append({
+                    'date': dt.strftime('%Y-%m-%d'),
+                    'equity': round(equity, 2),
+                    'leverage_before': round(lev_before, 2),
+                    'liquidated': round(liquidated, 2),
+                })
+
+            # 4) apport DCA
+            if dt in dca_days:
+                cash += dca_amount
+                equity += dca_amount
+                invested += dca_amount
+                contrib_total += dca_amount
+                flow_today += dca_amount
+                cashflows.append((dt, -dca_amount))
+
+            # 5) rééquilibrage mensuel
+            if dt in apply_vec:
+                target = apply_vec[dt] * equity
+                turn = float(np.abs(target - pos).sum())
+                c = turn * cost
+                tx_total += c
+                pos = target
+                cash = equity - float(pos.sum()) - c
+                equity = float(pos.sum() + cash)
+
+            # 6) enregistrements (TWR hors flux du jour)
+            twr_val = (equity - flow_today) / equity_prev - 1.0 if equity_prev > 0 else 0.0
+            twr_list.append(twr_val)
+            eq_list.append(equity)
+            end_gross = float(np.abs(pos).sum())
+            lev_list.append(end_gross / equity if equity > 1e-9 else 0.0)
+            inv_list.append(invested)
+            idx_list.append(dt)
+            equity_prev = equity
+
+        idx = pd.DatetimeIndex(idx_list)
+        twr_ret = pd.Series(twr_list, index=idx)
+        equity = pd.Series(eq_list, index=idx)
+        leverage = pd.Series(lev_list, index=idx)
+        invested_s = pd.Series(inv_list, index=idx)
+        twr_index = (1.0 + twr_ret).cumprod() * capital
+
+        final_equity = float(equity.iloc[-1]) if len(equity) else 0.0
+        cashflows.append((idx[-1], final_equity))
+
+        lev_active = leverage[leverage > 0.01]
+        return {
+            'twr_ret': twr_ret,
+            'equity': equity,
+            'twr_index': twr_index,
+            'leverage': leverage,
+            'invested': invested_s,
+            'dca_days': dca_days,
+            'cashflows': cashflows,
+            'margin_calls': margin_calls,
+            'tx_total': tx_total,
+            'fin_total': fin_total,
+            'contrib_total': contrib_total,
+            'total_invested': invested,
+            'final_equity': final_equity,
+            'ruined': ruined,
+            'avg_leverage': float(lev_active.mean()) if len(lev_active) else 0.0,
+            'max_leverage': float(leverage.max()) if len(leverage) else 0.0,
+            'pct_time_levered': float((leverage > 1.0001).mean()) if len(leverage) else 0.0,
+            'pct_time_invested': float((leverage > 0.01).mean()) if len(leverage) else 0.0,
+        }
+
+    @staticmethod
+    def _buy_hold(bench_ret, dates, capital, dca_amount, dca_days, cost):
+        """Benchmark acheté-conservé, soumis au **même calendrier de flux** (capital
+        initial + DCA) et à un coût d'entrée, pour une comparaison équitable en €."""
+        bench_ret = bench_ret.reindex(dates).fillna(0.0)
+        val = capital * (1.0 - cost)
+        invested = float(capital)
+        eq = []
+        for i, dt in enumerate(dates):
+            if i > 0:
+                val *= (1.0 + float(bench_ret.iloc[i]))
+            if dt in dca_days:
+                val += dca_amount * (1.0 - cost)
+                invested += dca_amount
+            eq.append((dt, val))
+        equity = pd.Series(dict(eq)).sort_index()
+        return equity, invested, float(val)
 
     # ------------------------------------------------------------------
     # 7) Point d'entrée
@@ -394,13 +583,25 @@ class BacktestService:
     def run(self, capital=10000.0, years=5, nb_top=5, vol_scaling=False,
             vol_target_pct=12.0, max_exposure_pct=250.0, portfolio_filter=False,
             portfolio_vol_threshold_pct=20.0, benchmark='SPY', pool_size=None,
-            progress=None):
+            tx_cost_bps=None, margin_rate_pct=None, cash_yield_pct=None,
+            dca_amount=0.0, margin_call_enabled=True, maintenance_margin_pct=None,
+            post_call_leverage=None, progress=None):
         """Exécute le backtest complet et retourne un dict JSON-sérialisable."""
         params = {
             'nb_top': int(nb_top), 'vol_scaling': bool(vol_scaling),
             'vol_target_pct': float(vol_target_pct), 'max_exposure_pct': float(max_exposure_pct),
             'portfolio_filter': bool(portfolio_filter),
             'portfolio_vol_threshold_pct': float(portfolio_vol_threshold_pct),
+        }
+        # Hypothèses de réalisme (UI → défauts).
+        sim_p = {
+            'tx_cost_bps': self.DEFAULT_TX_COST_BPS if tx_cost_bps is None else float(tx_cost_bps),
+            'margin_rate_pct': self.DEFAULT_MARGIN_RATE_PCT if margin_rate_pct is None else float(margin_rate_pct),
+            'cash_yield_pct': self.DEFAULT_CASH_YIELD_PCT if cash_yield_pct is None else float(cash_yield_pct),
+            'dca_amount': float(dca_amount or 0.0),
+            'margin_call_enabled': bool(margin_call_enabled),
+            'maintenance_margin_pct': self.DEFAULT_MAINT_MARGIN_PCT if maintenance_margin_pct is None else float(maintenance_margin_pct),
+            'post_call_leverage': self.DEFAULT_POST_CALL_LEVERAGE if post_call_leverage is None else float(post_call_leverage),
         }
         end = pd.Timestamp.now().normalize()
         start = end - pd.DateOffset(years=int(years))
@@ -433,38 +634,59 @@ class BacktestService:
         if weights_df.empty:
             raise RuntimeError("Aucun signal sur la période (période trop courte ou données insuffisantes).")
 
-        port_ret = self.simulate(weights_df, daily_ret, start, end)
-        if port_ret.empty:
+        sim = self._simulate(weights_df, daily_ret, start, end, capital, sim_p)
+        if sim is None or sim['equity'].empty:
             raise RuntimeError("Simulation vide sur la période demandée.")
 
-        bench_ret = bench_close.pct_change().loc[port_ret.index.min():port_ret.index.max()].dropna()
+        dates = sim['equity'].index
+        cost = sim_p['tx_cost_bps'] / 10000.0
+        # Benchmark : daily returns + parcours buy-and-hold avec les mêmes flux.
+        bench_daily = bench_close.pct_change()
+        bench_eq, bench_invested, bench_final = self._buy_hold(
+            bench_daily, dates, capital, sim_p['dca_amount'], sim['dca_days'], cost)
+        bench_ret = bench_daily.reindex(dates).fillna(0.0)
 
-        equity = (1 + port_ret).cumprod() * capital
-        bench_equity = (1 + bench_ret).cumprod() * capital if not bench_ret.empty else pd.Series(dtype=float)
+        drawdown = sim['twr_index'] / sim['twr_index'].cummax() - 1.0
+
+        stats = self._stats(sim, bench_ret, capital, meta)
+        bench_stats = self._benchmark_stats(bench_ret, bench_eq, capital, bench_invested, bench_final)
 
         return {
             'success': True,
-            'equity': self._series_to_points(equity),
-            'benchmark_equity': self._series_to_points(bench_equity),
-            'drawdown': self._series_to_points(equity / equity.cummax() - 1.0),
-            'monthly_returns': self._monthly_returns(port_ret),
-            'stats': self._stats(port_ret, bench_ret, equity, capital, meta),
+            'equity': self._series_to_points(sim['equity']),
+            'benchmark_equity': self._series_to_points(bench_eq),
+            'invested': self._series_to_points(sim['invested']) if sim_p['dca_amount'] > 0 else [],
+            'leverage': self._series_to_points(sim['leverage']) if sim['max_leverage'] > 1.05 else [],
+            'drawdown': self._series_to_points(drawdown),
+            'monthly_returns': self._monthly_returns(sim['twr_ret']),
+            'yearly_returns': self._yearly_returns(sim['twr_ret'], bench_ret),
+            'drawdown_periods': self._drawdown_periods(sim['twr_index']),
+            'margin_calls': sim['margin_calls'],
+            'stats': stats,
+            'benchmark_stats': bench_stats,
             'meta': {
                 'benchmark': benchmark,
-                'start': port_ret.index.min().strftime('%Y-%m-%d'),
-                'end': port_ret.index.max().strftime('%Y-%m-%d'),
+                'start': dates.min().strftime('%Y-%m-%d'),
+                'end': dates.max().strftime('%Y-%m-%d'),
                 'capital': capital,
                 'pool_size': len(pool),
                 'data': fmeta,
                 'config': params,
+                'assumptions': sim_p,
                 'n_rebalances': meta['n_rebalances'],
                 'n_universe_changes': meta['n_universe_changes'],
+                'n_riskoff_months': meta.get('n_riskoff_months', 0),
                 'warnings': ([
                     "Biais de survivance résiduel : l'univers candidat est constitué des "
                     "tickers liquides existant aujourd'hui (les titres délistés sont absents).",
                     "Le re-screen reproduit le critère de liquidité (ADV), pas un "
                     "screen fondamental.",
+                    "Les appels de marge sont évalués sur cours de clôture (pas de plus-bas "
+                    "intra-séance) : le risque réel de liquidation est donc sous-estimé.",
                 ] + ([
+                    "⚠️ RUINE : l'effet de levier a été balayé par une chute violente "
+                    "(equity tombée à zéro). Le backtest s'arrête à cette date."
+                ] if sim['ruined'] else []) + ([
                     f"Cache incomplet : {fmeta['skipped']} ticker(s) pas encore en base "
                     f"(récupérés progressivement par le cron nocturne). Résultat partiel."
                 ] if fmeta.get('skipped') else [])),
@@ -487,42 +709,195 @@ class BacktestService:
         return [{'year': idx.year, 'month': idx.month, 'return_pct': round(float(v) * 100, 2)}
                 for idx, v in m.items() if pd.notna(v)]
 
-    def _stats(self, port_ret, bench_ret, equity, capital, meta):
+    @staticmethod
+    def _yearly_returns(port_ret, bench_ret):
+        sy = (1 + port_ret).resample('YE').prod() - 1
+        by = (1 + bench_ret).resample('YE').prod() - 1 if bench_ret is not None and not bench_ret.empty else pd.Series(dtype=float)
+        by_year = {idx.year: float(v) for idx, v in by.items() if pd.notna(v)}
+        out = []
+        for idx, v in sy.items():
+            if pd.isna(v):
+                continue
+            b = by_year.get(idx.year)
+            out.append({'year': idx.year, 'strategy_pct': round(float(v) * 100, 2),
+                        'benchmark_pct': round(b * 100, 2) if b is not None else None})
+        return out
+
+    @staticmethod
+    def _drawdown_periods(equity_index, top=5):
+        """Top-N pires épisodes de drawdown (début, creux, fin, profondeur, durée jours)."""
+        if equity_index is None or len(equity_index) < 2:
+            return []
+        dd = equity_index / equity_index.cummax() - 1.0
+        periods, in_dd, start, trough, trough_v = [], False, None, None, 0.0
+        for dt, v in dd.items():
+            v = float(v)
+            if not in_dd and v < -1e-9:
+                in_dd, start, trough, trough_v = True, dt, dt, v
+            elif in_dd:
+                if v < trough_v:
+                    trough_v, trough = v, dt
+                if v >= -1e-9:
+                    periods.append((start, trough, dt, trough_v))
+                    in_dd = False
+        if in_dd:
+            periods.append((start, trough, None, trough_v))
+        periods.sort(key=lambda x: x[3])
+        out = []
+        for st, tr, en, depth in periods[:top]:
+            end_days = (en if en is not None else equity_index.index[-1])
+            out.append({
+                'start': st.strftime('%Y-%m-%d'),
+                'valley': tr.strftime('%Y-%m-%d'),
+                'end': en.strftime('%Y-%m-%d') if en is not None else None,
+                'depth_pct': round(depth * 100, 2),
+                'days': int((end_days - st).days),
+                'recovered': en is not None,
+            })
+        return out
+
+    @staticmethod
+    def _xirr(cashflows, lo=-0.9999, hi=10.0, tol=1e-6, max_iter=200):
+        """Taux de rendement actuariel (MWR) annualisé sur flux datés, par bissection."""
+        if not cashflows or len(cashflows) < 2:
+            return None
+        t0 = cashflows[0][0]
+        ts = [((d - t0).days) / 365.0 for d, _ in cashflows]
+        amts = [float(a) for _, a in cashflows]
+        if not (any(a > 0 for a in amts) and any(a < 0 for a in amts)):
+            return None
+
+        def npv(rate):
+            return sum(a / (1.0 + rate) ** t for a, t in zip(amts, ts))
+
+        flo, fhi = npv(lo), npv(hi)
+        if flo * fhi > 0:
+            return None
+        for _ in range(max_iter):
+            mid = (lo + hi) / 2.0
+            fm = npv(mid)
+            if abs(fm) < tol:
+                return mid
+            if flo * fm < 0:
+                hi, fhi = mid, fm
+            else:
+                lo, flo = mid, fm
+        return (lo + hi) / 2.0
+
+    def _stats(self, sim, bench_ret, capital, meta):
+        qs = _get_qs()
+        twr = sim['twr_ret']
+        equity = sim['equity']
+        twr_index = sim['twr_index']
+
+        def safe(fn, *a, **k):
+            try:
+                v = fn(*a, **k)
+                if hasattr(v, 'iloc'):
+                    v = v.iloc[0]
+                return round(float(v), 4) if v is not None and np.isfinite(v) else None
+            except Exception:
+                return None
+
+        monthly = (1 + twr).resample('ME').prod() - 1
+        pct_pos = float((monthly > 0).mean()) if len(monthly) else None
+        twr_total = float(twr_index.iloc[-1] / capital - 1.0)
+
+        # alpha / beta vs benchmark
+        alpha = beta = None
+        try:
+            if bench_ret is not None and not bench_ret.empty:
+                aligned = bench_ret.reindex(twr.index).dropna()
+                if len(aligned) > 10:
+                    g = qs.stats.greeks(twr.reindex(aligned.index), aligned)
+                    alpha = round(float(g.get('alpha')), 4)
+                    beta = round(float(g.get('beta')), 4)
+        except Exception:
+            pass
+
+        wins = twr[twr > 0]
+        losses = twr[twr < 0]
+        profit_factor = (float(wins.sum()) / abs(float(losses.sum()))
+                         if len(losses) and losses.sum() != 0 else None)
+
+        mwr = self._xirr(sim['cashflows'])
+        total_costs = sim['tx_total'] + sim['fin_total']
+
+        return {
+            # Valeur / rendement
+            'final_value': round(sim['final_equity'], 2),
+            'total_invested': round(sim['total_invested'], 2),
+            'profit': round(sim['final_equity'] - sim['total_invested'], 2),
+            'total_return': round(twr_total, 4),            # TWR (perf stratégie)
+            'twr_total_return': round(twr_total, 4),
+            'money_weighted_return': round(mwr, 4) if mwr is not None else None,
+            'cagr': safe(qs.stats.cagr, twr),
+            # Risque
+            'volatility': safe(qs.stats.volatility, twr),
+            'sharpe': safe(qs.stats.sharpe, twr),
+            'sortino': safe(qs.stats.sortino, twr),
+            'max_drawdown': safe(qs.stats.max_drawdown, twr),
+            'calmar': safe(qs.stats.calmar, twr),
+            'ulcer_index': safe(qs.stats.ulcer_index, twr),
+            'var_95': safe(qs.stats.value_at_risk, twr),
+            'cvar_95': safe(qs.stats.conditional_value_at_risk, twr),
+            'omega': safe(qs.stats.omega, twr),
+            'tail_ratio': safe(qs.stats.tail_ratio, twr),
+            'gain_to_pain': safe(qs.stats.gain_to_pain_ratio, twr),
+            'skew': safe(qs.stats.skew, twr),
+            'kurtosis': safe(qs.stats.kurtosis, twr),
+            # Distribution
+            'best_day': safe(qs.stats.best, twr),
+            'worst_day': safe(qs.stats.worst, twr),
+            'best_month': round(float(monthly.max()), 4) if len(monthly) else None,
+            'worst_month': round(float(monthly.min()), 4) if len(monthly) else None,
+            'win_rate_daily': round(float((twr > 0).mean()), 4) if len(twr) else None,
+            'profit_factor': round(profit_factor, 2) if profit_factor is not None else None,
+            'pct_positive_months': round(pct_pos, 4) if pct_pos is not None else None,
+            'alpha': alpha,
+            'beta': beta,
+            # Exposition / levier
+            'avg_leverage': round(sim['avg_leverage'], 3),
+            'max_leverage': round(sim['max_leverage'], 3),
+            'pct_time_levered': round(sim['pct_time_levered'], 4),
+            'pct_time_invested': round(sim['pct_time_invested'], 4),
+            # Coûts / frictions
+            'tx_costs': round(sim['tx_total'], 2),
+            'financing_costs': round(sim['fin_total'], 2),
+            'total_costs': round(total_costs, 2),
+            'contributions': round(sim['contrib_total'], 2),
+            'n_margin_calls': len(sim['margin_calls']),
+            'ruined': sim['ruined'],
+            # Activité
+            'n_rebalances': meta['n_rebalances'],
+            'n_universe_changes': meta['n_universe_changes'],
+            'n_riskoff_months': meta.get('n_riskoff_months', 0),
+        }
+
+    def _benchmark_stats(self, bench_ret, bench_eq, capital, bench_invested, bench_final):
+        """Stats du benchmark (sur ses rendements purs) + valeur finale buy-and-hold."""
         qs = _get_qs()
 
         def safe(fn, *a, **k):
             try:
                 v = fn(*a, **k)
+                if hasattr(v, 'iloc'):
+                    v = v.iloc[0]
                 return round(float(v), 4) if v is not None and np.isfinite(v) else None
             except Exception:
                 return None
-        total_return = float(equity.iloc[-1] / capital - 1.0)
-        pos_months = (1 + port_ret).resample('ME').prod() - 1
-        pct_pos = float((pos_months > 0).mean()) if len(pos_months) else None
-        greeks = {}
-        try:
-            if bench_ret is not None and not bench_ret.empty:
-                aligned = bench_ret.reindex(port_ret.index).dropna()
-                if len(aligned) > 10:
-                    g = qs.stats.greeks(port_ret.reindex(aligned.index), aligned)
-                    greeks = {'alpha': round(float(g.get('alpha')), 4),
-                              'beta': round(float(g.get('beta')), 4)}
-        except Exception:
-            greeks = {}
+        br = bench_ret.dropna() if bench_ret is not None else pd.Series(dtype=float)
+        if br.empty:
+            return {}
         return {
-            'total_return': round(total_return, 4),
-            'final_value': round(float(equity.iloc[-1]), 2),
-            'cagr': safe(qs.stats.cagr, port_ret),
-            'volatility': safe(qs.stats.volatility, port_ret),
-            'sharpe': safe(qs.stats.sharpe, port_ret),
-            'sortino': safe(qs.stats.sortino, port_ret),
-            'max_drawdown': safe(qs.stats.max_drawdown, port_ret),
-            'calmar': safe(qs.stats.calmar, port_ret),
-            'best_day': safe(qs.stats.best, port_ret),
-            'worst_day': safe(qs.stats.worst, port_ret),
-            'pct_positive_months': round(pct_pos, 4) if pct_pos is not None else None,
-            'alpha': greeks.get('alpha'),
-            'beta': greeks.get('beta'),
-            'n_rebalances': meta['n_rebalances'],
-            'n_universe_changes': meta['n_universe_changes'],
+            'final_value': round(float(bench_final), 2),
+            'total_invested': round(float(bench_invested), 2),
+            'profit': round(float(bench_final - bench_invested), 2),
+            'cagr': safe(qs.stats.cagr, br),
+            'volatility': safe(qs.stats.volatility, br),
+            'sharpe': safe(qs.stats.sharpe, br),
+            'sortino': safe(qs.stats.sortino, br),
+            'max_drawdown': safe(qs.stats.max_drawdown, br),
+            'calmar': safe(qs.stats.calmar, br),
+            'total_return': safe(qs.stats.comp, br),
         }
