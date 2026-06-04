@@ -37,7 +37,7 @@ def backtest_defaults():
     return jsonify({
         'capital': DEFAULT_CAPITAL,
         'years': DEFAULT_YEARS,
-        'years_options': [3, 5, 10],
+        'years_options': [1, 3, 5, 10],
         'nb_top': nb_top,
         'config': vs,
         'assumptions': {
@@ -138,15 +138,17 @@ def backtest_run():
 @bp.route('/api/backtest/status/<job_id>', methods=['GET'])
 @require_admin
 def backtest_status(job_id):
-    """Poll le statut d'un job backtest. Retourne {status, result?} ou 404."""
+    """Poll le statut d'un job backtest."""
     with _jobs_lock:
         job = _jobs.get(job_id)
     if job is None:
-        return jsonify({'error': 'Job introuvable (expiré ?)'}), 404
+        # Job disparu = worker redémarré (ne devrait plus arriver avec --timeout 0)
+        return jsonify({'status': 'error',
+                        'error': 'Job perdu (le serveur a redémarré). Relancez le backtest.'}), 200
     if job['status'] == 'running':
         return jsonify({'status': 'running'})
     if job['status'] == 'error':
-        return jsonify({'status': 'error', 'error': job['error']}), 400
+        return jsonify({'status': 'error', 'error': job['error']})
     return jsonify({'status': 'done', 'result': job['result']})
 
 
