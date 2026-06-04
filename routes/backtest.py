@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 """Routes backtest : lance le backtest momentum et renvoie courbe d'équité + stats."""
+import json
+import os
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -17,10 +22,13 @@ DEFAULT_YEARS = 5
 DEFAULT_CAPITAL = 10000.0
 DEFAULT_POOL = 120  # borne le coût data (≈ temps de la 1re exécution)
 
-# Stockage en mémoire des jobs asynchrones (TTL 30 min)
+# Stockage en mémoire des jobs (TTL 30 min).
+# Le calcul tourne dans un SUBPROCESS isolé (GIL séparé) → gunicorn reste réactif.
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
 _JOB_TTL = 1800  # secondes
+
+_WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(__file__)), '_bt_worker.py')
 
 
 def _live_config():
@@ -102,53 +110,92 @@ def backtest_run():
 
     nb_top, vs = _live_config()
     job_id = str(uuid.uuid4())
-    app_obj = current_app._get_current_object()
-    svc = get_backtest_service()
-
-    # Nettoyage des vieux jobs (> TTL)
     now = time.time()
+
+    # Nettoyage des vieux jobs (> TTL) + terminer les subprocess orphelins
     with _jobs_lock:
         stale = [k for k, v in _jobs.items() if now - v.get('created_at', 0) > _JOB_TTL]
         for k in stale:
+            proc = _jobs[k].get('proc')
+            if proc and proc.poll() is None:
+                proc.terminate()
             del _jobs[k]
-        _jobs[job_id] = {'status': 'running', 'created_at': now}
 
-    def _run():
-        with app_obj.app_context():
-            try:
-                result = svc.run(nb_top=nb_top, **params, **vs)
-                with _jobs_lock:
-                    _jobs[job_id] = {'status': 'done', 'result': result,
-                                     'created_at': now}
-            except RuntimeError as e:
-                with _jobs_lock:
-                    _jobs[job_id] = {'status': 'error', 'error': str(e),
-                                     'created_at': now}
-            except Exception as e:
-                app_obj.logger.exception('Erreur backtest job %s', job_id)
-                with _jobs_lock:
-                    _jobs[job_id] = {'status': 'error',
-                                     'error': f'Erreur inattendue : {type(e).__name__}: {e}',
-                                     'created_at': now}
+    # Écrire les paramètres dans un fichier temporaire
+    params_file = tempfile.mktemp(prefix=f'bt_params_{job_id}_', suffix='.json')
+    result_file = tempfile.mktemp(prefix=f'bt_result_{job_id}_', suffix='.json')
+    error_file  = tempfile.mktemp(prefix=f'bt_error_{job_id}_',  suffix='.txt')
 
-    threading.Thread(target=_run, daemon=True).start()
+    with open(params_file, 'w') as f:
+        json.dump({'nb_top': nb_top, **params, **vs}, f)
+
+    # Lancer le subprocess — GIL totalement séparé de gunicorn
+    ef = open(error_file, 'w')
+    proc = subprocess.Popen(
+        [sys.executable, _WORKER_SCRIPT, params_file, result_file],
+        stdout=subprocess.DEVNULL, stderr=ef,
+    )
+    ef.close()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            'status': 'running', 'proc': proc,
+            'result_file': result_file, 'error_file': error_file,
+            'created_at': now,
+        }
+
     return jsonify({'job_id': job_id, 'status': 'running'})
 
 
 @bp.route('/api/backtest/status/<job_id>', methods=['GET'])
 @require_admin
 def backtest_status(job_id):
-    """Poll le statut d'un job backtest."""
+    """Poll le statut d'un job backtest (vérifie le subprocess à chaque appel)."""
     with _jobs_lock:
         job = _jobs.get(job_id)
+
     if job is None:
-        # Job disparu = worker redémarré (ne devrait plus arriver avec --timeout 0)
         return jsonify({'status': 'error',
-                        'error': 'Job perdu (le serveur a redémarré). Relancez le backtest.'}), 200
+                        'error': 'Job introuvable (serveur redémarré ?). Relancez le backtest.'})
+
+    # Vérifier si le subprocess s'est terminé
+    if job['status'] == 'running':
+        proc = job.get('proc')
+        if proc and proc.poll() is not None:
+            result_file = job.get('result_file', '')
+            error_file  = job.get('error_file', '')
+            if proc.returncode == 0 and os.path.exists(result_file):
+                try:
+                    with open(result_file) as f:
+                        result = json.load(f)
+                    with _jobs_lock:
+                        job['status'] = 'done'
+                        job['result'] = result
+                    for fp in [result_file, error_file]:
+                        try:
+                            if fp and os.path.exists(fp): os.remove(fp)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    with _jobs_lock:
+                        job['status'] = 'error'
+                        job['error'] = f'Lecture du résultat impossible : {e}'
+            else:
+                err = ''
+                if error_file and os.path.exists(error_file):
+                    try:
+                        with open(error_file) as f:
+                            err = f.read()[-400:]
+                    except Exception:
+                        pass
+                with _jobs_lock:
+                    job['status'] = 'error'
+                    job['error'] = err or f'Subprocess terminé avec code {proc.returncode}'
+
     if job['status'] == 'running':
         return jsonify({'status': 'running'})
     if job['status'] == 'error':
-        return jsonify({'status': 'error', 'error': job['error']})
+        return jsonify({'status': 'error', 'error': job.get('error', 'Erreur inconnue')})
     return jsonify({'status': 'done', 'result': job['result']})
 
 
