@@ -237,16 +237,26 @@ def run_market_monitor():
 
 
 def build_briefing_payload(session):
-    """Construit le payload du briefing (régime, VIX, positions, news résumées)."""
+    """Construit le payload du briefing (régime, VIX, positions, technicals, news)."""
     monitor = get_market_monitor()
     metrics = monitor.collect_metrics()
+
+    # Perf intraday par position (depuis les quotes IBKR)
+    intraday_map = {p['ticker']: p for p in (metrics.get('positions') or [])}
 
     stats, positions = None, []
     try:
         if ibkr_service.ensure_connected():
             s = ibkr_service.get_portfolio_stats()
             stats = {k: s.get(k) for k in ('total_value', 'total_pnl', 'return_pct', 'positions_count')}
-            positions = s.get('positions', [])
+            raw_positions = s.get('positions', [])
+            # Enrichir chaque position avec la perf intraday et le cours live
+            for p in raw_positions:
+                t = p.get('ticker', '')
+                intra = intraday_map.get(t, {})
+                p['intraday_pct'] = intra.get('pct')    # % depuis clôture précédente
+                p['last_price']   = intra.get('last')   # cours live
+            positions = raw_positions
     except Exception as e:
         print(f"⚠️ Briefing: positions indisponibles ({e})")
 
@@ -256,7 +266,9 @@ def build_briefing_payload(session):
         ns = get_news_service()
         news_items = ns.fetch_news(tickers)
         regime = (metrics.get('regime') or {}).get('regime', '?')
-        ctx = f"régime {regime}, VIX {metrics.get('vix')}"
+        ctx = (f"régime {regime}, VIX {metrics.get('vix')}, "
+               f"SPY {metrics.get('spy_intraday_pct')}% intraday, "
+               f"QQQ {metrics.get('qqq_intraday_pct')}% intraday")
         news_summary = ns.summarize(news_items, context=ctx, tickers=tickers)
     except Exception as e:
         print(f"⚠️ Briefing: news indisponibles ({e})")
@@ -265,6 +277,10 @@ def build_briefing_payload(session):
         'session': session,
         'regime': metrics.get('regime'),
         'vix': metrics.get('vix'), 'vix_pct': metrics.get('vix_pct'),
+        'spy': metrics.get('spy'), 'spy_intraday_pct': metrics.get('spy_intraday_pct'),
+        'qqq': metrics.get('qqq'), 'qqq_intraday_pct': metrics.get('qqq_intraday_pct'),
+        'portfolio_intraday_pct': metrics.get('portfolio_intraday_pct'),
+        'technicals': metrics.get('technicals') or {},
         'stats': stats, 'positions': positions,
         'news_summary': news_summary, 'news_items': news_items,
     }

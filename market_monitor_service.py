@@ -111,7 +111,7 @@ class MarketMonitorService:
             logger.warning('collect_metrics: positions indisponibles (%s)', e)
 
         port_tickers = [p['ticker'] for p in positions if p.get('ticker')]
-        quote_tickers = list(dict.fromkeys(['SPY'] + port_tickers))
+        quote_tickers = list(dict.fromkeys(['SPY', 'QQQ'] + port_tickers))
 
         try:
             quotes = self.ibkr.get_quotes(quote_tickers, include_vix=True)
@@ -131,6 +131,18 @@ class MarketMonitorService:
             out['spy'] = spy.get('last')
             out['spy_intraday_pct'] = spy.get('pct')
 
+        # QQQ intraday
+        qqq = quotes.get('QQQ')
+        if qqq:
+            out['qqq'] = qqq.get('last')
+            out['qqq_intraday_pct'] = qqq.get('pct')
+
+        # Indicateurs techniques SPY/QQQ (momentum 1M/3M, SMA50/200, RSI14)
+        try:
+            out['technicals'] = self._compute_technicals(quotes)
+        except Exception as e:
+            logger.warning('collect_metrics: technicals indisponibles (%s)', e)
+
         # Drawdown du portefeuille (pondéré par la valeur de marché)
         total_mv = sum(abs(p.get('market_value') or 0) for p in positions) or 0.0
         pos_out, weighted = [], 0.0
@@ -138,17 +150,82 @@ class MarketMonitorService:
             t = p.get('ticker')
             q = quotes.get(t)
             pct = q.get('pct') if q else None
+            last = q.get('last') if q else None
             mv = abs(p.get('market_value') or 0)
             weight = (mv / total_mv) if total_mv else 0.0
             if pct is not None:
                 weighted += weight * pct
-            pos_out.append({'ticker': t, 'pct': pct, 'market_value': p.get('market_value'),
-                            'weight': round(weight * 100, 1)})
+            pos_out.append({
+                'ticker': t,
+                'pct': pct,                          # perf intraday
+                'last': last,                         # cours actuel
+                'market_value': p.get('market_value'),
+                'weight': round(weight * 100, 1),
+            })
         out['positions'] = pos_out
         if total_mv and pos_out:
             out['portfolio_intraday_pct'] = round(weighted, 2)
 
         return out
+
+    def _compute_technicals(self, quotes) -> dict:
+        """
+        Calcule momentum 1M/3M, % vs SMA50/200 et RSI14 pour SPY et QQQ
+        depuis l'historique Tiingo (cache DB). Retourne {} si données insuffisantes.
+        """
+        result = {}
+        try:
+            import pandas as pd
+            import numpy as np
+        except ImportError:
+            return result
+
+        for sym in ('SPY', 'QQQ'):
+            try:
+                df, _ = self.momentum._fetch_daily_tiingo(sym, 250)
+                if df is None or df.empty or 'adjClose' in df.columns is False:
+                    continue
+                px = df['adjClose'].dropna().sort_index()
+                if len(px) < 20:
+                    continue
+
+                n = len(px)
+                p_last = float(px.iloc[-1])
+
+                # Momentum 1M (21j) et 3M (63j)
+                mom_1m = (p_last / float(px.iloc[max(0, n - 22)]) - 1) * 100 if n >= 22 else None
+                mom_3m = (p_last / float(px.iloc[max(0, n - 64)]) - 1) * 100 if n >= 64 else None
+
+                # SMA50 / SMA200
+                sma50  = float(px.tail(50).mean())  if n >= 50  else None
+                sma200 = float(px.tail(200).mean()) if n >= 200 else None
+                vs_sma50  = (p_last / sma50  - 1) * 100 if sma50  else None
+                vs_sma200 = (p_last / sma200 - 1) * 100 if sma200 else None
+
+                # RSI 14
+                rsi = None
+                if n >= 15:
+                    delta = px.diff().dropna().tail(14)
+                    gains = delta.clip(lower=0).mean()
+                    losses = (-delta.clip(upper=0)).mean()
+                    if losses > 1e-9:
+                        rs = gains / losses
+                        rsi = round(float(100 - 100 / (1 + rs)), 1)
+
+                result[sym] = {
+                    'last': round(p_last, 2),
+                    'mom_1m': round(mom_1m, 2) if mom_1m is not None else None,
+                    'mom_3m': round(mom_3m, 2) if mom_3m is not None else None,
+                    'vs_sma50':  round(vs_sma50,  2) if vs_sma50  is not None else None,
+                    'vs_sma200': round(vs_sma200, 2) if vs_sma200 is not None else None,
+                    'rsi14': rsi,
+                    'sma50':  round(sma50,  2) if sma50  else None,
+                    'sma200': round(sma200, 2) if sma200 else None,
+                }
+            except Exception as e:
+                logger.debug('_compute_technicals %s: %s', sym, e)
+
+        return result
 
     # ------------------------------------------------------------------
     # Évaluation des seuils

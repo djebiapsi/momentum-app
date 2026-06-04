@@ -428,6 +428,14 @@ Stratégie Momentum 12-1
                 f'font-size:12px;font-weight:600;">{text}</span>')
 
     @staticmethod
+    def _indicator_legend():
+        return (
+            'Mom 1M/3M = performance sur 21/63 jours glissants · '
+            'vs SMA50/200 = écart % par rapport aux moyennes mobiles · '
+            'RSI14 : &gt;70 suracheté (rouge), &lt;30 survendu (vert)'
+        )
+
+    @staticmethod
     def _md_inline(text):
         """Convertit le markdown inline (**gras**, *italique*, [lien](url)) en HTML."""
         text = html_lib.escape(text)
@@ -558,7 +566,26 @@ Stratégie Momentum 12-1
         emojis = {'open': '🔔', 'mid': '🕛', 'close': '🌙'}
         now = datetime.now().strftime('%Y-%m-%d %H:%M ET')
 
-        # Cards régime / VIX / perf
+        # ── Helpers ──────────────────────────────────────────────────────
+        def _pct_span(v, bold=False, suffix='%'):
+            if not isinstance(v, (int, float)):
+                return '<span style="color:#71717a;">—</span>'
+            c = '#22c55e' if v >= 0 else '#ef4444'
+            w = 'font-weight:700;' if bold else ''
+            return f'<span style="color:{c};{w}">{v:+.1f}{suffix}</span>'
+
+        def _num(v, fmt='.2f', prefix='', suffix='', fallback='—'):
+            if not isinstance(v, (int, float)):
+                return f'<span style="color:#71717a;">{fallback}</span>'
+            return f'{prefix}{v:{fmt}}{suffix}'
+
+        def _rsi_color(v):
+            if not isinstance(v, (int, float)): return '#71717a'
+            if v >= 70: return '#ef4444'
+            if v <= 30: return '#22c55e'
+            return '#a1a1aa'
+
+        # ── Régime / VIX / indices ────────────────────────────────────
         regime = payload.get('regime') or {}
         reg = regime.get('regime', 'UNKNOWN')
         reg_color = {'BULL': '#22c55e', 'BEAR': '#ef4444'}.get(reg, '#a1a1aa')
@@ -566,43 +593,95 @@ Stratégie Momentum 12-1
         vix = payload.get('vix')
         vix_str = f"{vix:.1f}" if isinstance(vix, (int, float)) else '—'
         vix_pct = payload.get('vix_pct')
-        vix_color = '#ef4444' if (isinstance(vix, (int, float)) and vix >= 25) else '#fafafa'
+        vix_color = '#ef4444' if isinstance(vix, (int, float)) and vix >= 25 else '#fafafa'
         stats = payload.get('stats') or {}
         pnl = stats.get('total_pnl')
-        pnl_color = '#22c55e' if (isinstance(pnl, (int, float)) and pnl >= 0) else '#ef4444'
+        pnl_color = '#22c55e' if isinstance(pnl, (int, float)) and pnl >= 0 else '#ef4444'
+        port_intra = payload.get('portfolio_intraday_pct')
+        spy_intra  = payload.get('spy_intraday_pct')
+        qqq_intra  = payload.get('qqq_intraday_pct')
 
-        cards = f"""<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><tr>
-        {self._kpi_card('Régime', reg_badge, reg_color)}
-        {self._kpi_card('VIX', (vix_str + (f' ({vix_pct:+.1f}%)' if isinstance(vix_pct,(int,float)) else '')), vix_color)}
-        {self._kpi_card('P&L total', f'{pnl:+,.0f}$' if isinstance(pnl,(int,float)) else '—', pnl_color)}
-      </tr></table>"""
+        # Ligne 1 : régime, VIX, P&L
+        cards_row1 = f"""<table style="width:100%;border-collapse:collapse;margin-bottom:6px;"><tr>
+          {self._kpi_card('Régime', reg_badge, reg_color)}
+          {self._kpi_card('VIX', vix_str + (f' <span style="color:{vix_color};font-size:12px;">({vix_pct:+.1f}%)</span>' if isinstance(vix_pct,(int,float)) else ''), vix_color)}
+          {self._kpi_card('P&L total', f'<span style="color:{pnl_color};font-weight:700;">{pnl:+,.0f}$</span>' if isinstance(pnl,(int,float)) else '—', pnl_color)}
+        </tr></table>"""
 
-        # Table positions
-        positions = payload.get('positions') or []
-        rows = ''
-        for p in positions:
-            rp = p.get('return_pct')
-            rp_color = '#22c55e' if (isinstance(rp, (int, float)) and rp >= 0) else '#ef4444'
-            rp_str = f'<span style="color:{rp_color};font-weight:600;">{rp:+.1f}%</span>' if isinstance(rp, (int, float)) else '—'
-            mv = p.get('market_value') or 0
-            rows += f"""<tr>
-          <td style="padding:9px 12px;border-bottom:1px solid #27272a;font-family:monospace;font-weight:600;">{p.get('ticker','')}</td>
-          <td style="padding:9px 12px;border-bottom:1px solid #27272a;text-align:right;">${mv:,.0f}</td>
-          <td style="padding:9px 12px;border-bottom:1px solid #27272a;text-align:right;">{p.get('allocation_pct','—')}%</td>
-          <td style="padding:9px 12px;border-bottom:1px solid #27272a;text-align:right;">{rp_str}</td>
-        </tr>"""
-        positions_block = f"""
-    <h2 style="font-size:15px;color:#e4e4e7;margin:22px 0 10px;">📊 Tes positions</h2>
+        # Ligne 2 : indices intraday
+        spy_cell = self._kpi_card('S&P 500', _pct_span(spy_intra, bold=True) + (f'<br><span style="font-size:11px;color:#52525b;">SPY ${payload.get("spy","—")}</span>' if payload.get("spy") else ''), '#fafafa')
+        qqq_cell = self._kpi_card('Nasdaq', _pct_span(qqq_intra, bold=True) + (f'<br><span style="font-size:11px;color:#52525b;">QQQ ${payload.get("qqq","—")}</span>' if payload.get("qqq") else ''), '#fafafa')
+        ptf_cell = self._kpi_card('Portef. intraday', _pct_span(port_intra, bold=True), '#fafafa')
+        cards_row2 = f'<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><tr>{spy_cell}{qqq_cell}{ptf_cell}</tr></table>'
+
+        # ── Indicateurs techniques ────────────────────────────────────
+        techs = payload.get('technicals') or {}
+        tech_rows = ''
+        for sym in ('SPY', 'QQQ'):
+            t = techs.get(sym)
+            if not t:
+                continue
+            rsi = t.get('rsi14')
+            rsi_str = f'<span style="color:{_rsi_color(rsi)};font-weight:600;">{rsi}</span>' if rsi else '—'
+            tech_rows += f"""<tr>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;font-family:monospace;font-weight:700;">{sym}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">${t.get('last','—')}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{_pct_span(t.get('mom_1m'))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{_pct_span(t.get('mom_3m'))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{_pct_span(t.get('vs_sma50'))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{_pct_span(t.get('vs_sma200'))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{rsi_str}</td>
+            </tr>"""
+        technicals_block = ''
+        if tech_rows:
+            tech_legend = self._indicator_legend()
+            technicals_block = f"""
+    <h2 style="font-size:15px;color:#e4e4e7;margin:20px 0 8px;">📈 Indicateurs techniques</h2>
     <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:10px;overflow:hidden;">
       <thead><tr style="background:#27272a;">
-        <th style="padding:9px 12px;text-align:left;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Ticker</th>
-        <th style="padding:9px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Valeur</th>
-        <th style="padding:9px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Alloc.</th>
-        <th style="padding:9px 12px;text-align:right;font-size:11px;color:#a1a1aa;text-transform:uppercase;">Perf.</th>
-      </tr></thead><tbody>{rows}</tbody>
-    </table>""" if positions else '<p style="color:#a1a1aa;">Aucune position ouverte.</p>'
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#a1a1aa;">INDEX</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Cours</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Mom 1M</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Mom 3M</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">vs SMA50</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">vs SMA200</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">RSI 14</th>
+      </tr></thead><tbody>{tech_rows}</tbody>
+    </table>
+    <p style="font-size:11px;color:#52525b;margin:6px 0 0;">{tech_legend}</p>"""
 
-        # Section news
+        # ── Positions ─────────────────────────────────────────────────
+        positions = payload.get('positions') or []
+        pos_rows = ''
+        for p in sorted(positions, key=lambda x: abs(x.get('market_value') or 0), reverse=True):
+            mv  = p.get('market_value') or 0
+            rp  = p.get('return_pct')        # perf depuis PRU
+            ip  = p.get('intraday_pct')      # perf intraday du jour
+            lp  = p.get('last_price')
+            pru = p.get('avg_cost')
+            alloc = p.get('allocation_pct', '—')
+            pos_rows += f"""<tr>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;font-family:monospace;font-weight:700;">{p.get('ticker','')}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;color:#a1a1aa;">{f'${lp:.2f}' if isinstance(lp,(int,float)) else '—'}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">${mv:,.0f}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;color:#a1a1aa;">{alloc}%</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{_pct_span(ip, bold=True)}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #27272a;text-align:right;">{_pct_span(rp)}</td>
+            </tr>"""
+        positions_block = f"""
+    <h2 style="font-size:15px;color:#e4e4e7;margin:20px 0 8px;">📊 Positions</h2>
+    <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:10px;overflow:hidden;">
+      <thead><tr style="background:#27272a;">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#a1a1aa;">Ticker</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Cours</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Valeur</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Alloc.</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">Aujourd'hui</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#a1a1aa;">vs PRU</th>
+      </tr></thead><tbody>{pos_rows}</tbody>
+    </table>""" if positions else '<p style="color:#a1a1aa;font-size:13px;">Aucune position ouverte.</p>'
+
+        # ── News ──────────────────────────────────────────────────────
         summary = (payload.get('news_summary') or '').strip()
         summary_html = self._md_to_email_html(summary) if summary else 'Aucune actualité notable.'
         news_items = payload.get('news_items') or []
@@ -614,15 +693,37 @@ Stratégie Momentum 12-1
           <a href="{it.get('link','#')}" style="color:#93c5fd;text-decoration:none;">{it.get('title','')}</a>
           <span style="font-size:11px;color:#52525b;"> · {it.get('source','')}</span></li>"""
         news_block = f"""
-    <h2 style="font-size:15px;color:#e4e4e7;margin:22px 0 10px;">📰 News & marché</h2>
+    <h2 style="font-size:15px;color:#e4e4e7;margin:20px 0 8px;">📰 News & analyse</h2>
     <div style="background:#18181b;border:1px solid #27272a;padding:16px;border-radius:10px;
                 font-size:14px;line-height:1.6;color:#d4d4d8;">{summary_html}</div>
-    {('<ul style="padding-left:18px;margin:14px 0 0;font-size:13px;">' + links + '</ul>') if links else ''}"""
+    {('<ul style="padding-left:18px;margin:12px 0 0;font-size:13px;">' + links + '</ul>') if links else ''}"""
 
-        body = cards + positions_block + news_block
+        body = cards_row1 + cards_row2 + technicals_block + positions_block + news_block
         html = self._html_shell(titles.get(session, 'Briefing'), now, body,
                                 accent='#1d4ed8,#7c3aed', emoji=emojis.get(session, '📈'))
-        text = f"{titles.get(session,'Briefing')} — {now}\nRégime: {reg} · VIX: {vix_str}\n\n{summary}"
+
+        # Texte plain
+        def _pct_txt(v): return f'{v:+.1f}%' if isinstance(v, (int, float)) else '—'
+        txt_lines = [
+            f"{titles.get(session,'Briefing')} — {now}",
+            f"Régime: {reg}  VIX: {vix_str} ({_pct_txt(vix_pct)})  P&L: {_pct_txt(pnl)}",
+            f"SPY: {_pct_txt(spy_intra)}  QQQ: {_pct_txt(qqq_intra)}  Portef.: {_pct_txt(port_intra)}",
+            '',
+        ]
+        for sym in ('SPY', 'QQQ'):
+            t = (techs or {}).get(sym, {})
+            if t:
+                txt_lines.append(
+                    f"{sym}: 1M {_pct_txt(t.get('mom_1m'))} | 3M {_pct_txt(t.get('mom_3m'))} | "
+                    f"SMA50 {_pct_txt(t.get('vs_sma50'))} | SMA200 {_pct_txt(t.get('vs_sma200'))} | RSI {t.get('rsi14','—')}"
+                )
+        txt_lines.append('')
+        for p in positions:
+            txt_lines.append(
+                f"{p.get('ticker',''):8} | {_pct_txt(p.get('intraday_pct'))} intraday | {_pct_txt(p.get('return_pct'))} vs PRU"
+            )
+        txt_lines += ['', summary]
+        text = '\n'.join(txt_lines)
         return self._send(f"{emojis.get(session,'📈')} {titles.get(session,'Briefing')} — {now}", html, text)
 
     # =====================================================================
