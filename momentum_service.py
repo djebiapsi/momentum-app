@@ -66,7 +66,11 @@ class MomentumService:
             rows = q.order_by(MarketPriceBar.bar_date).all()
             if not rows:
                 return None
-            df = pd.DataFrame([{'date': r.bar_date, 'adjClose': r.adj_close} for r in rows])
+            df = pd.DataFrame([
+                {'date': r.bar_date, 'adjClose': r.adj_close,
+                 'close': r.close, 'volume': r.volume}
+                for r in rows
+            ])
             df['date'] = pd.to_datetime(df['date'])
             df.set_index('date', inplace=True)
             return df.sort_index()
@@ -103,14 +107,18 @@ class MomentumService:
                 bd = date_cls.fromisoformat(d)
                 adj = float(b['adj_close'])
                 cl = float(b.get('close') or b['adj_close'])
+                vol = b.get('volume')
+                vol = float(vol) if vol is not None else None
                 if d in existing:
                     existing[d].adj_close = adj
                     existing[d].close = cl
+                    if vol is not None:
+                        existing[d].volume = vol
                     existing[d].source = source
                 else:
                     db.session.add(MarketPriceBar(
                         ticker=ticker, bar_date=bd,
-                        adj_close=adj, close=cl, source=source,
+                        adj_close=adj, close=cl, volume=vol, source=source,
                     ))
             db.session.commit()
         except Exception as e:
@@ -159,7 +167,8 @@ class MomentumService:
             bars = [
                 {'date': idx.strftime('%Y-%m-%d'),
                  'adj_close': float(row['adjClose']),
-                 'close': float(row.get('close', row['adjClose']))}
+                 'close': float(row.get('close', row['adjClose'])),
+                 'volume': float(row['volume']) if row.get('volume') is not None else None}
                 for idx, row in df_tiingo.iterrows()
             ]
             self._save_bars_to_db(ticker, bars, source='tiingo')

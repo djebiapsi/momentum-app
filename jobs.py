@@ -2,7 +2,7 @@
 """Tâches planifiées (extrait de app.py) ; app injecté par scheduler.create_scheduler()."""
 from datetime import datetime
 from models import db, PanelAction
-from services import ibkr_service, get_momentum_service, get_email_service
+from services import ibkr_service, get_momentum_service, get_email_service, get_backtest_service
 from core import compute_and_save_momentum, run_market_monitor, build_briefing_payload
 
 
@@ -98,6 +98,16 @@ def job_refresh_prices():
                     print(f"✅ Cache panel réchauffé ({len(panel)} tickers)")
                 except Exception as e:
                     print(f"⚠️ Réchauffe panel: {e}")
+
+            # Pré-remplissage du cache de prix pour le backtest (pool candidat, avec
+            # volume), borné par nuit pour respecter le pacing IBKR. Étalé sur plusieurs
+            # nuits jusqu'à couverture complète.
+            try:
+                bt = get_backtest_service()
+                res = bt.prefill_pool(years=10, max_fetch=50)
+                print(f"✅ Pré-remplissage backtest : {res['fetched']} ticker(s) sur {res['pool']}")
+            except Exception as e:
+                print(f"⚠️ Pré-remplissage backtest: {e}")
         except Exception as e:
             print(f"❌ job_refresh_prices: {e}")
 

@@ -166,6 +166,7 @@ momentum-app/
 ├── short_screener_service.py # Screener Short legacy
 ├── finviz_screener_service.py# Screener Long/Short via Finviz
 ├── options_service.py        # Black-Scholes PUT / PUT SPREAD
+├── backtest_service.py       # Backtest momentum (univers /3 mois, quantstats)
 ├── market_monitor_service.py # Surveillance marché (VIX, drawdowns)
 ├── news_service.py           # Agrégation RSS + résumé LLM des briefings
 ├── cache_utils.py            # Cache mémoire

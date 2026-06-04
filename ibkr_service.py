@@ -226,7 +226,7 @@ class IBKRService:
           - espacement minimal entre requêtes (HIST_MIN_INTERVAL)
           - retry unique avec back-off si violation de pacing (erreur 162)
 
-        Returns: [{'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float}]
+        Returns: [{'date': 'YYYY-MM-DD', 'adj_close': float, 'close': float, 'volume': float|None}]
         """
         if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
@@ -266,10 +266,16 @@ class IBKRService:
         for b in bars:
             d = b.date
             date_str = d.isoformat() if hasattr(d, 'isoformat') else str(d)[:10]
+            vol = getattr(b, 'volume', None)
+            try:
+                vol = float(vol) if vol is not None and float(vol) >= 0 else None
+            except (TypeError, ValueError):
+                vol = None
             result.append({
                 'date': date_str[:10],
                 'adj_close': float(b.close),
                 'close': float(b.close),
+                'volume': vol,
             })
         return result
 

@@ -21,6 +21,9 @@ pandas
 # Calculs scientifiques (options Black-Scholes)
 scipy
 
+# Backtest : métriques de performance (CAGR, Sharpe, Sortino, max drawdown, alpha/beta)
+quantstats
+
 # Gestion des dates
 python-dateutil
 

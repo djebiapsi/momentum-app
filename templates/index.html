@@ -38,6 +38,7 @@
         {% include 'partials/_settings.html' %}
         {% include 'partials/_options.html' %}
         {% include 'partials/_perf.html' %}
+        {% include 'partials/_backtest.html' %}
         {% include 'partials/_market.html' %}
     </main>
 
@@ -49,5 +50,6 @@
     <script src="{{ url_for('static', filename='js/short.js') }}"></script>
     <script src="{{ url_for('static', filename='js/options.js') }}"></script>
     <script src="{{ url_for('static', filename='js/perf.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/backtest.js') }}"></script>
 </body>
 </html>

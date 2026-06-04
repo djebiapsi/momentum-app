@@ -12,6 +12,7 @@ from options_service import OptionsService
 from ibkr_service import IBKRService
 from news_service import NewsService
 from market_monitor_service import MarketMonitorService
+from backtest_service import BacktestService
 
 
 # Services (singletons initialisés à la demande)
@@ -22,6 +23,7 @@ short_screener_service = None
 finviz_screener_service = None
 market_monitor_service = None
 news_service = None
+backtest_service = None
 
 # Service IBKR — démarre une boucle asyncio dans un thread dédié.
 # Config lue depuis la classe Config (import-time, sans contexte d'app).
@@ -107,5 +109,16 @@ def get_finviz_screener_service():
 def get_options_service():
     """Retourne une instance du service Options."""
     return OptionsService(risk_free_rate=0.05)
+
+
+def get_backtest_service():
+    """Récupère ou crée le service de backtest (momentum + screener Tiingo)."""
+    global backtest_service
+    if backtest_service is None:
+        backtest_service = BacktestService(
+            momentum_service=get_momentum_service(),
+            screener_service=get_screener_service(),
+        )
+    return backtest_service
 
 

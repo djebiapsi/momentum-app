@@ -1,0 +1,118 @@
+        <!-- PAGE: Backtest -->
+        <div id="page-backtest" class="page">
+            <div class="header long" style="background: linear-gradient(135deg,#2d1e5f,#0f2027);">
+                <div class="header-label long">Validation historique</div>
+                <h1>Backtest Momentum 12-1</h1>
+                <p>Intérêt composé · univers re-screené tous les 3 mois · config live</p>
+            </div>
+
+            <div class="perf-dashboard">
+
+                <!-- Formulaire -->
+                <div class="perf-chart-card" style="margin-bottom:16px;">
+                    <div class="perf-chart-title">Paramètres</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:6px 2px;">
+                        <div>
+                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Capital initial ($)</label>
+                            <input id="bt-capital" type="number" value="10000" min="100" step="100"
+                                   style="width:120px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Période</label>
+                            <div class="perf-range-selector" id="bt-years" style="margin:0;">
+                                <button class="perf-pill" data-years="3">3 ans</button>
+                                <button class="perf-pill active" data-years="5">5 ans</button>
+                                <button class="perf-pill" data-years="10">10 ans</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Benchmark</label>
+                            <select id="bt-benchmark"
+                                    style="padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);">
+                                <option value="SPY">S&P 500 (SPY)</option>
+                                <option value="QQQ">Nasdaq 100 (QQQ)</option>
+                            </select>
+                        </div>
+                        <button id="bt-run-btn" class="btn btn-primary" onclick="runBacktest()" style="height:38px;">
+                            Lancer le backtest
+                        </button>
+                    </div>
+                    <div id="bt-live-config" style="font-size:12px;color:var(--text-muted);margin-top:10px;">—</div>
+                </div>
+
+                <!-- Avertissements -->
+                <div id="bt-warnings" style="display:none;margin-bottom:16px;padding:10px 14px;border-radius:10px;
+                     background:rgba(216,90,48,.08);border:1px solid rgba(216,90,48,.25);font-size:12px;color:var(--text-muted);"></div>
+
+                <!-- État / progression -->
+                <div id="bt-status" style="display:none;text-align:center;padding:30px;color:var(--text-muted);"></div>
+
+                <!-- Résultats -->
+                <div id="bt-results" style="display:none;">
+                    <!-- KPI -->
+                    <div class="perf-kpi-strip">
+                        <div class="perf-kpi-card" id="bt-kpi-final">
+                            <div class="perf-kpi-label">Valeur finale</div>
+                            <div class="perf-kpi-value">—</div>
+                            <div class="perf-kpi-delta">—</div>
+                        </div>
+                        <div class="perf-kpi-card" id="bt-kpi-cagr">
+                            <div class="perf-kpi-label">CAGR</div>
+                            <div class="perf-kpi-value">—</div>
+                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">annualisé composé</div>
+                        </div>
+                        <div class="perf-kpi-card" id="bt-kpi-sharpe">
+                            <div class="perf-kpi-label">Sharpe</div>
+                            <div class="perf-kpi-value">—</div>
+                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">rendement/risque</div>
+                        </div>
+                        <div class="perf-kpi-card" id="bt-kpi-sortino">
+                            <div class="perf-kpi-label">Sortino</div>
+                            <div class="perf-kpi-value">—</div>
+                        </div>
+                        <div class="perf-kpi-card" id="bt-kpi-maxdd">
+                            <div class="perf-kpi-label">Max drawdown</div>
+                            <div class="perf-kpi-value text-red">—</div>
+                        </div>
+                        <div class="perf-kpi-card" id="bt-kpi-vol">
+                            <div class="perf-kpi-label">Volatilité</div>
+                            <div class="perf-kpi-value">—</div>
+                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">annualisée</div>
+                        </div>
+                    </div>
+
+                    <!-- Courbe d'équité -->
+                    <div class="perf-chart-row full">
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Courbe d'équité (intérêt composé) vs benchmark</div>
+                            <div class="perf-chart-container">
+                                <canvas id="bt-chart-equity"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Drawdown + Heatmap -->
+                    <div class="perf-chart-row split">
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Drawdown</div>
+                            <div class="perf-chart-container">
+                                <canvas id="bt-chart-drawdown"></canvas>
+                            </div>
+                        </div>
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">Heatmap rendements mensuels</div>
+                            <div class="perf-chart-container" id="bt-container-heatmap">
+                                <div class="empty-state">—</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Méta -->
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Détails</div>
+                        <div id="bt-meta" style="font-size:12px;color:var(--text-muted);line-height:1.8;"></div>
+                    </div>
+                </div>
+
+            </div>
+        </div>

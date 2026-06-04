@@ -49,7 +49,7 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `auth.py` | `@require_admin` decorator (checks `X-Admin-Token` via `current_app.config`) |
 | `services.py` | Service singletons registry + accessors (`get_momentum_service()`, …) and the `ibkr_service` instance |
 | `core.py` | Business logic shared by routes **and** jobs (long calc, momentum CSV, market monitor lifecycle, briefing payload) |
-| `routes/` | One Flask Blueprint per domain: `pages`, `settings`, `panel`, `momentum`, `short`, `options`, `ibkr`, `market` |
+| `routes/` | One Flask Blueprint per domain: `pages`, `settings`, `panel`, `momentum`, `short`, `options`, `ibkr`, `market`, `backtest` |
 | `jobs.py` | Scheduled task bodies (`app` injected by the scheduler) |
 | `scheduler.py` | `create_scheduler(app)` — builds the APScheduler and registers the 4 crons |
 
@@ -63,6 +63,7 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `finviz_screener_service.py` | Finviz scraping for Death Cross detection (short strategy) |
 | `screener_service.py` | Long screener via Tiingo IEX bulk endpoint |
 | `options_service.py` | Black-Scholes Greeks, PUT/PUT SPREAD strategy engine |
+| `backtest_service.py` | Backtest momentum : univers re-screené /3 mois (ADV point-in-time), config live, moteur de rééquilibrage vectorisé, stats via `quantstats` |
 | `email_service.py` | HTML email via Resend API |
 
 **Frontend (split out of the former monolithic `templates/index.html`):**

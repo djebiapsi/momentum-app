@@ -29,6 +29,7 @@ from routes.short import bp as short_bp
 from routes.options import bp as options_bp
 from routes.ibkr import bp as ibkr_bp
 from routes.market import bp as market_bp
+from routes.backtest import bp as backtest_bp
 from scheduler import create_scheduler
 
 
@@ -56,6 +57,7 @@ def create_app():
     app.register_blueprint(options_bp)
     app.register_blueprint(ibkr_bp)
     app.register_blueprint(market_bp)
+    app.register_blueprint(backtest_bp)
 
     return app
 
