@@ -166,18 +166,21 @@ class IBKRService:
             'cooldown_remaining_s': cooldown_remaining,
         }
 
-    def ensure_connected(self) -> bool:
+    def ensure_connected(self, trading_mode: bool = False) -> bool:
         """
         Reconnecte automatiquement si la session est tombée.
-        Respecte un cooldown après un échec pour ne pas retenter
-        la connexion pour chaque ticker lors d'un calcul (51 appels).
+        trading_mode=True → connecte directement en readonly=False (évite la bascule ultérieure).
+        Respecte un cooldown après un échec.
         """
         if self._is_connected():
+            # Si on demande le trading mode et qu'on est encore en readonly → bascule
+            if trading_mode and self._readonly:
+                self._ensure_trading()
             return True
-        # Cooldown : si le dernier échec date de moins de CONNECT_COOLDOWN secondes, on skip
         if self._last_failed_at and (time.time() - self._last_failed_at) < self.CONNECT_COOLDOWN:
             return False
-        return self.connect(force=False).get('success', False)
+        readonly = not trading_mode
+        return self.connect(force=False, readonly=readonly).get('success', False)
 
     # ------------------------------------------------------------------
     # Données portfolio
@@ -352,13 +355,30 @@ class IBKRService:
         return result
 
     def _ensure_trading(self) -> None:
-        """Bascule en mode trading (readonly=False) si nécessaire. Lève ConnectionError si impossible."""
+        """
+        Garantit une connexion en mode trading (readonly=False).
+        Stratégie : si déjà en trading mode → rien à faire.
+        Si en readonly → déconnexion + reconnexion en trading.
+        Retry 1× avec délai si la reconnexion échoue (gateway instable).
+        """
         if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
-        if self._readonly:
-            res = self.connect(force=True, readonly=False)
-            if not res.get('success'):
-                raise ConnectionError(f"Passage en mode trading impossible : {res.get('error')}")
+        if not self._readonly:
+            return  # déjà en trading mode, rien à faire
+
+        # 1ère tentative
+        res = self.connect(force=True, readonly=False)
+        if res.get('success'):
+            return
+
+        # Retry après 3s (le gateway peut mettre un moment à libérer la socket)
+        logger.warning('_ensure_trading: 1ère tentative échouée (%s) — retry dans 3s', res.get('error'))
+        time.sleep(3)
+        res = self.connect(force=True, readonly=False)
+        if not res.get('success'):
+            raise ConnectionError(
+                f"Impossible de passer en mode trading après 2 tentatives : {res.get('error')}"
+            )
 
     async def _qualify_and_place(self, contract, order, dry_run: bool) -> dict:
         """Qualifie le contrat et place l'ordre. Retourne {'status', 'order_id'?, 'error'?}."""
@@ -529,12 +549,14 @@ class IBKRService:
             if order_type.upper() == 'LMT' and limit_price:
                 order.lmtPrice = round(float(limit_price), 2)
 
+            conn_mode = 'READONLY' if self._readonly else 'trading'
+            logger.info('placeOrder → %s %s qty=%s type=%s tif=%s [connexion=%s]',
+                        action, ticker, qty, order_type, tif, conn_mode)
             trade = self._ib.placeOrder(contract, order)
-            await asyncio.sleep(2.0)   # laisser arriver les messages d'erreur IBKR
+            await asyncio.sleep(2.0)
             order_id = getattr(trade.order, 'orderId', None)
             status   = getattr(trade.orderStatus, 'status', 'Submitted')
 
-            # Récupérer la raison exacte depuis le log de l'ordre (messages IBKR)
             ibkr_msgs = []
             for entry in getattr(trade, 'log', []):
                 msg = getattr(entry, 'message', '') or ''
@@ -542,9 +564,7 @@ class IBKRService:
                     ibkr_msgs.append(msg)
             reason_detail = ' | '.join(ibkr_msgs[-3:]) if ibkr_msgs else ''
 
-            logger.info('Ordre unique : %s %s %s qty=%s → orderId=%s status=%s mode=%s msgs=%s',
-                        action, ticker, order_type, qty, order_id, status,
-                        'trading' if not self._readonly else 'READONLY', reason_detail)
+            logger.info('Ordre résultat : orderId=%s status=%s msgs=%s', order_id, status, reason_detail)
 
             error_statuses = ('ValidationError', 'Inactive', 'ApiCancelled', 'Cancelled')
             if status in error_statuses:

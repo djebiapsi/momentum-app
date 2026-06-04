@@ -605,7 +605,8 @@ def ibkr_rebalance():
     if not targets:
         return jsonify({'success': False, 'error': 'targets requis'}), 400
     try:
-        if not ibkr_service.ensure_connected():
+        needed = not dry_run
+        if not ibkr_service.ensure_connected(trading_mode=needed):
             return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
         result = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run)
         orders = result['orders']
@@ -655,7 +656,7 @@ def ibkr_single_order():
         return jsonify({'success': False, 'error': 'qty hors bornes (0–100 000)'}), 400
 
     try:
-        if not ibkr_service.ensure_connected():
+        if not ibkr_service.ensure_connected(trading_mode=True):
             return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
         result = ibkr_service.place_single_order(
             ticker=ticker, action=action, qty=qty,
