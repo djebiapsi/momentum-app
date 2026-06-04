@@ -159,37 +159,68 @@ class NewsService:
     # ------------------------------------------------------------------
 
     # Plafonds anti-surfacturation (bornent la taille de chaque appel)
-    MAX_ARTICLES = 10          # nb d'articles envoyés au modèle
-    MAX_CONTENT_CHARS = 1200   # contenu max par article
-    MAX_OUTPUT_TOKENS = 500    # plafond de tokens générés
+    MAX_GLOBAL = 5             # articles marché global envoyés au modèle
+    MAX_PER_TICKER = 2         # articles par position envoyés au modèle
+    MAX_FETCH_ARTICLES = 10    # nb d'articles dont on récupère le corps complet
+    MAX_CONTENT_CHARS = 900    # contenu max par article
+    MAX_OUTPUT_TOKENS = 700    # plafond de tokens générés
 
-    def summarize(self, news_items, context=''):
+    def summarize(self, news_items, context='', tickers=None):
         """
-        Produit un résumé en prose des news (en français), basé sur le contenu des
-        articles. Retombe sur l'heuristique si aucune clé API n'est configurée ou
-        si l'appel échoue — jamais d'erreur bloquante.
+        Produit un résumé en français : une partie marché global + une partie par
+        position du portefeuille (si `tickers` fourni). Basé sur le contenu des
+        articles. Retombe sur l'heuristique si aucune clé API ou si l'appel échoue.
         """
         if not news_items:
             return "Aucune actualité notable récupérée."
 
-        self._enrich_content(news_items, limit=self.MAX_ARTICLES)
+        self._enrich_content(news_items, limit=self.MAX_FETCH_ARTICLES)
         if self.api_key:
-            summary = self._summarize_api(news_items, context)
+            summary = self._summarize_api(news_items, context, tickers)
             if summary:
                 return summary
         return self._summarize_fallback(news_items)
 
-    def _build_messages(self, news_items, context):
+    def _select_articles(self, news_items, tickers):
+        """
+        Sélectionne les articles envoyés au modèle en garantissant la couverture
+        de chaque position : jusqu'à MAX_PER_TICKER par ticker + MAX_GLOBAL globaux.
+        Borne le coût tout en assurant un résumé par action.
+        """
+        tickers = [t.upper() for t in (tickers or [])]
+        per_ticker, globals_ = {}, []
+        for it in news_items:
+            tk = (it.get('ticker') or '').upper()
+            if tk and tk in tickers:
+                per_ticker.setdefault(tk, [])
+                if len(per_ticker[tk]) < self.MAX_PER_TICKER:
+                    per_ticker[tk].append(it)
+            elif not tk:
+                if len(globals_) < self.MAX_GLOBAL:
+                    globals_.append(it)
+        # Ordre : global d'abord, puis par ticker (ordre du portefeuille)
+        selected = list(globals_)
+        for tk in tickers:
+            selected.extend(per_ticker.get(tk, []))
+        return selected, [tk for tk in tickers if per_ticker.get(tk)]
+
+    def _build_messages(self, news_items, context, tickers=None):
         """Construit les messages (system + user) en bornant la taille (coût)."""
+        selected, covered = self._select_articles(news_items, tickers)
         blocks = []
-        for it in news_items[:self.MAX_ARTICLES]:
+        for it in selected:
             tag = it.get('ticker') or 'MARCHÉ'
             body = (it.get('content') or it.get('summary') or '').strip()[:self.MAX_CONTENT_CHARS]
             block = f"[{tag}] {it['title']} (source: {it['source']})"
             if body:
                 block += f"\nContenu: {body}"
             blocks.append(block)
-        articles = "\n\n".join(blocks)
+        articles = "\n\n".join(blocks) if blocks else "(aucun article)"
+
+        portfolio = [t.upper() for t in (tickers or [])]
+        positions_line = (
+            f"Actions de mon portefeuille : {', '.join(portfolio)}.\n" if portfolio else ""
+        )
 
         system_msg = (
             "Tu es un analyste financier francophone. Tu réponds TOUJOURS et "
@@ -198,21 +229,28 @@ class NewsService:
         )
         user_msg = (
             f"Voici des articles d'actualité financière récents"
-            f"{(' — contexte: ' + context) if context else ''}.\n\n"
+            f"{(' — contexte: ' + context) if context else ''}.\n"
+            f"{positions_line}\n"
             f"{articles}\n\n"
             "À partir du CONTENU de ces articles (pas seulement des titres), rédige "
-            "en français un résumé structuré (4 à 6 puces) qui :\n"
-            "1) synthétise les informations importantes pour un investisseur momentum passif "
-            "(tendances de fond, résultats, risques macro, mouvements majeurs),\n"
-            "2) ignore le bruit (clickbait, news mineures),\n"
-            "3) signale tout signe de stress de marché.\n"
-            "Sois factuel et concis. Rédige intégralement en français."
+            "en français un résumé structuré en DEUX sections :\n\n"
+            "## Marché global\n"
+            "4 à 6 puces synthétisant ce qui compte pour un investisseur momentum passif "
+            "(tendances de fond, risques macro, mouvements majeurs, signes de stress).\n\n"
+            "## Mes positions\n"
+            "Pour CHAQUE action du portefeuille ci-dessus qui a des news pertinentes, une "
+            "puce commençant par le ticker en gras suivi de 1 à 2 phrases de synthèse "
+            "(résultats, annonces, mouvement notable). Si une action n'a aucune news "
+            "pertinente, ne la mentionne pas. Si aucune position n'a de news, écris "
+            "« Rien de notable sur tes positions aujourd'hui. »\n\n"
+            "Ignore le bruit (clickbait, news mineures). Sois factuel et concis. "
+            "Rédige intégralement en français."
         )
         return system_msg, user_msg
 
-    def _summarize_api(self, news_items, context):
+    def _summarize_api(self, news_items, context, tickers=None):
         """Appel à l'API LLM (compatible OpenAI /chat/completions)."""
-        system_msg, user_msg = self._build_messages(news_items, context)
+        system_msg, user_msg = self._build_messages(news_items, context, tickers)
         try:
             r = requests.post(
                 f'{self.base_url}/chat/completions',

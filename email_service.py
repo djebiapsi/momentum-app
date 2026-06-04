@@ -6,6 +6,8 @@ Gère l'envoi des notifications par email via Resend.
 """
 
 import os
+import re
+import html as html_lib
 import resend
 from datetime import datetime
 
@@ -425,6 +427,50 @@ Stratégie Momentum 12-1
         return (f'<span style="background:{bg};color:{fg};padding:3px 12px;border-radius:9999px;'
                 f'font-size:12px;font-weight:600;">{text}</span>')
 
+    @staticmethod
+    def _md_inline(text):
+        """Convertit le markdown inline (**gras**, *italique*, [lien](url)) en HTML."""
+        text = html_lib.escape(text)
+        text = re.sub(r'\[(.+?)\]\((https?://[^)\s]+)\)',
+                      r'<a href="\2" style="color:#93c5fd;text-decoration:none;">\1</a>', text)
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = re.sub(r'__(.+?)__', r'<strong>\1</strong>', text)
+        text = re.sub(r'(?<![\*\w])\*(?!\s)(.+?)(?<!\s)\*(?![\*\w])', r'<em>\1</em>', text)
+        return text
+
+    def _md_to_email_html(self, text):
+        """
+        Rend un sous-ensemble de markdown (titres ##, listes -/*, numéros, gras)
+        en HTML stylé pour email sombre. Évite d'afficher les ** bruts.
+        """
+        if not text:
+            return ''
+        out = []
+        for raw in text.split('\n'):
+            line = raw.rstrip()
+            stripped = line.strip()
+            if not stripped:
+                out.append('<div style="height:8px;"></div>')
+                continue
+            m = re.match(r'^#{1,6}\s+(.*)$', stripped)
+            if m:
+                out.append(f'<div style="font-weight:700;color:#e4e4e7;font-size:14px;'
+                           f'margin:14px 0 6px;border-bottom:1px solid #27272a;padding-bottom:4px;">'
+                           f'{self._md_inline(m.group(1))}</div>')
+                continue
+            m = re.match(r'^[-*•]\s+(.*)$', stripped)
+            if m:
+                out.append(f'<div style="margin:3px 0 3px 6px;">'
+                           f'<span style="color:#7c3aed;">•</span> {self._md_inline(m.group(1))}</div>')
+                continue
+            m = re.match(r'^(\d+)[.)]\s+(.*)$', stripped)
+            if m:
+                out.append(f'<div style="margin:3px 0 3px 6px;">'
+                           f'<strong>{m.group(1)}.</strong> {self._md_inline(m.group(2))}</div>')
+                continue
+            out.append(f'<div style="margin:4px 0;">{self._md_inline(stripped)}</div>')
+        return ''.join(out)
+
     def _cta_button(self, label, path):
         url = f"{self.APP_BASE_URL}{path}" if self.APP_BASE_URL else path
         return f"""<div style="text-align:center;margin:24px 0;">
@@ -558,7 +604,7 @@ Stratégie Momentum 12-1
 
         # Section news
         summary = (payload.get('news_summary') or '').strip()
-        summary_html = summary.replace('\n', '<br>') if summary else 'Aucune actualité notable.'
+        summary_html = self._md_to_email_html(summary) if summary else 'Aucune actualité notable.'
         news_items = payload.get('news_items') or []
         links = ''
         for it in news_items[:8]:

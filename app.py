@@ -2484,7 +2484,7 @@ def build_briefing_payload(session):
         news_items = ns.fetch_news(tickers)
         regime = (metrics.get('regime') or {}).get('regime', '?')
         ctx = f"régime {regime}, VIX {metrics.get('vix')}"
-        news_summary = ns.summarize(news_items, context=ctx)
+        news_summary = ns.summarize(news_items, context=ctx, tickers=tickers)
     except Exception as e:
         print(f"⚠️ Briefing: news indisponibles ({e})")
 
