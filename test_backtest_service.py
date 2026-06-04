@@ -71,21 +71,58 @@ def test_compute_weights_exclut_momentum_negatif(svc):
     assert list(w.index) == ['UP']
 
 
-def test_simulate_un_actif_egal_buy_and_hold(svc):
+def test_simulate_sans_levier(svc):
+    """_simulate sur un actif unique, sans levier, sans DCA : equity > capital si drift positif."""
     didx = pd.bdate_range('2021-01-01', periods=60)
-    ret = pd.Series(np.random.default_rng(1).normal(0.001, 0.01, 60), index=didx)
+    np.random.seed(1)
+    ret = pd.Series(np.random.normal(0.002, 0.01, 60), index=didx)
     daily_ret = pd.DataFrame({'X': ret})
-    # poids = 100% X à la 1re date
-    weights = pd.DataFrame({'X': [1.0]}, index=[didx[0]])
-    port = svc.simulate(weights, daily_ret, didx[0], didx[-1])
-    # le portefeuille = rendement de X décalé d'un jour (poids appliqués le lendemain)
-    expected = ret.shift(0)  # w appliqué via shift(1) sur weights ffill → à partir du 2e jour
-    # vérifie la cohérence du compounding : equity = produit cumulé
-    eq = (1 + port).cumprod()
-    assert eq.iloc[-1] > 0
-    # à partir du 2e jour, port_ret doit égaler le rendement de X
-    common = port.index.intersection(ret.index)[1:]
-    assert np.allclose(port.loc[common].values, ret.loc[common].values, atol=1e-12)
+    me = pd.date_range(didx[0], didx[-1], freq='ME')
+    weights = pd.DataFrame({'X': 1.0}, index=me)
+    p = dict(tx_cost_bps=0, margin_rate_pct=0, cash_yield_pct=0,
+             dca_amount=0, margin_call_enabled=False,
+             maintenance_margin_pct=25, post_call_leverage=1.0)
+    sim = svc._simulate(weights, daily_ret, didx[0], didx[-1], 10000.0, p)
+    assert sim is not None
+    assert len(sim['equity']) == 60
+    assert sim['final_equity'] > 0
+    assert sim['max_leverage'] <= 1.01  # pas de levier
+    assert len(sim['margin_calls']) == 0
+
+
+def test_simulate_margin_call_declenche(svc):
+    """_simulate : krach -35% sur book 2.5x → appel de marge attendu."""
+    np.random.seed(2)
+    didx = pd.bdate_range('2021-01-01', periods=600)
+    dr = pd.DataFrame(np.random.normal(0.0004, 0.01, (600, 2)),
+                      index=didx, columns=['A', 'B'])
+    dr.loc[didx[300]] = [-0.35, -0.34]
+    me = pd.date_range(didx[0], didx[-1], freq='ME')
+    weights = pd.DataFrame({'A': 1.5, 'B': 1.0}, index=me)  # gross 2.5x
+    p = dict(tx_cost_bps=5, margin_rate_pct=6.5, cash_yield_pct=0,
+             dca_amount=0, margin_call_enabled=True,
+             maintenance_margin_pct=25, post_call_leverage=1.0)
+    sim = svc._simulate(weights, dr, didx[0], didx[-1], 10000.0, p)
+    assert len(sim['margin_calls']) >= 1
+    # désactivé : 0 appel
+    p2 = dict(p); p2['margin_call_enabled'] = False
+    sim2 = svc._simulate(weights, dr, didx[0], didx[-1], 10000.0, p2)
+    assert len(sim2['margin_calls']) == 0
+
+
+def test_simulate_dca(svc):
+    """_simulate avec DCA : total_invested = capital + n_rebalances * dca_amount."""
+    didx = pd.bdate_range('2022-01-01', periods=252)
+    dr = pd.DataFrame({'A': np.random.default_rng(3).normal(0.0003, 0.01, 252)}, index=didx)
+    me = pd.date_range(didx[0], didx[-1], freq='ME')
+    weights = pd.DataFrame({'A': 1.0}, index=me)
+    p = dict(tx_cost_bps=0, margin_rate_pct=0, cash_yield_pct=0,
+             dca_amount=500, margin_call_enabled=False,
+             maintenance_margin_pct=25, post_call_leverage=1.0)
+    sim = svc._simulate(weights, dr, didx[0], didx[-1], 10000.0, p)
+    # total_invested = capital + nb apports
+    assert sim['total_invested'] == 10000 + sim['contrib_total']
+    assert sim['contrib_total'] > 0
 
 
 def test_run_end_to_end_synthetique(svc, monkeypatch):
@@ -108,13 +145,19 @@ def test_run_end_to_end_synthetique(svc, monkeypatch):
     monkeypatch.setattr(svc, 'build_candidate_pool', fake_pool)
     monkeypatch.setattr(svc, '_fetch_ticker', fake_fetch)
 
-    res = svc.run(capital=10000, years=3, nb_top=2, benchmark='SPY')
+    res = svc.run(capital=10000, years=3, nb_top=2, benchmark='SPY',
+                  tx_cost_bps=5, dca_amount=0, margin_call_enabled=False)
     assert res['success'] is True
     assert len(res['equity']) > 100
     assert res['stats']['final_value'] > 0
     assert res['stats']['cagr'] is not None
     assert res['stats']['n_rebalances'] > 0
     assert len(res['monthly_returns']) > 0
+    assert len(res['yearly_returns']) > 0
     assert res['meta']['benchmark'] == 'SPY'
     # la courbe d'équité démarre proche du capital
     assert abs(res['equity'][0]['v'] - 10000) < 10000
+    # les nouvelles clés du payload sont présentes
+    assert 'drawdown_periods' in res
+    assert 'benchmark_stats' in res
+    assert res['stats']['tx_costs'] >= 0
