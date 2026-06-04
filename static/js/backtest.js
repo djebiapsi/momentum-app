@@ -125,7 +125,7 @@ function _btRender(res) {
             plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
                 tooltip: { callbacks: { label: c => ` ${c.dataset.label}: $${Math.round(c.parsed.y).toLocaleString()}` } } },
             scales: { x: { type: 'time', time: { unit }, grid: { color: BT_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
-                y: { grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' } } } }
+                y: { type: 'logarithmic', grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' } } } }
     });
 
     // Drawdown
