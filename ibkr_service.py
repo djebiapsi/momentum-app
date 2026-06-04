@@ -530,27 +530,40 @@ class IBKRService:
                 order.lmtPrice = round(float(limit_price), 2)
 
             trade = self._ib.placeOrder(contract, order)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(2.0)   # laisser arriver les messages d'erreur IBKR
             order_id = getattr(trade.order, 'orderId', None)
             status   = getattr(trade.orderStatus, 'status', 'Submitted')
-            logger.info('Ordre unique : %s %s %s qty=%s → orderId=%s status=%s',
-                        action, ticker, order_type, qty, order_id, status)
 
-            # ValidationError = ordre rejeté par le gateway (marché fermé + DAY, etc.)
+            # Récupérer la raison exacte depuis le log de l'ordre (messages IBKR)
+            ibkr_msgs = []
+            for entry in getattr(trade, 'log', []):
+                msg = getattr(entry, 'message', '') or ''
+                if msg:
+                    ibkr_msgs.append(msg)
+            reason_detail = ' | '.join(ibkr_msgs[-3:]) if ibkr_msgs else ''
+
+            logger.info('Ordre unique : %s %s %s qty=%s → orderId=%s status=%s mode=%s msgs=%s',
+                        action, ticker, order_type, qty, order_id, status,
+                        'trading' if not self._readonly else 'READONLY', reason_detail)
+
             error_statuses = ('ValidationError', 'Inactive', 'ApiCancelled', 'Cancelled')
             if status in error_statuses:
-                why = {
-                    'ValidationError': 'Ordre rejeté (marché fermé ? Essaie avec GTC ou un ordre LMT).',
+                base = {
+                    'ValidationError': 'Ordre rejeté (marché fermé ? Compte paper non configuré ? Données manquantes ?)',
                     'Inactive':        'Ordre inactif — compte insuffisamment alimenté ou permissions manquantes.',
                     'ApiCancelled':    'Ordre annulé par l\'API IBKR.',
                     'Cancelled':       'Ordre annulé.',
-                }.get(status, f'Statut inattendu : {status}')
+                }.get(status, f'Statut : {status}')
+                error_msg = f'{base}' + (f' — IBKR dit : {reason_detail}' if reason_detail else '')
                 return {'success': False, 'order_id': order_id, 'order_status': status,
-                        'error': why, 'ticker': ticker, 'action': action, 'qty': qty}
+                        'error': error_msg, 'ibkr_messages': ibkr_msgs,
+                        'ticker': ticker, 'action': action, 'qty': qty,
+                        'readonly_at_order': self._readonly}
 
             return {'success': True, 'order_id': order_id, 'order_status': status,
                     'ticker': ticker, 'action': action, 'qty': qty,
-                    'order_type': order_type, 'limit_price': limit_price}
+                    'order_type': order_type, 'limit_price': limit_price,
+                    'ibkr_messages': ibkr_msgs}
 
         try:
             result = self._submit(fn(), timeout=30)
