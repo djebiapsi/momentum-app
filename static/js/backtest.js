@@ -427,3 +427,130 @@ function _btHeatmap(monthly, containerId) {
     html += '</tbody></table>';
     cont.innerHTML = html;
 }
+
+// =====================================================================
+// OPTIMISATION PARAMÈTRES (grid search vol_target × max_exposure)
+// =====================================================================
+
+let _optPollTimer = null;
+let _optYears = 10;
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('#opt-years .perf-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+            document.querySelectorAll('#opt-years .perf-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            _optYears = parseInt(pill.dataset.years, 10);
+        });
+    });
+});
+
+async function launchOptimize(quick) {
+    const nbTop = parseInt(document.getElementById('opt-nb-top')?.value || 5, 10);
+    document.getElementById('opt-results').style.display = 'none';
+    document.getElementById('opt-error').style.display = 'none';
+    _optSetProgress(0, 0, 'Démarrage…');
+    document.getElementById('opt-progress').style.display = 'block';
+    ['btn-opt-full','btn-opt-quick'].forEach(id => {
+        const b = document.getElementById(id); if (b) b.disabled = true;
+    });
+
+    const res = await api('/backtest/optimize', {
+        method: 'POST',
+        body: JSON.stringify({ years: _optYears, nb_top: nbTop, quick: !!quick }),
+    });
+
+    if (!res || !res.success) {
+        _optDone();
+        const errEl = document.getElementById('opt-error');
+        errEl.textContent = res?.message || 'Erreur lors du lancement';
+        errEl.style.display = 'block';
+        return;
+    }
+    if (_optPollTimer) clearInterval(_optPollTimer);
+    _optPollTimer = setInterval(_optPoll, 2000);
+}
+
+async function _optPoll() {
+    const st = await api('/backtest/optimize/status');
+    if (!st) return;
+    _optSetProgress(st.done, st.total, st.current || '…');
+    if (!st.running) {
+        clearInterval(_optPollTimer); _optPollTimer = null;
+        _optDone();
+        if (st.error) {
+            const errEl = document.getElementById('opt-error');
+            errEl.textContent = '❌ ' + st.error;
+            errEl.style.display = 'block';
+        } else if (st.results) {
+            _optRenderResults(st.results, st.elapsed_s);
+        }
+    }
+}
+
+function _optSetProgress(done, total, label) {
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    const bar = document.getElementById('opt-progress-bar');
+    if (bar) bar.style.width = pct + '%';
+    const lbl = document.getElementById('opt-progress-label');
+    if (lbl) lbl.textContent = label;
+    const pctEl = document.getElementById('opt-progress-pct');
+    if (pctEl) pctEl.textContent = total > 0 ? `${done}/${total}` : '';
+}
+
+function _optDone() {
+    ['btn-opt-full','btn-opt-quick'].forEach(id => {
+        const b = document.getElementById(id); if (b) b.disabled = false;
+    });
+    document.getElementById('opt-progress').style.display = 'none';
+}
+
+function _optRenderResults(results, elapsedS) {
+    const body = document.getElementById('opt-results-body');
+    const meta = document.getElementById('opt-results-meta');
+    const el = document.getElementById('opt-results');
+    if (!body || !el) return;
+
+    const eligible = results.filter(r => r.eligible);
+    const best = eligible[0];
+    meta.innerHTML = `${results.length} combinaisons testées · ${eligible.length} éligibles (MaxDD ≥ −30 %) · ${elapsedS}s`
+        + (best ? ` · <strong style="color:var(--accent-long);">★ Meilleure : ${best.label}</strong>` : '');
+
+    body.innerHTML = results.map(r => {
+        const isBest = r.rank === 1 && r.eligible;
+        const bg = isBest ? 'background:rgba(34,197,94,.07);' : '';
+        const ddColor = r.max_dd < -25 ? 'color:#ef4444;' : r.max_dd < -20 ? 'color:#f97316;' : '';
+        const eligBadge = r.eligible ? ''
+            : '<span style="font-size:9px;color:#ef4444;opacity:.7;margin-left:4px;">hors limite</span>';
+        const applyBtn = r.eligible && r.vol_scaling
+            ? `<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px;"
+                 onclick="optApply(${r.vol_target_pct},${r.max_exposure_pct})">Appliquer</button>`
+            : '';
+        return `<tr style="${bg}border-bottom:1px solid var(--border);">
+            <td style="padding:7px 10px;color:var(--text-muted);">${isBest ? '★' : r.rank}</td>
+            <td style="padding:7px 10px;font-family:'IBM Plex Mono';white-space:nowrap;">${r.label}${eligBadge}</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:600;">${r.sharpe}</td>
+            <td style="padding:7px 10px;text-align:right;">${r.sortino}</td>
+            <td style="padding:7px 10px;text-align:right;">${r.cagr}%</td>
+            <td style="padding:7px 10px;text-align:right;${ddColor}">${r.max_dd}%</td>
+            <td style="padding:7px 10px;text-align:right;">${r.volatility}%</td>
+            <td style="padding:7px 10px;text-align:right;">${r.avg_leverage}×</td>
+            <td style="padding:7px 10px;text-align:right;">${r.n_margin_calls}</td>
+            <td style="padding:7px 10px;text-align:center;">${applyBtn}</td>
+        </tr>`;
+    }).join('');
+    el.style.display = 'block';
+}
+
+async function optApply(volTarget, maxExposure) {
+    if (!confirm(`Appliquer vol_target=${volTarget}%, max_exposure=${maxExposure}% aux paramètres live ?`)) return;
+    const res = await api('/settings', {
+        method: 'POST',
+        body: JSON.stringify({ vol_scaling_enabled: true, vol_target: volTarget, max_exposure: maxExposure }),
+    });
+    if (res && res.success) {
+        showToast(`Paramètres mis à jour : vol_target=${volTarget}% · max_exposure=${maxExposure}%`);
+    } else {
+        showToast(res?.error || 'Erreur', 'error');
+    }
+}

@@ -18,6 +18,13 @@ from backtest_service import BacktestService
 
 bp = Blueprint('backtest', __name__)
 
+# État global de l'optimisation (une seule à la fois)
+_opt_lock = threading.Lock()
+_opt_state: dict = {
+    'running': False, 'done': 0, 'total': 0, 'current': '',
+    'results': None, 'error': None, 'started_at': None, 'elapsed_s': None,
+}
+
 DEFAULT_YEARS = 5
 DEFAULT_CAPITAL = 10000.0
 DEFAULT_POOL = 120  # borne le coût data (≈ temps de la 1re exécution)
@@ -197,6 +204,65 @@ def backtest_status(job_id):
     if job['status'] == 'error':
         return jsonify({'status': 'error', 'error': job.get('error', 'Erreur inconnue')})
     return jsonify({'status': 'done', 'result': job['result']})
+
+
+@bp.route('/api/backtest/optimize', methods=['POST'])
+@require_admin
+def backtest_optimize():
+    """
+    Lance le grid search vol_target × max_exposure en arrière-plan.
+    Body optionnel : { years, nb_top, capital, quick }
+    """
+    global _opt_state
+    with _opt_lock:
+        if _opt_state['running']:
+            return jsonify({'success': False, 'message': 'Optimisation déjà en cours'}), 409
+
+    data = request.get_json(silent=True) or {}
+    years   = int(data.get('years', 10))
+    nb_top  = int(data.get('nb_top', int(Settings.get('nb_top', current_app.config.get('DEFAULT_NB_TOP', 5)))))
+    capital = float(data.get('capital', 10000.0))
+    quick   = bool(data.get('quick', False))
+
+    import time as _time
+    app_obj = current_app._get_current_object()
+
+    with _opt_lock:
+        _opt_state.update({
+            'running': True, 'done': 0, 'total': 0, 'current': 'Chargement des données…',
+            'results': None, 'error': None,
+            'started_at': _time.time(), 'elapsed_s': None,
+        })
+
+    def _progress(done, total, label):
+        with _opt_lock:
+            _opt_state.update({'done': done, 'total': total, 'current': label})
+
+    def _worker():
+        t0 = _time.time()
+        with app_obj.app_context():
+            try:
+                svc = get_backtest_service()
+                results = svc.optimize(years=years, nb_top=nb_top, capital=capital,
+                                       quick=quick, progress_cb=_progress)
+                with _opt_lock:
+                    _opt_state.update({'running': False, 'results': results,
+                                       'elapsed_s': round(_time.time() - t0, 1)})
+            except Exception as e:
+                with _opt_lock:
+                    _opt_state.update({'running': False, 'error': str(e),
+                                       'elapsed_s': round(_time.time() - t0, 1)})
+
+    threading.Thread(target=_worker, name='bt-optimize', daemon=True).start()
+    return jsonify({'success': True,
+                    'message': f'Optimisation lancée ({"rapide" if quick else "complète"}, {years} ans)'})
+
+
+@bp.route('/api/backtest/optimize/status', methods=['GET'])
+def backtest_optimize_status():
+    """Retourne l'état courant de l'optimisation + résultats si terminée."""
+    with _opt_lock:
+        return jsonify(dict(_opt_state))
 
 
 @bp.route('/api/backtest/prefill', methods=['POST'])

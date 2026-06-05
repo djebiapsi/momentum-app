@@ -340,6 +340,150 @@ class BacktestService:
             logger.warning('_load_monthly_px échec : %s', e)
             return pd.DataFrame()
 
+    # ------------------------------------------------------------------
+    # Optimisation des paramètres (grid search vol_target × max_exposure)
+    # ------------------------------------------------------------------
+    def optimize(self, years=10, nb_top=5, capital=10000.0, quick=False,
+                 progress_cb=None):
+        """
+        Grid search sur vol_target_pct × max_exposure_pct (vol_scaling=True).
+        Les données sont chargées une seule fois ; seuls build_weight_matrix +
+        _simulate tournent pour chaque combinaison.
+
+        Critères de sélection :
+          - max_drawdown ≥ -30 % (filtre dur)
+          - tri principal : Sharpe ↓
+          - départage : CAGR ↓
+
+        progress_cb(done, total, label) appelé à chaque combo.
+        Retourne une liste de dicts JSON-sérialisables triée (éligibles d'abord).
+        """
+        import math as _math
+
+        GRID = {
+            'vol_target_pct':   [10, 15, 20] if quick else [8, 10, 12, 15, 18, 20, 25],
+            'max_exposure_pct': [100, 150, 250] if quick else [100, 125, 150, 175, 200, 250, 300],
+        }
+        MAX_DD_LIMIT = -0.30
+
+        # ── helpers stats (sans quantstats pour la vitesse) ──────────────
+        def _cagr(r):
+            if r.empty: return None
+            n = len(r) / TRADING_DAYS
+            t = float((1 + r).prod())
+            return (t ** (1 / n) - 1) * 100 if t > 0 and n > 0 else None
+
+        def _sharpe(r):
+            s = float(r.std(ddof=1))
+            return float(r.mean()) / s * _math.sqrt(TRADING_DAYS) if s > 1e-9 else None
+
+        def _sortino(r):
+            dn = r[r < 0]
+            s = float(dn.std(ddof=1)) if len(dn) > 1 else 1e-9
+            return float(r.mean()) / s * _math.sqrt(TRADING_DAYS) if s > 1e-9 else None
+
+        def _maxdd(r):
+            eq = (1 + r).cumprod()
+            return float((eq / eq.cummax() - 1).min())
+
+        # ── chargement des données (1 seule fois) ────────────────────────
+        end = pd.Timestamp.now().normalize()
+        start = end - pd.DateOffset(years=int(years))
+        nb_jours = int((end - start).days) + 13 * 31 + 200
+
+        pool = self.build_candidate_pool()
+        close_px, dvol, low_px, _ = self.fetch_history(
+            pool, nb_jours, start.date(), max_fetch=0)
+
+        if close_px.empty:
+            raise RuntimeError(
+                "Cache DB vide — lance la collecte yfinance (Config → "
+                "Données de marché) puis réessaie.")
+
+        daily_ret = close_px.pct_change()
+
+        since_m = (start - pd.DateOffset(months=14)).date()
+        monthly_db = self._load_monthly_px(pool, since_m)
+        monthly_px = monthly_db.combine_first(close_px.resample('ME').last()) \
+            if not monthly_db.empty else close_px.resample('ME').last()
+
+        low_ret = None
+        if low_px is not None and not low_px.empty:
+            lw = low_px.reindex(index=close_px.index, columns=close_px.columns)
+            low_ret = lw / close_px.shift(1) - 1.0
+
+        sim_p = {
+            'tx_cost_bps': 5.0, 'margin_rate_pct': 6.5, 'cash_yield_pct': 0.0,
+            'dca_amount': 0.0, 'margin_call_enabled': True,
+            'maintenance_margin_pct': 25.0, 'post_call_leverage': 1.0,
+        }
+
+        # ── grille ───────────────────────────────────────────────────────
+        combos = [{'vol_scaling': True, 'vol_target_pct': float(vt),
+                   'max_exposure_pct': float(me)}
+                  for vt in GRID['vol_target_pct']
+                  for me in GRID['max_exposure_pct']]
+        combos.append({'vol_scaling': False, 'vol_target_pct': 12.0,
+                       'max_exposure_pct': 250.0, '_baseline': True})
+        total = len(combos)
+
+        results = []
+        for done, combo in enumerate(combos, 1):
+            is_baseline = combo.pop('_baseline', False)
+            if is_baseline:
+                label = 'inverse-vol (sans levier)'
+            else:
+                label = (f"vt={combo['vol_target_pct']:.0f}% "
+                         f"me={combo['max_exposure_pct']:.0f}%")
+            if progress_cb:
+                progress_cb(done, total, label)
+            try:
+                params_w = {
+                    'nb_top': nb_top, 'vol_scaling': combo['vol_scaling'],
+                    'vol_target_pct': combo['vol_target_pct'],
+                    'max_exposure_pct': combo['max_exposure_pct'],
+                    'portfolio_filter': False,
+                    'portfolio_vol_threshold_pct': 20.0,
+                }
+                wdf, meta_w = self.build_weight_matrix(
+                    monthly_px, daily_ret, dvol, start, params_w)
+                if wdf.empty:
+                    continue
+                sim = self._simulate(wdf, daily_ret, start, end,
+                                     capital, sim_p, low_ret=low_ret)
+                if sim is None or sim['equity'].empty or sim['ruined']:
+                    continue
+                twr = sim['twr_ret']
+                row = {
+                    'label':            label,
+                    'vol_scaling':      combo['vol_scaling'],
+                    'vol_target_pct':   combo['vol_target_pct'],
+                    'max_exposure_pct': combo['max_exposure_pct'],
+                    'sharpe':           round(_sharpe(twr) or 0, 3),
+                    'sortino':          round(_sortino(twr) or 0, 3),
+                    'cagr':             round(_cagr(twr) or 0, 2),
+                    'max_dd':           round(_maxdd(twr) * 100, 2),
+                    'volatility':       round(float(twr.std(ddof=1)) * _math.sqrt(TRADING_DAYS) * 100, 2),
+                    'avg_leverage':     round(sim['avg_leverage'], 2),
+                    'max_leverage':     round(sim['max_leverage'], 2),
+                    'n_margin_calls':   len(sim['margin_calls']),
+                    'n_riskoff':        meta_w.get('n_riskoff_months', 0),
+                    'eligible':         _maxdd(twr) >= MAX_DD_LIMIT,
+                }
+                results.append(row)
+            except Exception as e:
+                logger.debug('optimize combo %s : %s', label, e)
+
+        # tri : éligibles d'abord, puis par Sharpe ↓, CAGR ↓
+        results.sort(key=lambda x: (
+            0 if x['eligible'] else 1,
+            -x['sharpe'],
+            -x['cagr'],
+        ))
+        for i, r in enumerate(results, 1):
+            r['rank'] = i
+        return results
+
     def prefill_pool(self, years=5, max_fetch=50, pool_size=None):
         """
         Pré-remplit le cache DB (avec volume) pour le pool candidat via IBKR/Tiingo.
