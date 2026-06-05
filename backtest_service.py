@@ -525,7 +525,7 @@ class BacktestService:
         # Low returns (low[t] / close[t-1] - 1) pour le check de marge intraday
         low_mat = None
         if low_ret is not None:
-            low_aligned = low_ret.reindex(columns=cols).reindex(dates).fillna(method='ffill')
+            low_aligned = low_ret.reindex(columns=cols).reindex(dates).ffill()
             low_mat = low_aligned.to_numpy(dtype=float)
 
         N = len(cols)
