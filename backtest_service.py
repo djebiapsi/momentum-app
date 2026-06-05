@@ -601,22 +601,30 @@ class BacktestService:
             gross = float(np.abs(pos).sum())
             if margin_on and low_mat is not None and gross > 0:
                 low_r = low_mat[i]
-                low_r_safe = np.where(np.isnan(low_r), r, low_r)  # fallback close si low manquant
+                # Fallback close return pour les tickers sans donnée low
+                low_r_safe = np.where(np.isnan(low_r), r, low_r)
                 intra_pos = pos_open * (1.0 + low_r_safe)
                 intra_equity = float(np.nansum(intra_pos)) + cash_open
                 intra_gross = float(np.nansum(np.abs(intra_pos)))
                 if intra_gross > 0 and intra_equity < maint * intra_gross:
-                    # Margin call intraday — liquidation aux cours de clôture
-                    lev_before = intra_gross / intra_equity if intra_equity > 0 else float('inf')
-                    target_gross = max(0.0, equity * post_lev)
-                    scale = target_gross / gross if gross > 0 else 0.0
-                    liquidated = float(np.abs(pos - pos * scale).sum())
+                    # Margin call intraday : liquidation aux prix du LOW (réaliste).
+                    # Le broker force la vente quand le seuil est franchi — pas à la clôture.
+                    # Les positions restantes (scale_low × pos) continuent jusqu'au close.
+                    # Algébriquement : pos_restant_close = intra_pos*scale × (close/low)
+                    #                               = pos_open*(1+r)*scale_low (s'annule)
+                    #                               = pos * scale_low
+                    lev_before = intra_gross / max(intra_equity, 1e-9)
+                    target_gross_low = max(0.0, intra_equity * post_lev)
+                    scale_low = target_gross_low / intra_gross if intra_gross > 0 else 0.0
+                    liquidated = float(np.nansum(np.abs(intra_pos))) * (1.0 - scale_low)
                     c = liquidated * cost
                     tx_total += c
-                    pos = pos * scale
-                    cash = equity - float(pos.sum()) - c
-                    equity = float(pos.sum() + cash)
-                    gross = float(np.abs(pos).sum())
+                    # pos restant valorisé à clôture (algébriquement = pos × scale_low)
+                    pos = pos * scale_low
+                    # cash : produits liquidation aux prix low + cash avant le move du jour
+                    cash = cash_open + float(np.nansum(intra_pos)) * (1.0 - scale_low) - c
+                    equity = float(np.nansum(pos)) + cash
+                    gross = float(np.nansum(np.abs(pos)))
                     margin_calls.append({
                         'date': dt.strftime('%Y-%m-%d'),
                         'equity': round(equity, 2),
