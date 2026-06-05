@@ -311,6 +311,34 @@ class BacktestService:
                 'skipped': max(0, len(missing) - fetched)}
         return close_px, dvol, low_px, meta
 
+    def _load_monthly_px(self, tickers, since_date):
+        """
+        Charge les prix mensuels depuis MonthlyPriceBar (yfinance 20 ans) pour tous
+        les tickers du pool. Retourne un DataFrame pivot (date × ticker, adjClose).
+        Utilisé pour le calcul du momentum dans le backtest, afin d'avoir un lookback
+        suffisant même quand le daily ne couvre que 6 ans.
+        """
+        try:
+            from models import MonthlyPriceBar, db
+            upper = [t.upper() for t in tickers]
+            rows = (db.session.query(
+                        MonthlyPriceBar.ticker,
+                        MonthlyPriceBar.bar_date,
+                        MonthlyPriceBar.adj_close)
+                    .filter(MonthlyPriceBar.ticker.in_(upper))
+                    .filter(MonthlyPriceBar.bar_date >= since_date)
+                    .all())
+            if not rows:
+                return pd.DataFrame()
+            df = pd.DataFrame(rows, columns=['ticker', 'date', 'adjClose'])
+            df['date'] = pd.to_datetime(df['date'])
+            pivot = df.pivot(index='date', columns='ticker', values='adjClose')
+            pivot.columns.name = None
+            return pivot.sort_index()
+        except Exception as e:
+            logger.warning('_load_monthly_px échec : %s', e)
+            return pd.DataFrame()
+
     def prefill_pool(self, years=5, max_fetch=50, pool_size=None):
         """
         Pré-remplit le cache DB (avec volume) pour le pool candidat via IBKR/Tiingo.
@@ -569,12 +597,14 @@ class BacktestService:
             #     plus-bas du jour passe sous le seuil, même si la clôture récupère.
             #     Utilise pos_open × (1 + low_return) pour estimer le pire intraday.
             #     Liquidation exécutée aux prix de clôture (conservateur).
+            #     Pour les tickers sans low data, on utilise le close return (fallback sûr).
             gross = float(np.abs(pos).sum())
             if margin_on and low_mat is not None and gross > 0:
                 low_r = low_mat[i]
-                intra_pos = pos_open * (1.0 + low_r)
-                intra_equity = float(intra_pos.sum()) + cash_open
-                intra_gross = float(np.abs(intra_pos).sum())
+                low_r_safe = np.where(np.isnan(low_r), r, low_r)  # fallback close si low manquant
+                intra_pos = pos_open * (1.0 + low_r_safe)
+                intra_equity = float(np.nansum(intra_pos)) + cash_open
+                intra_gross = float(np.nansum(np.abs(intra_pos)))
                 if intra_gross > 0 and intra_equity < maint * intra_gross:
                     # Margin call intraday — liquidation aux cours de clôture
                     lev_before = intra_gross / intra_equity if intra_equity > 0 else float('inf')
@@ -752,8 +782,19 @@ class BacktestService:
             bench_df = _bench(benchmark)
         bench_close = bench_df['adjClose'] if bench_df is not None else pd.Series(dtype=float)
 
-        monthly_px = close_px.resample('ME').last()
         daily_ret = close_px.pct_change()
+
+        # monthly_px pour le momentum : priorité MonthlyPriceBar (20 ans, yfinance)
+        # qui couvre le lookback 13 mois même pour les backtests longs.
+        # Le resample daily sert de fallback pour les tickers absents de MonthlyPriceBar.
+        since_monthly = (start - pd.DateOffset(months=14)).date()
+        monthly_px_db = self._load_monthly_px(pool, since_monthly)
+        monthly_px_daily = close_px.resample('ME').last()
+        if not monthly_px_db.empty:
+            # DB mensuelle comme base (historique long), daily comme complément
+            monthly_px = monthly_px_db.combine_first(monthly_px_daily)
+        else:
+            monthly_px = monthly_px_daily
 
         weights_df, meta = self.build_weight_matrix(monthly_px, daily_ret, dvol, start, params)
         if weights_df.empty:
@@ -814,7 +855,11 @@ class BacktestService:
                 ] if sim['ruined'] else []) + ([
                     f"Cache incomplet : {fmeta['skipped']} ticker(s) pas encore en base "
                     f"(récupérés progressivement par le cron nocturne). Résultat partiel."
-                ] if fmeta.get('skipped') else [])),
+                ] if fmeta.get('skipped') else []) + ([
+                    "⚠️ Données mensuelles yfinance absentes : le momentum est calculé "
+                    "depuis le resampling du daily (limité à 6 ans). Lance la collecte yfinance "
+                    "(Config → Données de marché) pour un historique complet jusqu'à 20 ans."
+                ] if monthly_px_db.empty else [])),
             },
         }
 
