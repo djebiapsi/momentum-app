@@ -222,7 +222,7 @@ class PriceDataService:
 
     @staticmethod
     def _df_to_bars(sub, monthly=False):
-        """Sous-DataFrame yfinance (Adj Close/Close/Volume) → liste de barres."""
+        """Sous-DataFrame yfinance (Adj Close/Close/High/Low/Volume) → liste de barres."""
         if sub is None or sub.empty:
             return []
         adj_col = 'Adj Close' if 'Adj Close' in sub.columns else 'Close'
@@ -236,10 +236,18 @@ class PriceDataService:
             close = float(close) if not pd.isna(close) else adj
             vol = row.get('Volume')
             vol = float(vol) if vol is not None and not pd.isna(vol) else None
+            # Low/High uniquement pour le daily (n'ont pas de sens sur un mois entier)
+            low_v = high_v = None
+            if not monthly:
+                lv = row.get('Low')
+                hv = row.get('High')
+                low_v = float(lv) if lv is not None and not pd.isna(lv) else None
+                high_v = float(hv) if hv is not None and not pd.isna(hv) else None
             d = idx.date() if hasattr(idx, 'date') else idx
             if monthly:
                 d = d.replace(day=1)  # clé de mois stable
-            bars.append({'date': d.isoformat(), 'adj_close': adj, 'close': close, 'volume': vol})
+            bars.append({'date': d.isoformat(), 'adj_close': adj, 'close': close,
+                         'volume': vol, 'low': low_v, 'high': high_v})
         return bars
 
     @staticmethod
@@ -251,6 +259,7 @@ class PriceDataService:
         ticker = ticker.upper()
         existing = {r.bar_date.isoformat(): r
                     for r in model.query.filter_by(ticker=ticker).all()}
+        has_low = hasattr(model, 'low')   # MonthlyPriceBar n'a pas low/high
         written = 0
         for b in bars:
             d = b['date'][:10]
@@ -259,13 +268,21 @@ class PriceDataService:
             if row:
                 row.adj_close = b['adj_close']
                 row.close = b['close']
-                if b['volume'] is not None:
+                if b.get('volume') is not None:
                     row.volume = b['volume']
+                if has_low:
+                    if b.get('low') is not None:
+                        row.low = b['low']
+                    if b.get('high') is not None:
+                        row.high = b['high']
                 row.source = 'yfinance'
             else:
-                db.session.add(model(
-                    ticker=ticker, bar_date=bd, adj_close=b['adj_close'],
-                    close=b['close'], volume=b['volume'], source='yfinance'))
+                kwargs = dict(ticker=ticker, bar_date=bd, adj_close=b['adj_close'],
+                              close=b['close'], volume=b.get('volume'), source='yfinance')
+                if has_low:
+                    kwargs['low'] = b.get('low')
+                    kwargs['high'] = b.get('high')
+                db.session.add(model(**kwargs))
             written += 1
         db.session.commit()
         return written

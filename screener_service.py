@@ -81,8 +81,10 @@ class ScreenerService:
     
     def get_iex_bulk_data(self):
         """
-        Récupère les données IEX (prix et volume) pour TOUS les tickers en 1 appel.
-        Résultat mis en cache 2h pour éviter des appels répétés au screener.
+        Récupère les données IEX (prix + volume) pour tous les tickers.
+        Priorité :
+          1. Tiingo IEX bulk (1 appel API, données du jour)
+          2. Base yfinance (MarketPriceBar) — calculé sur les 63 derniers jours
 
         Returns:
             tuple: (dict {ticker: {price, volume, adv}}, error)
@@ -91,32 +93,84 @@ class ScreenerService:
         if hit:
             return cached
 
+        # 1) Priorité : ADV depuis la base yfinance (collectée nuitamment, toujours disponible)
+        db_result = self._get_db_adv_data()
+        if db_result and len(db_result) >= 50:
+            self._iex_cache.set("iex_bulk", (db_result, None))
+            return db_result, None
+
+        # 2) Fallback : Tiingo IEX temps-réel (si DB pas encore remplie ou insuffisante)
         url = f"{self.base_url}/iex"
         data, error = self._api_call(url, {}, timeout=120)
 
-        if error:
-            return None, error
+        if not error and data:
+            result = {}
+            for item in data:
+                ticker = item.get('ticker')
+                if not ticker:
+                    continue
+                price = item.get('prevClose') or item.get('tngoLast') or item.get('last') or 0
+                volume = item.get('volume') or 0
+                if price > 0 and volume > 0:
+                    adv = price * volume
+                    result[ticker] = {
+                        'price': round(price, 2),
+                        'volume': int(volume),
+                        'adv': adv
+                    }
+            if result:
+                self._iex_cache.set("iex_bulk", (result, None))
+                return result, None
 
-        result = {}
-        for item in data:
-            ticker = item.get('ticker')
-            if not ticker:
-                continue
+        return None, error or 'Aucune source disponible'
 
-            # Utiliser prevClose ou tngoLast comme prix
-            price = item.get('prevClose') or item.get('tngoLast') or item.get('last') or 0
-            volume = item.get('volume') or 0
+    def _get_db_adv_data(self, adv_window=63):
+        """
+        Calcule l'ADV depuis MarketPriceBar (données yfinance).
+        Utilisé quand Tiingo IEX est indisponible ou non configuré.
+        Returns dict {ticker: {price, volume, adv}} ou {} si DB vide.
+        """
+        try:
+            from models import MarketPriceBar, db
+            from sqlalchemy import func
+            from datetime import date, timedelta
+            cutoff = date.today() - timedelta(days=adv_window + 10)
 
-            if price > 0 and volume > 0:
-                adv = price * volume
-                result[ticker] = {
-                    'price': round(price, 2),
-                    'volume': int(volume),
-                    'adv': adv
-                }
-
-        self._iex_cache.set("iex_bulk", (result, None))
-        return result, None
+            # Dernière clôture par ticker (prix récent)
+            last_close = dict(
+                db.session.query(MarketPriceBar.ticker, MarketPriceBar.close)
+                .filter(MarketPriceBar.close.isnot(None))
+                .filter(MarketPriceBar.bar_date >= cutoff)
+                .distinct(MarketPriceBar.ticker)
+                .order_by(MarketPriceBar.ticker, MarketPriceBar.bar_date.desc())
+                .all()
+            )
+            # ADV moyen (close × volume) sur la fenêtre
+            adv_rows = (
+                db.session.query(
+                    MarketPriceBar.ticker,
+                    func.avg(MarketPriceBar.close * MarketPriceBar.volume).label('adv'),
+                    func.avg(MarketPriceBar.volume).label('avg_vol'),
+                )
+                .filter(MarketPriceBar.bar_date >= cutoff)
+                .filter(MarketPriceBar.volume.isnot(None))
+                .filter(MarketPriceBar.close.isnot(None))
+                .group_by(MarketPriceBar.ticker)
+                .all()
+            )
+            result = {}
+            for row in adv_rows:
+                t = row.ticker
+                if not self._is_valid_us_symbol(t):
+                    continue
+                price = last_close.get(t, 0) or 0
+                adv = float(row.adv or 0)
+                vol = float(row.avg_vol or 0)
+                if price > 0 and adv > 0:
+                    result[t] = {'price': round(price, 2), 'volume': int(vol), 'adv': adv}
+            return result
+        except Exception:
+            return {}
     
     def calculate_score(self, adv):
         """

@@ -89,15 +89,34 @@ class BacktestService:
         # Cache mémoire court (dédoublonne les fetches réseau dans une même exécution).
         self._hist_cache = TTLCache(ttl_seconds=12 * 3600)
 
+    # Seuil d'historique minimum pour figurer dans le pool du backtest
+    DB_MIN_BARS = 200           # ~1 an de daily minimum (filtre les tickers trop récents)
+
     # ------------------------------------------------------------------
     # 1) Pool candidat (univers de départ)
     # ------------------------------------------------------------------
     def build_candidate_pool(self, pool_size=None):
         """
-        Top-N tickers US les plus liquides (ADV ≥ seuil).
-        Si l'API IEX est indisponible ou rate-limitée (429), repli sur les tickers
-        déjà présents dans le cache DB (MarketPriceBar) — suffisant pour le backtest.
+        Construit le pool candidat pour le backtest.
+
+        Priorité :
+          1. Tickers de la DB yfinance (SP500 + Nasdaq-100 collectés nuitamment)
+             → univers le plus large possible (500+ tickers) sans cap arbitraire.
+             On garde tous les symboles US valides ayant assez de barres daily.
+          2. Tiingo IEX bulk (si pool DB insuffisant) — top-N par ADV.
+          3. DB générique (repli ultime).
+
+        Le biais de survivant reste présent (on collecte les constituants actuels),
+        mais l'univers est bien plus large qu'avant (120 → 500+ tickers).
+        La sélection ADV point-in-time se fait ensuite dans quarterly_universe().
         """
+        # 1) Priorité : DB yfinance (constituants SP500/NDX100 collectés)
+        pool = self._pool_from_yfinance_db()
+        if pool and len(pool) >= 50:
+            logger.info('Pool backtest depuis DB yfinance : %d tickers', len(pool))
+            return pool
+
+        # 2) Fallback Tiingo IEX (si DB pas encore remplie)
         pool_size = pool_size or self.POOL_SIZE
         if self.ss is not None:
             data, err = self.ss.get_iex_bulk_data()
@@ -109,14 +128,37 @@ class BacktestService:
                 rows.sort(key=lambda x: x[1], reverse=True)
                 pool = [t for t, _ in rows[:pool_size]]
                 if pool:
+                    logger.info('Pool backtest depuis Tiingo IEX : %d tickers', len(pool))
                     return pool
             logger.warning('build_candidate_pool IEX indispo (%s) — repli cache DB', err)
 
-        # Repli : tickers les plus récents dans le cache DB, filtrés US valides
+        # 3) Repli générique DB (tickers les plus couverts, sans filtre source)
         return self._pool_from_db(pool_size)
 
+    def _pool_from_yfinance_db(self):
+        """
+        Pool depuis les données yfinance en base (MarketPriceBar source='yfinance').
+        Retourne tous les symboles US valides avec suffisamment de barres daily.
+        La sélection finale par ADV se fait dans quarterly_universe() — ici on veut
+        l'univers le plus large possible.
+        """
+        try:
+            from models import MarketPriceBar, db
+            from sqlalchemy import func
+            rows = (db.session.query(MarketPriceBar.ticker,
+                                     func.count(MarketPriceBar.id).label('n'))
+                    .filter(MarketPriceBar.source == 'yfinance')
+                    .group_by(MarketPriceBar.ticker)
+                    .having(func.count(MarketPriceBar.id) >= self.DB_MIN_BARS)
+                    .all())
+            pool = [r.ticker for r in rows if ScreenerService._is_valid_us_symbol(r.ticker)]
+            return pool
+        except Exception as e:
+            logger.warning('_pool_from_yfinance_db échec : %s', e)
+            return []
+
     def _pool_from_db(self, pool_size):
-        """Pool candidat depuis le cache DB — utilisé quand IEX est rate-limité."""
+        """Pool candidat générique depuis le cache DB — repli ultime."""
         try:
             from models import MarketPriceBar, db
             from sqlalchemy import func
@@ -128,13 +170,13 @@ class BacktestService:
             pool = [r.ticker for r in rows
                     if ScreenerService._is_valid_us_symbol(r.ticker)][:pool_size]
             if pool:
-                logger.info('Pool candidat depuis cache DB : %d tickers', len(pool))
+                logger.info('Pool candidat depuis cache DB générique : %d tickers', len(pool))
                 return pool
         except Exception as e:
             logger.warning('_pool_from_db échec : %s', e)
         raise RuntimeError(
             "Univers indisponible : API IEX rate-limitée et cache DB vide. "
-            "Réessaie dans quelques minutes."
+            "Lance la collecte yfinance (bouton Config) puis réessaie."
         )
 
     # ------------------------------------------------------------------
@@ -151,7 +193,7 @@ class BacktestService:
         return df.set_index('date').sort_index()
 
     def _load_db(self, ticker, start_date):
-        """Charge adjClose/close/volume depuis MarketPriceBar (≥ start_date). None si indispo."""
+        """Charge adjClose/close/volume/low/high depuis MarketPriceBar (≥ start_date)."""
         try:
             from models import MarketPriceBar
             rows = (MarketPriceBar.query.filter_by(ticker=ticker.upper())
@@ -160,7 +202,8 @@ class BacktestService:
             if not rows:
                 return None
             df = pd.DataFrame([{'date': r.bar_date, 'adjClose': r.adj_close,
-                                'close': r.close, 'volume': r.volume} for r in rows])
+                                 'close': r.close, 'volume': r.volume,
+                                 'low': r.low, 'high': r.high} for r in rows])
             df['date'] = pd.to_datetime(df['date'])
             return df.set_index('date').sort_index()
         except Exception:
@@ -223,20 +266,24 @@ class BacktestService:
 
     def fetch_history(self, tickers, nb_jours, start_date, progress=None, max_fetch=None):
         """
-        Construit close_px (prix ajusté) + dvol (volume $, pour l'ADV).
+        Construit close_px (prix ajusté) + dvol (volume $) + low_px (plus-bas intraday).
         Lit d'abord le cache DB (instantané, 0 API) ; ne récupère au réseau que les
-        tickers manquants, **borné** à `max_fetch` pour rester sous le timeout serveur.
-        Returns (close_px, dvol, meta).
+        tickers manquants, borné à `max_fetch`.
+        Returns (close_px, dvol, low_px, meta).
         """
         max_fetch = self.MAX_ONDEMAND_FETCH if max_fetch is None else max_fetch
-        closes, dollar_vol, missing = {}, {}, []
+        closes, dollar_vol, lows, missing = {}, {}, {}, []
 
         def _add(t, df):
             closes[t] = df['adjClose']
             if 'close' in df.columns and 'volume' in df.columns:
                 dollar_vol[t] = (df['close'].astype(float) * df['volume'].astype(float))
+            if 'low' in df.columns:
+                low_series = df['low'].astype(float)
+                if low_series.notna().any():
+                    lows[t] = low_series
 
-        # Passe 1 : cache DB (rapide, séquentiel — nécessite le contexte Flask)
+        # Passe 1 : cache DB
         for t in tickers:
             df = self._load_db(t, start_date)
             if self._db_covers(df, start_date):
@@ -259,9 +306,10 @@ class BacktestService:
 
         close_px = pd.DataFrame(closes).sort_index()
         dvol = pd.DataFrame(dollar_vol).sort_index()
+        low_px = pd.DataFrame(lows).sort_index() if lows else None
         meta = {'from_db': len(tickers) - len(missing), 'fetched': fetched,
                 'skipped': max(0, len(missing) - fetched)}
-        return close_px, dvol, meta
+        return close_px, dvol, low_px, meta
 
     def prefill_pool(self, years=5, max_fetch=50, pool_size=None):
         """
@@ -424,7 +472,7 @@ class BacktestService:
     # ------------------------------------------------------------------
     # 6) Moteur de simulation réaliste (jour par jour, stateful)
     # ------------------------------------------------------------------
-    def _simulate(self, weights_df, daily_ret, start, end, capital, p):
+    def _simulate(self, weights_df, daily_ret, start, end, capital, p, low_ret=None):
         """
         Simulation jour par jour, sans lookahead (les poids décidés en fin de mois
         s'appliquent au 1ᵉʳ jour de bourse suivant). Modélise :
@@ -474,6 +522,12 @@ class BacktestService:
         margin_on = bool(p['margin_call_enabled'])
 
         mat = daily.to_numpy(dtype=float)
+        # Low returns (low[t] / close[t-1] - 1) pour le check de marge intraday
+        low_mat = None
+        if low_ret is not None:
+            low_aligned = low_ret.reindex(columns=cols).reindex(dates).fillna(method='ffill')
+            low_mat = low_aligned.to_numpy(dtype=float)
+
         N = len(cols)
         pos = np.zeros(N)              # notionnel $ par titre
         cash = float(capital)         # capital initial en cash dès J0
@@ -490,6 +544,8 @@ class BacktestService:
             dt = dates[i]
             r = mat[i]
             # 1) variation de marché
+            pos_open = pos.copy()   # positions avant le move du jour (pour check intraday)
+            cash_open = cash
             pos = pos * (1.0 + r)
             # 2) intérêts (levier) / rémunération (cash)
             if cash >= 0:
@@ -509,8 +565,37 @@ class BacktestService:
                 break
 
             flow_today = 0.0
-            # 3) APPEL DE MARGE (sur clôture) : equity < maint × exposition brute
+            # 3a) APPEL DE MARGE INTRADAY (low) — déclenché si l'equity estimée au
+            #     plus-bas du jour passe sous le seuil, même si la clôture récupère.
+            #     Utilise pos_open × (1 + low_return) pour estimer le pire intraday.
+            #     Liquidation exécutée aux prix de clôture (conservateur).
             gross = float(np.abs(pos).sum())
+            if margin_on and low_mat is not None and gross > 0:
+                low_r = low_mat[i]
+                intra_pos = pos_open * (1.0 + low_r)
+                intra_equity = float(intra_pos.sum()) + cash_open
+                intra_gross = float(np.abs(intra_pos).sum())
+                if intra_gross > 0 and intra_equity < maint * intra_gross:
+                    # Margin call intraday — liquidation aux cours de clôture
+                    lev_before = intra_gross / intra_equity if intra_equity > 0 else float('inf')
+                    target_gross = max(0.0, equity * post_lev)
+                    scale = target_gross / gross if gross > 0 else 0.0
+                    liquidated = float(np.abs(pos - pos * scale).sum())
+                    c = liquidated * cost
+                    tx_total += c
+                    pos = pos * scale
+                    cash = equity - float(pos.sum()) - c
+                    equity = float(pos.sum() + cash)
+                    gross = float(np.abs(pos).sum())
+                    margin_calls.append({
+                        'date': dt.strftime('%Y-%m-%d'),
+                        'equity': round(equity, 2),
+                        'leverage_before': round(lev_before, 2),
+                        'liquidated': round(liquidated, 2),
+                        'trigger': 'intraday_low',
+                    })
+
+            # 3b) APPEL DE MARGE sur clôture : equity < maint × exposition brute
             if margin_on and gross > 0 and equity < maint * gross:
                 lev_before = gross / equity
                 target_gross = max(0.0, equity * post_lev)
@@ -521,11 +606,13 @@ class BacktestService:
                 pos = pos * scale
                 cash = equity - float(pos.sum()) - c
                 equity = float(pos.sum() + cash)
+                gross = float(np.abs(pos).sum())
                 margin_calls.append({
                     'date': dt.strftime('%Y-%m-%d'),
                     'equity': round(equity, 2),
                     'leverage_before': round(lev_before, 2),
                     'liquidated': round(liquidated, 2),
+                    'trigger': 'close',
                 })
 
             # 4) apport DCA
@@ -639,11 +726,19 @@ class BacktestService:
         nb_jours = int((end - start).days) + 13 * 31 + 200
 
         pool = self.build_candidate_pool(pool_size)
-        close_px, dvol, fmeta = self.fetch_history(pool, nb_jours, start.date(), progress)
+        close_px, dvol, low_px, fmeta = self.fetch_history(pool, nb_jours, start.date(), progress)
         if close_px.empty:
             raise RuntimeError(
                 "Cache de prix vide pour cette période. Lance le pré-remplissage "
                 "(cron nocturne ou /api/backtest/prefill) puis réessaie.")
+
+        # Low returns pour le check de marge intraday
+        # low_ret[t] = low[t] / close[t-1] - 1 (return intraday au plus-bas)
+        low_ret = None
+        if low_px is not None and not low_px.empty:
+            # On aligne sur close_px pour avoir le même index et les mêmes colonnes
+            low_aligned = low_px.reindex(index=close_px.index, columns=close_px.columns)
+            low_ret = low_aligned / close_px.shift(1) - 1.0
 
         # Benchmark (DB d'abord, sinon récupération ; SPY → fallback ^GSPC)
         def _bench(sym):
@@ -664,7 +759,7 @@ class BacktestService:
         if weights_df.empty:
             raise RuntimeError("Aucun signal sur la période (période trop courte ou données insuffisantes).")
 
-        sim = self._simulate(weights_df, daily_ret, start, end, capital, sim_p)
+        sim = self._simulate(weights_df, daily_ret, start, end, capital, sim_p, low_ret=low_ret)
         if sim is None or sim['equity'].empty:
             raise RuntimeError("Simulation vide sur la période demandée.")
 
@@ -711,8 +806,8 @@ class BacktestService:
                     "tickers liquides existant aujourd'hui (les titres délistés sont absents).",
                     "Le re-screen reproduit le critère de liquidité (ADV), pas un "
                     "screen fondamental.",
-                    "Les appels de marge sont évalués sur cours de clôture (pas de plus-bas "
-                    "intra-séance) : le risque réel de liquidation est donc sous-estimé.",
+                    "Les appels de marge sont évalués sur le plus-bas intraday (low yfinance) "
+                    "quand disponible, sinon sur le cours de clôture.",
                 ] + ([
                     "⚠️ RUINE : l'effet de levier a été balayé par une chute violente "
                     "(equity tombée à zéro). Le backtest s'arrête à cette date."

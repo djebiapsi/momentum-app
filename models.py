@@ -389,7 +389,9 @@ class MarketPriceBar(db.Model):
     adj_close = db.Column(db.Float, nullable=False)
     close = db.Column(db.Float)
     volume = db.Column(db.Float)  # volume journalier (pour reconstruire l'ADV au backtest)
-    source = db.Column(db.String(10), nullable=False)  # 'ibkr' | 'tiingo'
+    low = db.Column(db.Float)    # plus-bas intraday (pour appels de marge réalistes)
+    high = db.Column(db.Float)   # plus-haut intraday
+    source = db.Column(db.String(10), nullable=False)  # 'ibkr' | 'tiingo' | 'yfinance'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -552,9 +554,11 @@ def init_db(app, default_panel):
         _migrate_add_columns(app, 'recommendation_history', {
             'market_regime': 'TEXT',
         })
-        # Migration: volume des barres de prix (reconstruction ADV au backtest)
+        # Migration: volume + low + high des barres de prix
         _migrate_add_columns(app, 'market_price_bars', {
             'volume': 'FLOAT',
+            'low':    'FLOAT',
+            'high':   'FLOAT',
         })
         
         # Initialiser le panel Long par défaut si vide

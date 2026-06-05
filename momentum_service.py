@@ -257,11 +257,33 @@ class MomentumService:
 
         return date_debut.strftime("%Y-%m-%d"), date_fin.strftime("%Y-%m-%d")
     
+    def _load_monthly_db(self, ticker, date_debut, date_fin):
+        """
+        Charge les barres mensuelles depuis MonthlyPriceBar (yfinance).
+        Renvoie un DataFrame avec 'adjClose' ou None.
+        """
+        try:
+            from models import MonthlyPriceBar
+            rows = (MonthlyPriceBar.query.filter_by(ticker=ticker.upper())
+                    .filter(MonthlyPriceBar.bar_date >= date_cls.fromisoformat(date_debut[:10]))
+                    .filter(MonthlyPriceBar.bar_date <= date_cls.fromisoformat(date_fin[:10]))
+                    .order_by(MonthlyPriceBar.bar_date).all())
+            if not rows:
+                return None
+            df = pd.DataFrame([{'date': r.bar_date, 'adjClose': r.adj_close} for r in rows])
+            df['date'] = pd.to_datetime(df['date'])
+            return df.set_index('date').sort_index()
+        except Exception:
+            return None
+
     def recuperer_prix_tiingo(self, ticker, date_debut, date_fin):
         """
-        Récupère les prix mensuels ajustés (multi-source : DB → IBKR → Tiingo).
-        Les barres journalières sont récupérées puis resamplées en mensuel
-        (dernier cours de chaque mois) pour le momentum 12-1.
+        Récupère les prix mensuels ajustés.
+
+        Cascade :
+          1. MonthlyPriceBar (yfinance, 20 ans) — source primaire
+          2. MarketPriceBar daily → resample mensuel (IBKR/Tiingo)
+          3. Tiingo mensuel direct (fallback réseau)
 
         Args:
             ticker: Symbole de l'action (str)
@@ -276,7 +298,21 @@ class MomentumService:
         if hit:
             return cached
 
-        # Jours nécessaires : de date_debut jusqu'à aujourd'hui
+        ts_fin = pd.Timestamp(date_fin) + pd.offsets.MonthEnd(0)
+
+        # 1) MonthlyPriceBar yfinance (prioritaire — données longues et fiables)
+        df_monthly = self._load_monthly_db(ticker, date_debut, date_fin)
+        if df_monthly is not None and len(df_monthly) >= 13:
+            try:
+                df_monthly = df_monthly[df_monthly.index <= ts_fin]
+            except Exception:
+                pass
+            if len(df_monthly) >= 13:
+                result = (df_monthly, None)
+                self._monthly_cache.set(cache_key, result)
+                return result
+
+        # 2) Cache daily → resample mensuel (IBKR / Tiingo / MarketPriceBar)
         try:
             dd = datetime.strptime(date_debut, "%Y-%m-%d")
         except (ValueError, TypeError):
@@ -284,24 +320,18 @@ class MomentumService:
         nb_jours = (datetime.now() - dd).days + 30
 
         df_daily, err = self._fetch_daily_adjusted(ticker, nb_jours)
-        if df_daily is None or df_daily.empty:
-            return None, err or "Aucune donnée disponible"
+        if df_daily is not None and not df_daily.empty:
+            df_monthly = df_daily[['adjClose']].resample('ME').last().dropna()
+            try:
+                df_monthly = df_monthly[df_monthly.index <= ts_fin]
+            except Exception:
+                pass
+            if len(df_monthly) >= 13:
+                result = (df_monthly, None)
+                self._monthly_cache.set(cache_key, result)
+                return result
 
-        # Resample en mensuel : dernier cours ajusté de chaque mois
-        df_monthly = df_daily[['adjClose']].resample('ME').last().dropna()
-
-        # Filtrer jusqu'à date_fin (mois exclu géré par le calcul 12-1)
-        try:
-            df_monthly = df_monthly[df_monthly.index <= pd.Timestamp(date_fin) + pd.offsets.MonthEnd(0)]
-        except Exception:
-            pass
-
-        if len(df_monthly) < 13:
-            return None, f"Données mensuelles insuffisantes ({len(df_monthly)} mois)"
-
-        result = (df_monthly, None)
-        self._monthly_cache.set(cache_key, result)
-        return result
+        return None, err or "Données mensuelles insuffisantes"
     
     def calculer_momentum_12_1(self, df_prix):
         """
