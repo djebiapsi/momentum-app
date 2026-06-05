@@ -31,7 +31,7 @@ import pandas as pd
 # GRILLES DE PARAMÈTRES
 # ─────────────────────────────────────────────
 GRID_FULL = {
-    'vol_target_pct':   [8, 10, 12, 15, 18, 20, 25],
+    'vol_target_pct':   [8, 10, 12, 15, 18, 20, 25, 30, 35, 40, 45, 50],
     'max_exposure_pct': [100, 125, 150, 175, 200, 250, 300],
 }
 GRID_QUICK = {
@@ -194,8 +194,9 @@ def main():
                 weights_df, daily_ret, start, end,
                 args.capital, {**sim_p, **params_s},
                 low_ret=low_ret,
+                max_dd_stop=MAX_DD_CONSTRAINT,  # arrêt anticipé si DD > 30%
             )
-            if sim is None or sim['equity'].empty or sim['ruined']:
+            if sim is None or sim['equity'].empty or sim['ruined'] or sim.get('early_stop'):
                 return None
             st = _stats(sim)
             st['n_riskoff'] = meta_w.get('n_riskoff_months', 0)

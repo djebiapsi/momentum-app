@@ -450,8 +450,9 @@ class BacktestService:
                 if wdf.empty:
                     continue
                 sim = self._simulate(wdf, daily_ret, start, end,
-                                     capital, sim_p, low_ret=low_ret)
-                if sim is None or sim['equity'].empty or sim['ruined']:
+                                     capital, sim_p, low_ret=low_ret,
+                                     max_dd_stop=MAX_DD_LIMIT)
+                if sim is None or sim['equity'].empty or sim['ruined'] or sim.get('early_stop'):
                     continue
                 twr = sim['twr_ret']
                 row = {
@@ -645,7 +646,8 @@ class BacktestService:
     # ------------------------------------------------------------------
     # 6) Moteur de simulation réaliste (jour par jour, stateful)
     # ------------------------------------------------------------------
-    def _simulate(self, weights_df, daily_ret, start, end, capital, p, low_ret=None):
+    def _simulate(self, weights_df, daily_ret, start, end, capital, p, low_ret=None,
+                  max_dd_stop=None):
         """
         Simulation jour par jour, sans lookahead (les poids décidés en fin de mois
         s'appliquent au 1ᵉʳ jour de bourse suivant). Modélise :
@@ -712,6 +714,8 @@ class BacktestService:
         margin_calls = []
         tx_total = fin_total = contrib_total = 0.0
         ruined = False
+        early_stop = False
+        _peak_eq = float(capital)   # suivi du pic pour le drawdown courant
 
         for i in range(len(dates)):
             dt = dates[i]
@@ -827,6 +831,14 @@ class BacktestService:
             idx_list.append(dt)
             equity_prev = equity
 
+            # 7) arrêt anticipé (optimisation uniquement) : drawdown > seuil
+            if max_dd_stop is not None and end_gross > 0:
+                if equity > _peak_eq:
+                    _peak_eq = equity
+                elif _peak_eq > 0 and equity / _peak_eq - 1.0 < max_dd_stop:
+                    early_stop = True
+                    break
+
         idx = pd.DatetimeIndex(idx_list)
         twr_ret = pd.Series(twr_list, index=idx)
         equity = pd.Series(eq_list, index=idx)
@@ -853,6 +865,7 @@ class BacktestService:
             'total_invested': invested,
             'final_equity': final_equity,
             'ruined': ruined,
+            'early_stop': early_stop,
             'avg_leverage': float(lev_active.mean()) if len(lev_active) else 0.0,
             'max_leverage': float(leverage.max()) if len(leverage) else 0.0,
             'pct_time_levered': float((leverage > 1.0001).mean()) if len(leverage) else 0.0,
