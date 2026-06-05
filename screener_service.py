@@ -14,10 +14,13 @@ Critères:
 Résultat: 1 seul appel API !
 """
 
+import logging
 import requests
 import math
 from datetime import datetime
 from cache_utils import TTLCache
+
+logger = logging.getLogger(__name__)
 
 
 class ScreenerService:
@@ -169,7 +172,8 @@ class ScreenerService:
                 if price > 0 and adv > 0:
                     result[t] = {'price': round(price, 2), 'volume': int(vol), 'adv': adv}
             return result
-        except Exception:
+        except Exception as e:
+            logger.warning('_get_db_adv_data : %s', e)
             return {}
     
     def calculate_score(self, adv):

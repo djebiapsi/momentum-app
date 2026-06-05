@@ -206,8 +206,9 @@ class BacktestService:
                                  'low': r.low, 'high': r.high} for r in rows])
             df['date'] = pd.to_datetime(df['date'])
             return df.set_index('date').sort_index()
-        except Exception:
-            return None  # hors contexte d'app (tests) ou table absente
+        except Exception as e:
+            logger.warning('_load_db %s : %s', ticker, e)
+            return None
 
     def _db_covers(self, df, start_date):
         """Vrai si la DB couvre ~start_date ET contient du volume exploitable."""
@@ -257,8 +258,8 @@ class BacktestService:
                         'volume': float(r['volume']) if r.get('volume') is not None else None,
                     } for idx, r in out.iterrows()]
                     self.ms._save_bars_to_db(ticker, bars, source='tiingo')
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning('Persistance Tiingo %s : %s', ticker, e)
 
         result = (out, None if out is not None else (err or 'pas de données'))
         self._hist_cache.set(key, result)
@@ -969,6 +970,8 @@ class BacktestService:
         twr_index = sim['twr_index']
 
         def safe(fn, *a, **k):
+            # Silencieux par design : quantstats lève des exceptions numériques normales
+            # (séries trop courtes, NaN, division par zéro) qu'on traduit en None dans l'UI.
             try:
                 v = fn(*a, **k)
                 if hasattr(v, 'iloc'):
@@ -990,8 +993,8 @@ class BacktestService:
                     g = qs.stats.greeks(twr.reindex(aligned.index), aligned)
                     alpha = round(float(g.get('alpha')), 4)
                     beta = round(float(g.get('beta')), 4)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug('Calcul alpha/beta échoué (données insuffisantes) : %s', e)
 
         wins = twr[twr > 0]
         losses = twr[twr < 0]
@@ -1057,6 +1060,7 @@ class BacktestService:
         qs = _get_qs()
 
         def safe(fn, *a, **k):
+            # Silencieux par design : voir commentaire dans _stats.
             try:
                 v = fn(*a, **k)
                 if hasattr(v, 'iloc'):

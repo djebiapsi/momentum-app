@@ -87,7 +87,8 @@ class MomentumService:
                    .order_by(MarketPriceBar.bar_date.desc())
                    .first())
             return row.bar_date if row else None
-        except Exception:
+        except Exception as e:
+            logger.warning('_db_last_date %s : %s', ticker, e)
             return None
 
     def _save_bars_to_db(self, ticker, bars, source):
@@ -126,8 +127,8 @@ class MomentumService:
             try:
                 from models import db
                 db.session.rollback()
-            except Exception:
-                pass
+            except Exception as rb_err:
+                logger.error('Rollback DB échoué pour %s: %s', ticker, rb_err)
 
     def _fetch_daily_adjusted(self, ticker, nb_jours):
         """
@@ -273,7 +274,8 @@ class MomentumService:
             df = pd.DataFrame([{'date': r.bar_date, 'adjClose': r.adj_close} for r in rows])
             df['date'] = pd.to_datetime(df['date'])
             return df.set_index('date').sort_index()
-        except Exception:
+        except Exception as e:
+            logger.warning('_load_monthly_db %s : %s', ticker, e)
             return None
 
     def recuperer_prix_tiingo(self, ticker, date_debut, date_fin):
@@ -305,8 +307,8 @@ class MomentumService:
         if df_monthly is not None and len(df_monthly) >= 13:
             try:
                 df_monthly = df_monthly[df_monthly.index <= ts_fin]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Filtrage date_fin monthly DB %s : %s', ticker, e)
             if len(df_monthly) >= 13:
                 result = (df_monthly, None)
                 self._monthly_cache.set(cache_key, result)
@@ -324,8 +326,8 @@ class MomentumService:
             df_monthly = df_daily[['adjClose']].resample('ME').last().dropna()
             try:
                 df_monthly = df_monthly[df_monthly.index <= ts_fin]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Filtrage date_fin monthly daily %s : %s', ticker, e)
             if len(df_monthly) >= 13:
                 result = (df_monthly, None)
                 self._monthly_cache.set(cache_key, result)

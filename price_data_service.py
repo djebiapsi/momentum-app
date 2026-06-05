@@ -46,7 +46,7 @@ BENCHMARKS = ['SPY', 'QQQ', '^GSPC', '^NDX']
 class PriceDataService:
     # --- Horizons de collecte -------------------------------------------------
     MONTHLY_YEARS = 20      # historique mensuel max
-    DAILY_YEARS = 6         # daily : 5 ans de backtest + ~13 mois de lookback momentum
+    DAILY_YEARS = 11         # daily : 5 ans de backtest + ~13 mois de lookback momentum
 
     # --- Rate limiting --------------------------------------------------------
     CHUNK_SIZE = 40         # tickers par lot yf.download (threads internes)
@@ -304,7 +304,8 @@ class PriceDataService:
         for t in chunk:
             try:
                 out[t] = df[t] if t in level0 else None
-            except Exception:
+            except Exception as e:
+                logger.warning('Extraction ticker %s depuis DataFrame yfinance : %s', t, e)
                 out[t] = None
         return out
 
