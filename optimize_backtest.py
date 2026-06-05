@@ -42,7 +42,7 @@ GRID_QUICK = {
 BASELINE = {'vol_scaling': False, 'vol_target_pct': 12.0, 'max_exposure_pct': 250.0,
             '_label': 'inverse-vol (sans levier)'}
 
-MAX_DD_CONSTRAINT = -0.30   # drawdown maximum accepté
+MAX_DD_CONSTRAINT = -0.40   # drawdown maximum accepté
 
 # ─────────────────────────────────────────────
 # HELPERS STATS (sans quantstats, pour la vitesse)
