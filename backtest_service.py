@@ -364,7 +364,7 @@ class BacktestService:
             'vol_target_pct':   [10, 15, 20] if quick else [8, 10, 12, 15, 18, 20, 25],
             'max_exposure_pct': [100, 150, 250] if quick else [100, 125, 150, 175, 200, 250, 300],
         }
-        MAX_DD_LIMIT = -0.30
+        MAX_DD_LIMIT = -0.40
 
         # ── helpers stats (sans quantstats pour la vitesse) ──────────────
         def _cagr(r):

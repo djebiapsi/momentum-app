@@ -513,13 +513,13 @@ function _optRenderResults(results, elapsedS) {
 
     const eligible = results.filter(r => r.eligible);
     const best = eligible[0];
-    meta.innerHTML = `${results.length} combinaisons testées · ${eligible.length} éligibles (MaxDD ≥ −30 %) · ${elapsedS}s`
+    meta.innerHTML = `${results.length} combinaisons testées · ${eligible.length} éligibles (MaxDD ≥ −40 %) · ${elapsedS}s`
         + (best ? ` · <strong style="color:var(--accent-long);">★ Meilleure : ${best.label}</strong>` : '');
 
     body.innerHTML = results.map(r => {
         const isBest = r.rank === 1 && r.eligible;
         const bg = isBest ? 'background:rgba(34,197,94,.07);' : '';
-        const ddColor = r.max_dd < -25 ? 'color:#ef4444;' : r.max_dd < -20 ? 'color:#f97316;' : '';
+        const ddColor = r.max_dd < -35 ? 'color:#ef4444;' : r.max_dd < -28 ? 'color:#f97316;' : '';
         const eligBadge = r.eligible ? ''
             : '<span style="font-size:9px;color:#ef4444;opacity:.7;margin-left:4px;">hors limite</span>';
         const applyBtn = r.eligible && r.vol_scaling
