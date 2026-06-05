@@ -195,6 +195,27 @@
                 <div id="flex-sync-info" style="font-size:12px;color:var(--text-muted);margin-top:10px;"></div>
             </div>
 
+            <!-- Données de marché (yfinance) -->
+            <div class="section-title" style="margin-top: 24px;">Données de marché (yfinance)</div>
+            <div class="card">
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+                    Collecte l'historique de prix des constituants du <strong>S&amp;P 500</strong> et du
+                    <strong>Nasdaq-100</strong> : mensuel jusqu'à 20 ans + journalier 6 ans.
+                    Tourne chaque nuit à 00h (Europe/Paris) ; la 1ʳᵉ exécution est longue, ensuite
+                    incrémental. Les backtests se basent sur ces données.
+                </p>
+                <div id="prices-coverage" style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
+                    Chargement…
+                </div>
+                <div id="prices-progress" style="display:none;font-size:13px;color:var(--accent-long);margin-bottom:10px;"></div>
+                <button class="btn btn-primary btn-block admin-only" id="btn-collect-prices" onclick="collectPrices(false)">
+                    Lancer la collecte maintenant
+                </button>
+                <button class="btn btn-secondary btn-block admin-only" style="margin-top:6px;" onclick="collectPrices(true)">
+                    Recollecte complète (tout l'historique)
+                </button>
+            </div>
+
             <!-- Méthodologie -->
             <div class="section-title" style="margin-top: 24px;">Méthodologie</div>
             <div class="card">

@@ -15,6 +15,10 @@ psycopg2-binary # PostgreSQL pour Render
 # Requêtes HTTP (API Tiingo)
 requests
 
+# Collecte de prix historiques (SP500 + Nasdaq-100) pour la collecte nocturne & les backtests
+yfinance
+lxml  # parsing des tables Wikipédia (pandas.read_html) pour la composition des indices
+
 # Manipulation de données
 pandas
 

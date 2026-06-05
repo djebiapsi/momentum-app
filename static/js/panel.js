@@ -258,6 +258,83 @@
         }
         
         // =================================================================
+        // COLLECTE DE PRIX (yfinance — SP500 / NDX100)
+        // =================================================================
+
+        let _pricesPollTimer = null;
+
+        function _fmtCoverage(c) {
+            if (!c) return 'Couverture indisponible.';
+            const cst = c.constituents || {};
+            const m = c.monthly || {}, d = c.daily || {};
+            const range = (x) => (x.start && x.end) ? `${x.start} → ${x.end}` : '—';
+            const refreshed = cst.refreshed_at ? cst.refreshed_at.slice(0, 10) : 'jamais';
+            return `
+                <div><strong>Composition</strong> : ${cst.sp500 || 0} SP500 · ${cst.ndx100 || 0} NDX100
+                     <span style="color:var(--text-muted)">(vérifiée ${refreshed})</span></div>
+                <div style="margin-top:4px;"><strong>Mensuel</strong> : ${m.tickers || 0} tickers ·
+                     ${(m.rows || 0).toLocaleString()} barres · ${range(m)}</div>
+                <div style="margin-top:4px;"><strong>Journalier</strong> : ${d.tickers || 0} tickers ·
+                     ${(d.rows || 0).toLocaleString()} barres · ${range(d)}</div>`;
+        }
+
+        async function loadPricesStatus() {
+            const cov = document.getElementById('prices-coverage');
+            const prog = document.getElementById('prices-progress');
+            const btn = document.getElementById('btn-collect-prices');
+            const data = await api('/prices/status');
+            if (!data) { if (cov) cov.textContent = 'Erreur de chargement.'; return; }
+
+            if (cov) cov.innerHTML = _fmtCoverage(data.coverage);
+
+            const st = data.state || {};
+            const running = st.running;
+            if (btn) {
+                btn.disabled = running;
+                btn.innerHTML = running ? '<span class="spinner"></span> Collecte en cours…'
+                                        : 'Lancer la collecte maintenant';
+            }
+            if (prog) {
+                if (running) {
+                    const p = st.progress || {};
+                    const phase = { constituents: 'Composition des indices', monthly: 'Prix mensuels',
+                                    daily: 'Prix journaliers', starting: 'Démarrage' }[st.phase] || st.phase;
+                    const pct = p.total ? ` (${p.done}/${p.total})` : '';
+                    prog.style.display = 'block';
+                    prog.textContent = `⏳ ${phase}${pct}`;
+                } else {
+                    prog.style.display = 'none';
+                    if (st.phase === 'error' && st.error) showToast('Collecte échouée : ' + st.error, 'error');
+                }
+            }
+
+            // Poll tant que la collecte tourne
+            if (running && !_pricesPollTimer) {
+                _pricesPollTimer = setInterval(loadPricesStatus, 3000);
+            } else if (!running && _pricesPollTimer) {
+                clearInterval(_pricesPollTimer); _pricesPollTimer = null;
+                if (st.summary) {
+                    const s = st.summary;
+                    showToast(`Collecte terminée : +${s.monthly?.new_bars || 0} mensuelles, ` +
+                              `+${s.daily?.new_bars || 0} journalières`, 'success');
+                }
+            }
+        }
+
+        async function collectPrices(full) {
+            if (full && !confirm('Recollecter TOUT l\'historique ? La 1ʳᵉ passe peut prendre plusieurs minutes.')) return;
+            const data = await api('/prices/collect', {
+                method: 'POST', body: JSON.stringify({ full: !!full })
+            });
+            if (data && data.success) {
+                showToast(data.message || 'Collecte lancée');
+                loadPricesStatus();
+            } else {
+                showToast(data?.message || 'Erreur', 'error');
+            }
+        }
+
+        // =================================================================
         // IBKR REBALANCE VIA API
         // =================================================================
 

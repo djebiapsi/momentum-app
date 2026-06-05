@@ -2,7 +2,8 @@
 """Tâches planifiées (extrait de app.py) ; app injecté par scheduler.create_scheduler()."""
 from datetime import datetime
 from models import db, PanelAction
-from services import ibkr_service, get_momentum_service, get_email_service, get_backtest_service
+from services import (ibkr_service, get_momentum_service, get_email_service,
+                     get_backtest_service, get_price_data_service)
 from core import compute_and_save_momentum, run_market_monitor, build_briefing_payload
 
 
@@ -63,6 +64,24 @@ def job_briefing(session='open'):
                 print("⚠️ Service email non configuré")
         except Exception as e:
             print(f"❌ job_briefing: {e}")
+
+
+def job_collect_prices():
+    """
+    Cron nuit (00h Europe/Paris) : collecte yfinance de l'historique de prix des
+    constituants S&P 500 + Nasdaq-100 (mensuel 20 ans + daily 6 ans, incrémental).
+    Revérifie la composition des indices ~1×/mois et alerte par email si ≥ 25 %
+    des tickers échouent. Tourne en arrière-plan (thread du service).
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 🌙 Collecte de prix yfinance (SP500 + NDX100)…")
+        try:
+            svc = get_price_data_service()
+            started = svc.run_background(app, full=False)
+            if not started:
+                print("⚠️ Collecte déjà en cours — cron ignoré")
+        except Exception as e:
+            print(f"❌ job_collect_prices: {e}")
 
 
 def job_refresh_prices():

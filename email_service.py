@@ -781,6 +781,55 @@ Stratégie Momentum 12-1
                 f"\n\nTéléchargement: {self.APP_BASE_URL}{dl_path}")
         return self._send(f"🔄 C'est le moment de rééquilibrer ! — {date_calcul}", html, text)
 
+    # =====================================================================
+    # ÉCHEC DE COLLECTE DE PRIX (yfinance)
+    # =====================================================================
+    def envoyer_echec_collecte(self, summary: dict) -> dict:
+        """
+        Alerte quand ≥ 25 % des tickers échouent lors de la collecte de prix nocturne.
+        `summary` = dict renvoyé par PriceDataService.collect().
+        """
+        now = datetime.now().strftime('%Y-%m-%d %H:%M')
+        n = summary.get('tickers', 0)
+        m = summary.get('monthly', {}) or {}
+        d = summary.get('daily', {}) or {}
+        fr_m = summary.get('fail_ratio_monthly', 0) * 100
+        fr_d = summary.get('fail_ratio_daily', 0) * 100
+
+        failed = sorted(set((m.get('failed') or []) + (d.get('failed') or [])))
+        sample = ', '.join(failed[:40]) + (f' … (+{len(failed) - 40})' if len(failed) > 40 else '')
+
+        body = f"""
+    <div style="background:#18181b;border:1px solid #27272a;border-left:4px solid #dc2626;
+                padding:20px;border-radius:10px;margin:14px 0;">
+      <p style="margin:0 0 14px;font-size:16px;">La collecte de prix yfinance a rencontré
+      un taux d'échec élevé. Les backtests pourraient être incomplets.</p>
+      <table style="width:100%;border-collapse:collapse;"><tr>
+        {self._kpi_card('Tickers visés', str(n))}
+        {self._kpi_card('Échec mensuel', f'{fr_m:.0f}%', '#ef4444' if fr_m >= 25 else '#fafafa')}
+        {self._kpi_card('Échec daily', f'{fr_d:.0f}%', '#ef4444' if fr_d >= 25 else '#fafafa')}
+      </tr></table>
+      <p style="margin:14px 0 4px;color:#a1a1aa;font-size:13px;">
+        Nouvelles barres : {m.get('new_bars', 0)} mensuelles · {d.get('new_bars', 0)} journalières
+        · durée {summary.get('elapsed_s', '—')}s</p>
+    </div>
+    <div style="background:#0f0f12;border:1px solid #27272a;padding:14px;border-radius:10px;">
+      <div style="color:#a1a1aa;font-size:11px;text-transform:uppercase;margin-bottom:6px;">
+        Tickers en échec ({len(failed)})</div>
+      <div style="font-family:monospace;font-size:12px;color:#fca5a5;line-height:1.6;">
+        {sample or '—'}</div>
+    </div>
+    <p style="color:#a1a1aa;font-size:13px;margin-top:14px;">
+      Causes fréquentes : rate-limit Yahoo, symboles renommés/délistés, coupure réseau.
+      La prochaine collecte nocturne réessaiera automatiquement (incrémental).</p>"""
+
+        html = self._html_shell('Échec collecte de prix', now, body,
+                                accent='#dc2626,#7f1d1d', emoji='⚠️')
+        text = (f"Échec collecte yfinance — {now}\n"
+                f"Tickers: {n} | échec mensuel {fr_m:.0f}% | échec daily {fr_d:.0f}%\n"
+                f"En échec ({len(failed)}): {', '.join(failed[:60])}")
+        return self._send(f"⚠️ Échec collecte de prix — {fr_m:.0f}% mensuel / {fr_d:.0f}% daily", html, text)
+
     def envoyer_test(self):
         """
         Envoie un email de test pour vérifier la configuration.

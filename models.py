@@ -408,6 +408,72 @@ class MarketPriceBar(db.Model):
         }
 
 
+class MonthlyPriceBar(db.Model):
+    """
+    Historique des prix MENSUELS ajustés (jusqu'à ~20 ans).
+    Alimentée par la collecte yfinance nocturne. Sert de base longue au calcul
+    du momentum 12-1 (le daily ne couvre que ~6 ans).
+
+    Une barre = dernière séance du mois (yfinance interval='1mo'). bar_date est
+    normalisée au 1er du mois pour un upsert stable.
+    """
+    __tablename__ = 'monthly_price_bars'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticker = db.Column(db.String(12), nullable=False, index=True)
+    bar_date = db.Column(db.Date, nullable=False)  # 1er du mois (clé de mois)
+    adj_close = db.Column(db.Float, nullable=False)
+    close = db.Column(db.Float)
+    volume = db.Column(db.Float)
+    source = db.Column(db.String(10), nullable=False, default='yfinance')  # 'yfinance'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('ticker', 'bar_date', name='uq_monthly_ticker_bar_date'),
+        db.Index('ix_monthly_ticker_date', 'ticker', 'bar_date'),
+    )
+
+    def to_dict(self):
+        return {
+            'ticker': self.ticker,
+            'date': self.bar_date.isoformat() if self.bar_date else None,
+            'adj_close': self.adj_close,
+            'close': self.close,
+            'volume': self.volume,
+            'source': self.source,
+        }
+
+
+class IndexConstituent(db.Model):
+    """
+    Composition des indices (S&P 500 / Nasdaq-100) pour la collecte de prix.
+
+    Rafraîchie ~1×/mois (scraping Wikipédia avec repli codé en dur). is_active=False
+    marque un titre sorti de l'indice (on garde l'historique de prix déjà collecté).
+    """
+    __tablename__ = 'index_constituents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticker = db.Column(db.String(12), nullable=False)
+    index_name = db.Column(db.String(12), nullable=False)  # 'SP500' | 'NDX100'
+    name = db.Column(db.String(120))
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    added_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen_at = db.Column(db.DateTime, default=datetime.utcnow)  # dernier scrape où vu
+
+    __table_args__ = (
+        db.UniqueConstraint('ticker', 'index_name', name='uq_constituent_ticker_index'),
+    )
+
+    def to_dict(self):
+        return {
+            'ticker': self.ticker,
+            'index_name': self.index_name,
+            'name': self.name,
+            'is_active': self.is_active,
+        }
+
+
 class MarketEvent(db.Model):
     """
     Évènement de marché détecté par le moniteur (cron chaque minute).

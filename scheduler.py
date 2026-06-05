@@ -5,7 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import jobs
 from jobs import (job_market_monitor, job_briefing, job_rebalance_reminder,
-                  job_refresh_prices)
+                  job_refresh_prices, job_collect_prices)
 
 
 def create_scheduler(app):
@@ -53,10 +53,20 @@ def create_scheduler(app):
         id='refresh_prices', name='Rafraîchissement cache de prix', replace_existing=True,
     )
 
+    # 5) Collecte yfinance (SP500 + NDX100) : tous les jours à 00h00 Europe/Paris
+    PARIS = 'Europe/Paris'
+    scheduler.add_job(
+        job_collect_prices,
+        CronTrigger(hour=0, minute=0, timezone=PARIS),
+        id='collect_prices', name='Collecte de prix yfinance (SP500/NDX100)',
+        replace_existing=True,
+    )
+
     scheduler.start()
-    print("[scheduler] demarre - 4 crons actifs :")
+    print("[scheduler] demarre - 5 crons actifs :")
     print("  - Surveillance marche : chaque minute (9h30-16h00 ET, lun-ven)")
     print("  - Briefings : 9h35 / 12h30 / 16h05 ET (lun-ven)")
     print("  - Rappel reequilibrage : 1er du mois 8h00 ET")
     print("  - Cache de prix : 22h00 ET (lun-ven)")
+    print("  - Collecte yfinance SP500/NDX100 : 00h00 Europe/Paris (quotidien)")
     return scheduler

@@ -13,6 +13,7 @@ from ibkr_service import IBKRService
 from news_service import NewsService
 from market_monitor_service import MarketMonitorService
 from backtest_service import BacktestService
+from price_data_service import PriceDataService
 
 
 # Services (singletons initialisés à la demande)
@@ -24,6 +25,7 @@ finviz_screener_service = None
 market_monitor_service = None
 news_service = None
 backtest_service = None
+price_data_service = None
 
 # Service IBKR — démarre une boucle asyncio dans un thread dédié.
 # Config lue depuis la classe Config (import-time, sans contexte d'app).
@@ -120,5 +122,13 @@ def get_backtest_service():
             screener_service=get_screener_service(),
         )
     return backtest_service
+
+
+def get_price_data_service():
+    """Récupère ou crée le service de collecte de prix yfinance (SP500/NDX100)."""
+    global price_data_service
+    if price_data_service is None:
+        price_data_service = PriceDataService(email_service=get_email_service())
+    return price_data_service
 
 
