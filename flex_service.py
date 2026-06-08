@@ -100,8 +100,16 @@ def parse_statement(xml_text: str) -> dict:
     nav, trades, dividends, cash_flows = [], [], [], []
     account_id = None
 
+    # Chercher l'accountId dans plusieurs endroits possibles selon le format du rapport
+    for el in root.iter():
+        val = el.get('accountId')
+        if val:
+            account_id = val
+            break
+
     for stmt in root.iter('FlexStatement'):
-        account_id = stmt.get('accountId') or account_id
+        if not account_id:
+            account_id = stmt.get('accountId') or account_id
 
         # NAV + cash jour par jour (EquitySummaryByReportDateInBase)
         for row in stmt.iter('EquitySummaryByReportDateInBase'):

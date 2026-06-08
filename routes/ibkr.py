@@ -609,6 +609,41 @@ def flex_status():
     })
 
 
+@bp.route('/api/flex/purge-outliers', methods=['POST'])
+@require_admin
+def flex_purge_outliers():
+    """
+    Supprime les snapshots dont le NAV est incohérent avec la médiane (ratio > 10×).
+    Utile pour effacer une synchro accidentelle d'un autre compte.
+    Body optionnel : {"dry_run": true} pour voir sans supprimer.
+    """
+    from models import db, PortfolioSnapshot
+    data = request.get_json(silent=True) or {}
+    dry_run = bool(data.get('dry_run', False))
+
+    all_snaps = PortfolioSnapshot.query.order_by(PortfolioSnapshot.date).all()
+    if not all_snaps:
+        return jsonify({'success': True, 'deleted': 0, 'message': 'Aucun snapshot'})
+
+    navs = sorted([s.nav for s in all_snaps])
+    median = navs[len(navs) // 2]
+    outliers = [s for s in all_snaps if s.nav > median * 10 or s.nav < median / 10]
+
+    if not dry_run:
+        for s in outliers:
+            db.session.delete(s)
+        db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'dry_run': dry_run,
+        'median_nav': round(median, 2),
+        'deleted': len(outliers),
+        'outliers': [{'date': s.date.isoformat(), 'nav': round(s.nav, 2)} for s in outliers],
+        'remaining': PortfolioSnapshot.query.count() if not dry_run else len(all_snaps) - len(outliers),
+    })
+
+
 @bp.route('/api/flex/sync', methods=['POST'])
 @require_admin
 def flex_sync():
@@ -633,6 +668,54 @@ def flex_sync():
     except Exception as e:
         Settings.set('flex_last_error', str(e)[:300])
         return jsonify({'success': False, 'error': f'Flex : {e}'}), 502
+
+    # Garde : détection changement de compte / mélange paper-live
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get('force', False))
+    new_account_id = (parsed.get('account_id') or '').strip()
+    stored_account_id = (Settings.get('flex_account_id') or '').strip()
+    is_paper_new = new_account_id.upper().startswith('DU')
+
+    # Bloquer si le rapport est manifestement paper (DU...) et qu'on n'est pas en force
+    if is_paper_new and not force:
+        Settings.set('flex_last_error', f'Compte paper détecté ({new_account_id}). Utilisez force=true pour confirmer.')
+        return jsonify({
+            'success': False,
+            'error': f'Le rapport Flex appartient à un compte PAPER ({new_account_id}). Vérifiez que votre Flex Query pointe sur votre compte LIVE.',
+            'account_id': new_account_id,
+            'is_paper': True,
+            'force_available': True,
+        }), 409
+
+    # Avertir si le compte change (sans bloquer, pour permettre une migration)
+    account_changed = (stored_account_id and new_account_id and stored_account_id != new_account_id)
+
+    # Détection heuristique : NAV incompatible avec l'historique existant (×10)
+    nav_inconsistency = None
+    if not force and parsed.get('nav'):
+        from models import PortfolioSnapshot as _PS
+        existing_navs = [s.nav for s in _PS.query.all()]
+        if existing_navs:
+            median_existing = sorted(existing_navs)[len(existing_navs) // 2]
+            new_navs = [r['nav'] for r in parsed['nav']]
+            median_new = sorted(new_navs)[len(new_navs) // 2]
+            if median_existing > 0 and (median_new / median_existing > 10 or median_new / median_existing < 0.1):
+                nav_inconsistency = {
+                    'median_existing': round(median_existing, 2),
+                    'median_new': round(median_new, 2),
+                    'ratio': round(median_new / median_existing, 2),
+                }
+                return jsonify({
+                    'success': False,
+                    'error': (
+                        f'Incohérence NAV détectée : médiane existante {median_existing:.0f}$ vs '
+                        f'médiane rapport {median_new:.0f}$ (ratio {nav_inconsistency["ratio"]}×). '
+                        f'Le rapport semble pointer sur un autre compte. Passez force=true pour importer quand même.'
+                    ),
+                    'account_id': new_account_id,
+                    'nav_inconsistency': nav_inconsistency,
+                    'force_available': True,
+                }), 409
 
     nav_n = trade_n = div_n = cf_n = 0
 
@@ -703,7 +786,7 @@ def flex_sync():
     Settings.set('flex_last_error', '')
 
     # Persister l'account_id pour détecter paper vs live sans refetch
-    account_id = parsed.get('account_id') or ''
+    account_id = new_account_id
     if account_id:
         Settings.set('flex_account_id', account_id)
 
@@ -713,6 +796,7 @@ def flex_sync():
         'success': True,
         'account_id': account_id,
         'is_paper': is_paper,
+        'account_changed': account_changed,
         'imported': {'snapshots': nav_n, 'transactions': trade_n,
                      'dividends': div_n, 'cash_flows': cf_n},
         'totals': {
