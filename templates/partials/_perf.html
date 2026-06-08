@@ -116,19 +116,7 @@
                     </div>
                 </div>
 
-                <!-- Flux de capitaux (dépôts / retraits) -->
-                <div class="perf-chart-row full" id="card-cashflows" style="display:none;">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Flux de capitaux
-                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · dépôts (+) / retraits (−) par mois</span>
-                        </div>
-                        <div class="perf-chart-container" style="min-height:160px;">
-                            <canvas id="chart-cashflows"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Composition : Donut + Heatmap -->
+                <!-- Composition : Donut + Heatmap adaptative -->
                 <div class="perf-chart-row split">
                     <div class="perf-chart-card">
                         <div class="perf-chart-title">Composition du portefeuille</div>
@@ -140,6 +128,37 @@
                         <div id="perf-heatmap-title" class="perf-chart-title">Heatmap rendements</div>
                         <div class="perf-chart-container" id="container-heatmap">
                             <div class="empty-state">Données insuffisantes</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Heatmap journalière permanente -->
+                <div class="perf-chart-row full">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Rendements journaliers
+                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="heatmap-daily-subtitle"> · 90 derniers jours</span>
+                        </div>
+                        <div style="overflow-y:auto;max-height:320px;padding:4px 0;" id="container-heatmap-daily">
+                            <div class="empty-state">Données insuffisantes</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dépôts & capital investi -->
+                <div class="perf-chart-row full" id="card-cashflows">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Capital investi &amp; dépôts
+                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · apports (+) / retraits (−) et cumul</span>
+                        </div>
+                        <div id="cashflows-empty" style="display:none;padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">
+                            Aucun dépôt ou retrait enregistré sur cette période.<br>
+                            <span style="font-size:11px;">Synchronisez Flex pour importer les flux de capitaux.</span>
+                        </div>
+                        <div id="cashflows-content">
+                            <div class="perf-chart-container" style="min-height:180px;">
+                                <canvas id="chart-cashflows"></canvas>
+                            </div>
+                            <div id="cashflows-events" style="margin-top:12px;padding:0 4px;"></div>
                         </div>
                     </div>
                 </div>

@@ -209,7 +209,10 @@
             }
 
             // ---- Flux de capitaux (dépôts) ----
-            _renderCashFlows(data.cash_flows_monthly || []);
+            _renderCashFlows(data.cash_flows_monthly || [], data.cash_flows || []);
+
+            // ---- Heatmap journalière permanente ----
+            _renderHeatmapDailyFixed(data.daily_returns || []);
 
             // ---- P&L par position ----
             const pnlSorted = [...positions]
@@ -426,28 +429,157 @@
         }
 
         // --- Graphique flux de capitaux ------------------------------------
-        function _renderCashFlows(monthly) {
-            const card = document.getElementById('card-cashflows');
-            if (!monthly.length) { if (card) card.style.display = 'none'; return; }
-            if (card) card.style.display = '';
+        function _renderCashFlows(monthly, events) {
+            const emptyEl   = document.getElementById('cashflows-empty');
+            const contentEl = document.getElementById('cashflows-content');
+            const eventsEl  = document.getElementById('cashflows-events');
+
+            if (!monthly.length) {
+                if (emptyEl)   emptyEl.style.display   = '';
+                if (contentEl) contentEl.style.display = 'none';
+                return;
+            }
+            if (emptyEl)   emptyEl.style.display   = 'none';
+            if (contentEl) contentEl.style.display = '';
+
+            // ── Chart : barres individuelles + ligne cumulative ──────────
             const labels = monthly.map(m => m.month);
             const values = monthly.map(m => m.amount);
+            const cumul  = values.reduce((acc, v, i) => {
+                acc.push((acc[i - 1] || 0) + v);
+                return acc;
+            }, []);
+
             _destroyChart('cashflows');
             _perfCharts.cashflows = new Chart(document.getElementById('chart-cashflows'), {
                 type: 'bar',
-                data: { labels, datasets: [{
-                    data: values,
-                    backgroundColor: values.map(v => v >= 0 ? 'rgba(29,158,117,0.7)' : 'rgba(216,90,48,0.7)'),
-                    borderRadius: 3,
-                }]},
+                data: { labels, datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Flux mensuel',
+                        data: values,
+                        backgroundColor: values.map(v => v >= 0 ? 'rgba(29,158,117,0.65)' : 'rgba(216,90,48,0.65)'),
+                        borderRadius: 3,
+                        yAxisID: 'y',
+                    },
+                    {
+                        type: 'line',
+                        label: 'Capital investi cumulé',
+                        data: cumul,
+                        borderColor: '#7C5CFF',
+                        backgroundColor: 'rgba(124,92,255,0.08)',
+                        fill: true,
+                        borderWidth: 2,
+                        tension: 0.3,
+                        pointRadius: 3,
+                        yAxisID: 'y2',
+                    },
+                ]},
                 options: { responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false },
-                        tooltip: { callbacks: { label: c => ` ${c.parsed.y >= 0 ? '+' : ''}$${Math.abs(c.parsed.y).toLocaleString()}` }} },
+                    plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
+                        tooltip: { callbacks: { label: c =>
+                            ` ${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}$${Math.abs(c.parsed.y).toLocaleString()}`
+                        }} },
                     scales: {
-                        x: { grid: { color: PERF_GRID }, ticks: { color: '#888' } },
-                        y: { grid: { color: PERF_GRID }, ticks: { color: '#888',
-                            callback: v => (v >= 0 ? '+' : '') + '$' + Math.abs(v / 1000).toFixed(0) + 'k' } }
+                        x:  { grid: { color: PERF_GRID }, ticks: { color: '#888' } },
+                        y:  { grid: { color: PERF_GRID }, ticks: { color: '#888',
+                              callback: v => (v >= 0 ? '+' : '') + '$' + Math.abs(v / 1000).toFixed(0) + 'k' },
+                              title: { display: true, text: 'Flux mensuel', color: '#555', font: { size: 9 } } },
+                        y2: { position: 'right', grid: { drawOnChartArea: false },
+                              ticks: { color: '#7C5CFF',
+                                callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                              title: { display: true, text: 'Cumul investi', color: '#7C5CFF', font: { size: 9 } } },
                     }
                 }
             });
+
+            // ── Liste des événements individuels ────────────────────────
+            if (eventsEl && events && events.length) {
+                const sorted = [...events].sort((a, b) => b.date.localeCompare(a.date));
+                eventsEl.innerHTML = `
+                    <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;
+                                letter-spacing:0.6px;margin-bottom:8px;">Détail des mouvements</div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                    ${sorted.map(e => {
+                        const sign = e.amount >= 0 ? '+' : '';
+                        const col  = e.amount >= 0 ? 'var(--accent-long)' : 'var(--accent-short)';
+                        const desc = (e.description || '').slice(0, 60);
+                        return `<div style="display:flex;align-items:center;gap:12px;padding:5px 8px;
+                                            background:var(--bg-secondary);border-radius:6px;font-size:12px;">
+                            <span style="color:var(--text-muted);white-space:nowrap;font-family:'IBM Plex Mono';">${e.date}</span>
+                            <span style="font-weight:700;color:${col};font-family:'IBM Plex Mono';">${sign}$${Math.abs(e.amount).toLocaleString('en-US',{minimumFractionDigits:0})}</span>
+                            <span style="color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${desc}</span>
+                        </div>`;
+                    }).join('')}
+                    </div>`;
+            } else if (eventsEl) {
+                eventsEl.innerHTML = '';
+            }
+        }
+
+        // --- Heatmap journalière permanente (derniers 90 jours) ----------
+        function _renderHeatmapDailyFixed(daily) {
+            const cont     = document.getElementById('container-heatmap-daily');
+            const subtitle = document.getElementById('heatmap-daily-subtitle');
+            if (!cont) return;
+            if (!daily.length) {
+                cont.innerHTML = '<div class="empty-state">Données insuffisantes</div>';
+                return;
+            }
+            // Limiter aux 90 derniers jours de bourse (≈ 18 semaines)
+            const MAX_DAYS = 90;
+            const slice = daily.slice(-MAX_DAYS);
+            if (subtitle) subtitle.textContent = ` · ${slice.length} derniers jours de bourse`;
+
+            const DAYS_FR = ['L','M','M','J','V'];
+            const byWeek = {};
+            let maxAbs = 0;
+            slice.forEach(d => {
+                const dt  = new Date(d.date);
+                const dow = dt.getDay();
+                if (dow === 0 || dow === 6) return;
+                const monday = new Date(dt);
+                monday.setDate(dt.getDate() - (dow - 1));
+                const wk = monday.toISOString().slice(0, 10);
+                byWeek[wk] = byWeek[wk] || {};
+                byWeek[wk][dow] = d;
+                maxAbs = Math.max(maxAbs, Math.abs(d.return_pct));
+            });
+
+            const weeks = Object.keys(byWeek).sort();
+            const cell = (d) => {
+                if (!d) return `<td style="width:36px;height:26px;background:var(--bg-secondary);border-radius:3px;"></td>`;
+                const v  = d.return_pct;
+                const op = Math.max(0.12, Math.min(0.9, Math.abs(v) / (maxAbs || 1)));
+                const col = v >= 0 ? `rgba(29,158,117,${op})` : `rgba(216,90,48,${op})`;
+                return `<td title="${d.date} · ${v >= 0 ? '+' : ''}${v.toFixed(2)}%"
+                            style="width:36px;height:26px;background:${col};border-radius:3px;
+                                   text-align:center;font-size:9px;color:#fff;padding:2px;cursor:default;">
+                            ${v >= 0 ? '+' : ''}${v.toFixed(0)}</td>`;
+            };
+
+            let html = `<table style="border-collapse:separate;border-spacing:2px;font-size:10px;width:100%;">
+                <thead><tr>
+                    <th style="width:56px;"></th>
+                    ${DAYS_FR.map(d => `<th style="color:var(--text-muted);font-weight:400;text-align:center;padding-bottom:4px;">${d}</th>`).join('')}
+                    <th style="width:48px;color:var(--text-muted);font-weight:400;text-align:right;padding:0 4px;">Sem.</th>
+                </tr></thead><tbody>`;
+
+            weeks.forEach(wk => {
+                const row = byWeek[wk];
+                const weekRet = [1,2,3,4,5].reduce((acc, dow) => {
+                    return row[dow] ? acc * (1 + row[dow].return_pct / 100) : acc;
+                }, 1) - 1;
+                const wr = (weekRet * 100).toFixed(1);
+                const wrColor = weekRet >= 0 ? 'var(--accent-long)' : 'var(--accent-short)';
+                // Date de début de semaine (lundi) → label "dd/mm"
+                const label = wk.slice(8, 10) + '/' + wk.slice(5, 7);
+                html += `<tr>
+                    <td style="color:var(--text-muted);padding-right:6px;white-space:nowrap;font-size:10px;">${label}</td>
+                    ${[1,2,3,4,5].map(dow => cell(row[dow])).join('')}
+                    <td style="font-size:9px;color:${wrColor};text-align:right;padding:0 4px;">${weekRet>=0?'+':''}${wr}%</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            cont.innerHTML = html;
         }
