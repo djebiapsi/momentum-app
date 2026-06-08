@@ -28,6 +28,52 @@ GLOBAL_FEEDS = [
     ('CNBC', 'https://www.cnbc.com/id/100003114/device/rss/rss.html'),
 ]
 
+# Flux RSS pour le digest d'actualités générales (7 jours / 2 fois par jour)
+WORLD_DIGEST_FEEDS = [
+    ('BBC World',           'https://feeds.bbci.co.uk/news/world/rss.xml'),
+    ('BBC Science & Env.',  'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml'),
+    ('Reuters Top News',    'https://feeds.reuters.com/reuters/topNews'),
+    ('Le Monde à la Une',   'https://www.lemonde.fr/rss/une.xml'),
+    ('Le Monde Politique',  'https://www.lemonde.fr/politique/rss_full.xml'),
+    ('France Info',         'https://www.francetvinfo.fr/titres.rss'),
+    ('RFI Monde',           'https://www.rfi.fr/fr/rss'),
+    ('Guardian World',      'https://www.theguardian.com/world/rss'),
+    ('Guardian Environment','https://www.theguardian.com/environment/rss'),
+]
+
+_DIGEST_SYSTEM = (
+    "Tu es rédacteur d'un digest d'actualités quotidien haut de gamme, francophone. "
+    "Tu rédiges TOUJOURS et EXCLUSIVEMENT en français, même si les sources sont en anglais. "
+    "Ton style est celui d'une newsletter de qualité : factuel, synthétique, vivant."
+)
+
+_DIGEST_USER_TPL = """\
+Voici {n} articles d'actualité récents provenant de sources internationales et françaises.
+
+{articles}
+
+Rédige un digest structuré en exactement 5 sections. Chaque section contient 3 à 4 puces de \
+1 à 2 phrases. Commence chaque puce par un **mot-clé en gras**. Si une section manque \
+d'informations dans les sources, indique « Pas d'information saillante pour cette période. »
+
+## 🌍 Géopolitique
+Tensions internationales, conflits, diplomatie, relations entre États.
+
+## 📊 Économie mondiale
+Banques centrales, inflation, marchés, commerce international, grandes entreprises.
+
+## 🌱 Écologie
+Climat, biodiversité, énergie, catastrophes naturelles, législation environnementale.
+
+## 🇫🇷 Politique française
+Gouvernement, Assemblée nationale, partis, réformes, actualité politique.
+
+## ⚡ Événements majeurs
+Science, technologie, sports, culture, faits marquants de la journée.
+
+Traduis systématiquement les informations anglophones. Rédige entièrement en français.\
+"""
+
 
 class NewsService:
     def __init__(self, api_key=None, base_url=None, model=None, timeout=60):
@@ -279,6 +325,103 @@ class NewsService:
         except Exception as e:
             logger.warning('API LLM indisponible, fallback heuristique (%s)', e)
             return None
+
+    # ------------------------------------------------------------------
+    # DIGEST MONDE (flux multi-thèmes, indépendant des positions)
+    # ------------------------------------------------------------------
+
+    def fetch_digest_news(self, max_per_feed=6):
+        """
+        Agrège des articles depuis les flux RSS du digest monde.
+        Returns: [{'title','link','published','source','summary'}]
+        """
+        try:
+            import feedparser
+        except ImportError:
+            logger.error('feedparser non installé — digest impossible')
+            return []
+
+        items, seen = [], set()
+
+        def _add(entry, source):
+            title = (getattr(entry, 'title', '') or '').strip()
+            if not title or title.lower() in seen:
+                return
+            seen.add(title.lower())
+            desc = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
+            items.append({
+                'title': title,
+                'link': getattr(entry, 'link', ''),
+                'published': getattr(entry, 'published', '') or '',
+                'published_parsed': getattr(entry, 'published_parsed', None),
+                'source': source,
+                'ticker': None,
+                'summary': self._strip_html(desc)[:800],
+            })
+
+        for source, url in WORLD_DIGEST_FEEDS:
+            try:
+                feed = feedparser.parse(url)
+                for entry in feed.entries[:max_per_feed]:
+                    _add(entry, source)
+            except Exception as e:
+                logger.warning('fetch_digest_news: échec RSS %s (%s)', source, e)
+
+        items.sort(key=lambda x: x['published_parsed'] or (0,), reverse=True)
+        for it in items:
+            it.pop('published_parsed', None)
+        logger.info('fetch_digest_news: %d articles récupérés', len(items))
+        return items
+
+    def summarize_digest(self, news_items):
+        """
+        Génère le résumé structuré en 5 thèmes (géopolitique, économie, écologie,
+        politique française, événements majeurs) via LLM ou heuristique.
+        Returns: str (markdown)
+        """
+        if not news_items:
+            return "Aucune actualité récupérée pour cette édition."
+
+        self._enrich_content(news_items, limit=min(15, len(news_items)))
+
+        if self.api_key:
+            blocks = []
+            for it in news_items[:20]:
+                body = (it.get('content') or it.get('summary') or '').strip()[:self.MAX_CONTENT_CHARS]
+                block = f"[{it['source']}] {it['title']}"
+                if body:
+                    block += f"\n{body}"
+                blocks.append(block)
+            articles_text = "\n\n".join(blocks)
+            user_msg = _DIGEST_USER_TPL.format(n=len(blocks), articles=articles_text)
+            try:
+                r = requests.post(
+                    f'{self.base_url}/chat/completions',
+                    headers={'Authorization': f'Bearer {self.api_key}',
+                             'Content-Type': 'application/json'},
+                    json={
+                        'model': self.model,
+                        'temperature': 0.25,
+                        'max_tokens': 1000,
+                        'messages': [
+                            {'role': 'system', 'content': _DIGEST_SYSTEM},
+                            {'role': 'user',   'content': user_msg},
+                        ],
+                    },
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                text = (r.json()['choices'][0]['message']['content'] or '').strip()
+                if text:
+                    return text
+            except Exception as e:
+                logger.warning('summarize_digest: API LLM échec (%s) — fallback', e)
+
+        # Fallback heuristique : liste brute des 15 premiers titres
+        lines = ['## Sélection d\'articles du jour\n']
+        for it in news_items[:15]:
+            lines.append(f"- **{it['source']}** — {it['title']}")
+        return '\n'.join(lines)
 
     @staticmethod
     def _summarize_fallback(news_items):

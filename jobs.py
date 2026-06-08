@@ -84,6 +84,40 @@ def job_collect_prices():
             print(f"❌ job_collect_prices: {e}")
 
 
+DIGEST_RECIPIENTS = [
+    'kouatebryan38@gmail.com',
+    'callista.chagnard@gmail.com',
+]
+
+
+def job_digest_actualites():
+    """
+    Digest d'actualités bi-quotidien (10h et 20h Europe/Paris).
+    Agrège ~50 articles via flux RSS monde, génère un résumé LLM en 5 thèmes
+    (géopolitique, économie, écologie, politique française, événements majeurs)
+    et envoie à DIGEST_RECIPIENTS.
+    """
+    with app.app_context():
+        from datetime import datetime
+        edition = 'matin' if datetime.now().hour < 14 else 'soir'
+        print(f"[{datetime.now()}] 🗞️ Digest actualités ({edition})…")
+        try:
+            news_svc = get_news_service()
+            items = news_svc.fetch_digest_news(max_per_feed=6)
+            if not items:
+                print("⚠️ Digest: aucun article récupéré — envoi annulé")
+                return
+            summary = news_svc.summarize_digest(items)
+            email_svc = get_email_service()
+            if not email_svc.is_configured():
+                print("⚠️ Service email non configuré — digest annulé")
+                return
+            res = email_svc.envoyer_digest_actualites(summary, items, DIGEST_RECIPIENTS)
+            print(f"{'✅' if res['success'] else '❌'} Digest {edition}: {res['message']}")
+        except Exception as e:
+            print(f"❌ job_digest_actualites: {e}")
+
+
 def job_refresh_prices():
     """Cron nuit : rafraîchit le cache de prix (benchmark ^GSPC + panel)."""
     with app.app_context():

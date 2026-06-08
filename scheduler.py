@@ -5,7 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import jobs
 from jobs import (job_market_monitor, job_briefing, job_rebalance_reminder,
-                  job_refresh_prices, job_collect_prices)
+                  job_refresh_prices, job_collect_prices, job_digest_actualites)
 
 
 def create_scheduler(app):
@@ -62,11 +62,24 @@ def create_scheduler(app):
         replace_existing=True,
     )
 
+    # 6) Digest d'actualités : 10h00 et 20h00 Europe/Paris (tous les jours)
+    scheduler.add_job(
+        job_digest_actualites,
+        CronTrigger(hour=10, minute=0, timezone=PARIS),
+        id='digest_matin', name='Digest actualités (matin)', replace_existing=True,
+    )
+    scheduler.add_job(
+        job_digest_actualites,
+        CronTrigger(hour=20, minute=0, timezone=PARIS),
+        id='digest_soir', name='Digest actualités (soir)', replace_existing=True,
+    )
+
     scheduler.start()
-    print("[scheduler] demarre - 5 crons actifs :")
+    print("[scheduler] demarre - 7 crons actifs :")
     print("  - Surveillance marche : chaque minute (9h30-16h00 ET, lun-ven)")
     print("  - Briefings : 9h35 / 12h30 / 16h05 ET (lun-ven)")
     print("  - Rappel reequilibrage : 1er du mois 8h00 ET")
     print("  - Cache de prix : 22h00 ET (lun-ven)")
     print("  - Collecte yfinance SP500/NDX100 : 00h00 Europe/Paris (quotidien)")
+    print("  - Digest actualites : 10h00 + 20h00 Europe/Paris (quotidien)")
     return scheduler

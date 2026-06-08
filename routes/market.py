@@ -89,6 +89,41 @@ def briefing_send():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@bp.route('/api/digest/send', methods=['POST'])
+@require_admin
+def digest_send():
+    """
+    Envoie le digest d'actualités immédiatement (bouton manuel).
+    Body optionnel : { recipients: ['a@b.com', ...] }
+    Par défaut envoie à la liste DIGEST_RECIPIENTS des jobs.
+    """
+    from jobs import DIGEST_RECIPIENTS
+    data = request.get_json(silent=True) or {}
+    recipients = data.get('recipients') or DIGEST_RECIPIENTS
+
+    try:
+        news_svc = get_news_service()
+        current_app.logger.info('digest_send: récupération des articles…')
+        items = news_svc.fetch_digest_news(max_per_feed=6)
+        if not items:
+            return jsonify({'success': False,
+                            'message': 'Aucun article récupéré (vérifiez la connexion réseau)'}), 502
+
+        current_app.logger.info('digest_send: %d articles, génération du résumé…', len(items))
+        summary = news_svc.summarize_digest(items)
+
+        email_svc = get_email_service()
+        if not email_svc.is_configured():
+            return jsonify({'success': False, 'message': 'Service email non configuré'}), 400
+
+        result = email_svc.envoyer_digest_actualites(summary, items, recipients)
+        return jsonify({**result, 'articles': len(items), 'recipients': recipients}), \
+               (200 if result['success'] else 500)
+    except Exception as e:
+        current_app.logger.exception('digest_send: erreur')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # =============================================================================
 # TÂCHES PLANIFIÉES
 # =============================================================================

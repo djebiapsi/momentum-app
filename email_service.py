@@ -830,6 +830,184 @@ Stratégie Momentum 12-1
                 f"En échec ({len(failed)}): {', '.join(failed[:60])}")
         return self._send(f"⚠️ Échec collecte de prix — {fr_m:.0f}% mensuel / {fr_d:.0f}% daily", html, text)
 
+    # =====================================================================
+    # DIGEST D'ACTUALITÉS QUOTIDIEN
+    # =====================================================================
+
+    def _send_multi(self, recipients: list, subject: str, html: str, text: str = None) -> dict:
+        """Envoi à une liste de destinataires (utilise Resend `to` multi)."""
+        if not self.is_configured():
+            return {'success': False, 'message': 'Service email non configuré'}
+        if not recipients:
+            return {'success': False, 'message': 'Aucun destinataire'}
+        try:
+            params = {
+                "from": self.from_email,
+                "to": recipients,
+                "subject": subject,
+                "html": html,
+                "text": text or subject,
+            }
+            response = resend.Emails.send(params)
+            return {
+                'success': True,
+                'message': f'Email envoyé à {", ".join(recipients)}',
+                'email_id': response.get('id') if isinstance(response, dict) else str(response),
+            }
+        except Exception as e:
+            return {'success': False, 'message': f'Erreur: {str(e)}'}
+
+    def envoyer_digest_actualites(self, news_summary: str, news_items: list,
+                                   recipients: list = None) -> dict:
+        """
+        Digest d'actualités bi-quotidien (10h / 20h Paris).
+        news_summary : markdown structuré en 5 sections (LLM ou fallback).
+        news_items   : liste brute d'articles [{title, link, source, ...}].
+        recipients   : liste d'emails ; utilise self.to_email si None.
+        """
+        from datetime import datetime
+        now = datetime.now()
+        edition = 'Matin' if now.hour < 14 else 'Soir'
+        date_str = now.strftime('%A %d %B %Y').capitalize()
+        heure_str = now.strftime('%H:%M')
+
+        # ── Palette thèmes ────────────────────────────────────────────
+        TOPICS = [
+            ('🌍', 'Géopolitique',      '#1d4ed8', '#1e3a8a'),
+            ('📊', 'Économie mondiale', '#7c3aed', '#4c1d95'),
+            ('🌱', 'Écologie',          '#16a34a', '#14532d'),
+            ('🇫🇷', 'Politique française','#dc2626', '#7f1d1d'),
+            ('⚡', 'Événements majeurs', '#d97706', '#78350f'),
+        ]
+
+        # ── Convertir le markdown en blocs HTML par section ──────────
+        def _parse_sections(md: str) -> dict:
+            """Extrait les blocs de texte par titre ## du markdown."""
+            sections: dict = {}
+            current = None
+            for line in md.split('\n'):
+                stripped = line.strip()
+                m = re.match(r'^#{1,3}\s+(.+)$', stripped)
+                if m:
+                    current = m.group(1).strip()
+                    sections[current] = []
+                elif current and stripped:
+                    sections[current].append(stripped)
+            return sections
+
+        sections = _parse_sections(news_summary)
+
+        def _match_section(keyword: str, sections: dict) -> list:
+            """Cherche une section par mot-clé partiel (insensible à la casse)."""
+            kw = keyword.lower()
+            for k, v in sections.items():
+                if kw in k.lower():
+                    return v
+            return []
+
+        def _render_section(icon, title, color_border, color_bg, lines: list) -> str:
+            if not lines:
+                lines = ['Pas d\'information saillante pour cette édition.']
+            bullets = ''
+            for line in lines:
+                raw = line.lstrip('-•* \t')
+                if not raw:
+                    continue
+                rendered = self._md_inline(raw)
+                bullets += (
+                    f'<div style="margin:6px 0;padding-left:14px;border-left:2px solid {color_border}40;'
+                    f'font-size:14px;line-height:1.6;color:#d4d4d8;">'
+                    f'<span style="color:{color_border};margin-right:6px;">›</span>{rendered}</div>'
+                )
+            return f"""
+<div style="background:#18181b;border:1px solid #27272a;border-left:4px solid {color_border};
+            border-radius:10px;padding:16px 18px;margin-bottom:14px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+    <span style="font-size:18px;line-height:1;">{icon}</span>
+    <span style="font-weight:700;font-size:15px;color:#f4f4f5;letter-spacing:-0.2px;">{title}</span>
+  </div>
+  {bullets}
+</div>"""
+
+        topic_keywords = ['Géopolitique', 'Économie', 'Écologie', 'Politique', 'Événements']
+        sections_html = ''
+        for (icon, title, border, bg), kw in zip(TOPICS, topic_keywords):
+            lines = _match_section(kw, sections)
+            sections_html += _render_section(icon, title, border, bg, lines)
+
+        # ── Sources & liens ───────────────────────────────────────────
+        sources_html = ''
+        for it in (news_items or [])[:18]:
+            link = it.get('link', '#')
+            title_txt = html_lib.escape(it.get('title', ''))
+            source = html_lib.escape(it.get('source', ''))
+            sources_html += (
+                f'<li style="margin-bottom:7px;font-size:13px;">'
+                f'<a href="{link}" style="color:#93c5fd;text-decoration:none;">{title_txt}</a>'
+                f'<span style="color:#52525b;"> · {source}</span></li>'
+            )
+
+        sources_block = f"""
+<div style="margin-top:20px;padding-top:18px;border-top:1px solid #27272a;">
+  <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;
+              letter-spacing:0.8px;margin-bottom:10px;">Sources de cette édition</div>
+  <ul style="padding-left:16px;margin:0;list-style:none;">
+    {sources_html}
+  </ul>
+</div>""" if sources_html else ''
+
+        # ── Corps complet ─────────────────────────────────────────────
+        subtitle = f'Édition {edition} · {date_str} · {heure_str}'
+        body = sections_html + sources_block
+
+        html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#09090b;">
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+              color:#fafafa;background:#09090b;max-width:620px;margin:0 auto;padding:20px;">
+
+    <!-- Header gradient -->
+    <div style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 50%,#0f2027 100%);
+                border:1px solid #27272a;color:#fff;padding:32px 28px 24px;
+                border-radius:16px;text-align:center;margin-bottom:20px;
+                box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;
+                  color:#60a5fa;margin-bottom:8px;font-weight:600;">
+        Digest d'Actualités
+      </div>
+      <h1 style="margin:0 0 6px;font-size:26px;font-weight:800;
+                 background:linear-gradient(90deg,#60a5fa,#a78bfa,#34d399);
+                 -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+                 background-clip:text;">
+        {date_str}
+      </h1>
+      <div style="font-size:13px;color:#94a3b8;margin-top:6px;">
+        Édition {edition} · {heure_str} · 5 thèmes essentiels
+      </div>
+    </div>
+
+    {body}
+
+    <!-- Footer -->
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1e293b;
+                text-align:center;color:#475569;font-size:11px;">
+      <p style="margin:0 0 4px;">Momentum Strategy App · Digest automatique</p>
+      <p style="margin:0;">Résumé généré par IA à partir de sources publiques (RSS)</p>
+    </div>
+  </div>
+</body></html>"""
+
+        # Texte plain
+        text_plain = f"DIGEST {edition.upper()} — {date_str} {heure_str}\n{'='*60}\n\n"
+        text_plain += re.sub(r'\*\*(.+?)\*\*', r'\1', news_summary)
+        text_plain += "\n\n--- Sources ---\n"
+        for it in (news_items or [])[:15]:
+            text_plain += f"• {it.get('title','')} [{it.get('source','')}]\n  {it.get('link','')}\n"
+
+        to_list = recipients or [self.to_email]
+        subject = f"🗞️ Digest {edition} — {date_str}"
+        return self._send_multi(to_list, subject, html_content, text_plain)
+
     def envoyer_test(self):
         """
         Envoie un email de test pour vérifier la configuration.
