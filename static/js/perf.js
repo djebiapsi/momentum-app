@@ -50,8 +50,24 @@
             const cashInfo = fs.snapshots_with_cash != null
                 ? ` · ${fs.snapshots_with_cash}/${fs.total_snapshots} snaps avec cash`
                 : '';
-            const src = `Flex (${fs.snapshots_in_range || '?'} jours${cashInfo})`;
+            const acctInfo = data.flex_account_id ? ` · ${data.flex_account_id}` : '';
+            const src = `Flex (${fs.snapshots_in_range || '?'} jours${cashInfo}${acctInfo})`;
             document.getElementById('perf-date-info').textContent = `${perfRange} · ${src}`;
+
+            // ---- Bandeau paper account ----
+            let paperBanner = document.getElementById('perf-paper-banner');
+            if (data.is_paper) {
+                if (!paperBanner) {
+                    paperBanner = document.createElement('div');
+                    paperBanner.id = 'perf-paper-banner';
+                    paperBanner.style.cssText = 'background:#7c2d12;color:#fca5a5;padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:12px;display:flex;align-items:center;gap:8px;';
+                    const dashboard = document.querySelector('.perf-dashboard');
+                    if (dashboard) dashboard.insertBefore(paperBanner, dashboard.firstChild);
+                }
+                paperBanner.innerHTML = '<b>⚠ Données PAPER</b> — Le Flex est configuré sur votre compte paper IBKR (<code>' + data.flex_account_id + '</code>). Les chiffres ne reflètent pas votre compte réel. Créez une Flex Query sur votre compte LIVE et resynchronisez depuis les Paramètres.';
+            } else if (paperBanner) {
+                paperBanner.remove();
+            }
             document.getElementById('perf-last-update-v2').textContent = 'Mis à jour à ' + new Date().toLocaleTimeString('fr-FR');
 
             // ---- KPIs Performance ----

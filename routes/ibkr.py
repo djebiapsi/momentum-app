@@ -440,11 +440,16 @@ def perf_dashboard():
         worst_pos   = min(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None) if positions else None
         winners     = [p for p in positions if (p.get('unrealized_pnl') or 0) > 0]
 
+        flex_account_id = Settings.get('flex_account_id', '')
+        is_paper = bool(flex_account_id and flex_account_id.upper().startswith('DU'))
+
         return jsonify({
             'success': True,
             'range': range_key,
             'nav_source': 'flex',
             'ibkr_connected': ibkr_connected,
+            'flex_account_id': flex_account_id,
+            'is_paper': is_paper,
             'flex_stats': {
                 'total_snapshots': n_total,
                 'snapshots_in_range': len(snaps),
@@ -535,9 +540,13 @@ def flex_preview():
             'cash': round(r['cash'], 2) if r.get('cash') is not None else None,
         }
 
+    account_id = parsed.get('account_id') or ''
+    is_paper = bool(account_id.upper().startswith('DU'))
+
     return jsonify({
-        'success':      True,
-        'account_id':   parsed.get('account_id'),
+        'success':    True,
+        'account_id': account_id,
+        'is_paper':   is_paper,
         'nav': {
             'count':        len(nav_rows),
             'with_cash':    len(cash_present),
@@ -582,11 +591,15 @@ def flex_save_credentials():
 
 @bp.route('/api/flex/status', methods=['GET'])
 def flex_status():
-    """Statut Flex : configuré ? dernière synchro ? volumes importés."""
+    """Statut Flex : configuré ? dernière synchro ? volumes importés. Détecte paper vs live."""
     from models import PortfolioSnapshot, Transaction, Dividend, CashFlow
     configured = bool(Settings.get('flex_token_enc') and Settings.get('flex_query_id'))
+    account_id = Settings.get('flex_account_id', '')
+    is_paper = bool(account_id and account_id.upper().startswith('DU'))
     return jsonify({
         'configured': configured,
+        'account_id': account_id,
+        'is_paper': is_paper,
         'last_sync': Settings.get('flex_last_sync'),
         'last_error': Settings.get('flex_last_error'),
         'snapshots': PortfolioSnapshot.query.count(),
@@ -689,8 +702,17 @@ def flex_sync():
     Settings.set('flex_last_sync', datetime.now().isoformat())
     Settings.set('flex_last_error', '')
 
+    # Persister l'account_id pour détecter paper vs live sans refetch
+    account_id = parsed.get('account_id') or ''
+    if account_id:
+        Settings.set('flex_account_id', account_id)
+
+    is_paper = account_id.upper().startswith('DU')
+
     return jsonify({
         'success': True,
+        'account_id': account_id,
+        'is_paper': is_paper,
         'imported': {'snapshots': nav_n, 'transactions': trade_n,
                      'dividends': div_n, 'cash_flows': cf_n},
         'totals': {
@@ -699,7 +721,6 @@ def flex_sync():
             'dividends': Dividend.query.count(),
             'cash_flows': CashFlow.query.count(),
         },
-        'account_id': parsed.get('account_id'),
     })
 
 

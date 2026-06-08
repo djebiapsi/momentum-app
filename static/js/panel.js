@@ -412,8 +412,14 @@
             }
             if (info) {
                 const last = data.last_sync ? new Date(data.last_sync).toLocaleString('fr-FR') : 'jamais';
-                info.innerHTML = `Dernière synchro : ${last}<br>`
-                    + `${data.snapshots} jours NAV · ${data.transactions} transactions · ${data.dividends} dividendes`
+                const acctLine = data.account_id
+                    ? `<br>Compte : <code>${data.account_id}</code>`
+                      + (data.is_paper
+                          ? ' <span style="background:#7c2d12;color:#fca5a5;padding:1px 6px;border-radius:4px;font-size:10px;">⚠ PAPER — créez une Flex Query sur votre compte LIVE</span>'
+                          : ' <span style="background:#14532d;color:#4ade80;padding:1px 6px;border-radius:4px;font-size:10px;">LIVE ✓</span>')
+                    : '';
+                info.innerHTML = `Dernière synchro : ${last}${acctLine}<br>`
+                    + `${data.snapshots} jours NAV · ${data.transactions} transactions · ${data.dividends} div · ${data.cash_flows || 0} flux`
                     + (data.last_error ? `<br><span style="color:#f87171">Erreur : ${data.last_error}</span>` : '');
             }
         }
@@ -435,7 +441,11 @@
             if (!data) return;
             if (data.success) {
                 const i = data.imported;
-                showToast(`Importé : ${i.snapshots} NAV, ${i.transactions} tx, ${i.dividends} div`, 'success');
+                const paperWarn = data.is_paper ? ' ⚠ Compte PAPER détecté !' : '';
+                showToast(
+                    `Importé : ${i.snapshots} NAV, ${i.transactions} tx, ${i.dividends} div${paperWarn}`,
+                    data.is_paper ? 'error' : 'success'
+                );
             } else {
                 showToast(data.error || 'Erreur Flex', 'error');
             }
