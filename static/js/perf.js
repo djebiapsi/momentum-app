@@ -46,7 +46,11 @@
             }
 
             const k = data.kpis;
-            const src = data.nav_source === 'flex' ? 'données réelles (Flex)' : 'reconstruction buy & hold';
+            const fs = data.flex_stats || {};
+            const cashInfo = fs.snapshots_with_cash != null
+                ? ` · ${fs.snapshots_with_cash}/${fs.total_snapshots} snaps avec cash`
+                : '';
+            const src = `Flex (${fs.snapshots_in_range || '?'} jours${cashInfo})`;
             document.getElementById('perf-date-info').textContent = `${perfRange} · ${src}`;
             document.getElementById('perf-last-update-v2').textContent = 'Mis à jour à ' + new Date().toLocaleTimeString('fr-FR');
 

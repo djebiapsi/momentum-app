@@ -284,32 +284,20 @@ def perf_dashboard():
     """
     Tableau de bord Performance. Paramètre ?range=1W|1M|3M|6M|1Y|3Y|5Y|YTD|ALL.
 
-    Source NAV : snapshots Flex réels (prioritaire, inclut cash) sinon reconstruction
-    buy & hold des positions actuelles + cash IBKR en cours.
-
-    Graphiques renvoyés en base 100 (rendement indexé) pour ne pas exposer la valeur
-    absolue du compte paper (initialisé à $1M fictif chez IBKR).
+    Source NAV : Flex UNIQUEMENT (PortfolioSnapshot). Pas de reconstruction.
+    Si Flex insuffisant pour la période → message clair, pas de mélange paper/live.
+    Positions actuelles (P&L, prix courants) : IBKR si connecté, sinon omises.
     """
     import pandas as pd
     range_key = (request.args.get('range') or '1Y').upper()
 
     try:
-        if not ibkr_service.ensure_connected():
-            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
-
-        stats = ibkr_service.get_portfolio_stats()
-        positions = stats.get('positions', [])
-        if not positions:
-            return jsonify({'success': True, 'empty': True,
-                            'message': 'Aucune position', 'summary': stats})
-
         from datetime import date as _date
         if range_key == 'YTD':
             nb_jours = (_date.today() - _date(_date.today().year, 1, 1)).days + 1
         else:
             nb_jours = RANGE_TO_DAYS.get(range_key, 365)
 
-        svc = get_momentum_service()
         cutoff = pd.Timestamp(datetime.now()) - pd.Timedelta(days=nb_jours)
 
         def _tz_naive(s):
@@ -317,86 +305,83 @@ def perf_dashboard():
                 s.index = s.index.tz_localize(None)
             return s
 
-        # Source NAV : Flex (prioritaire, inclut cash) sinon reconstruction
+        # ── Source NAV : Flex UNIQUEMENT ─────────────────────────────────────
         from models import PortfolioSnapshot, Dividend, CashFlow
-        snaps = (PortfolioSnapshot.query
-                 .filter(PortfolioSnapshot.date >= cutoff.date())
-                 .order_by(PortfolioSnapshot.date.asc()).all())
-        nav_source = 'flex'
-        cash_ibkr = None
-        nav_total = None  # valeur totale du compte (positions + cash) pour les KPIs
-        if len(snaps) >= 2:
-            nav = pd.Series({pd.Timestamp(s.date): s.nav for s in snaps}).sort_index()
-            # Cash + NAV totale du dernier snapshot disponible
-            last_snap = max(snaps, key=lambda s: s.date)
-            cash_ibkr = last_snap.cash
-            nav_total = last_snap.nav  # déjà positions+cash dans le Flex
-        else:
-            # Reconstruction buy & hold : Σ qty_i × prix_i(t) + cash IBKR actuel
-            nav_source = 'reconstruction'
-            series = {}
-            for p in positions:
-                ticker, qty = p['ticker'], (p.get('qty') or 0)
-                if abs(qty) < 1e-9:
-                    continue
-                df, _ = svc._fetch_daily_adjusted(ticker, nb_jours) if svc else (None, None)
-                if df is None or df.empty:
-                    continue
-                series[ticker] = _tz_naive(df['adjClose'] * qty)
-            if not series:
-                return jsonify({'success': True, 'empty': True,
-                                'message': 'Pas de prix historiques disponibles', 'summary': stats})
-            nav_df = pd.DataFrame(series).sort_index().ffill().dropna(how='all')
-            nav_positions = nav_df.sum(axis=1).dropna()
-            nav_positions = nav_positions[nav_positions.index >= cutoff]
-            # Cash live IBKR (constant sur la période — approximation)
-            try:
-                acct = ibkr_service._ib.accountSummary() if ibkr_service._ib else []
-                cash_tag = next((a for a in acct if a.tag == 'TotalCashValue' and a.currency == 'USD'), None)
-                cash_ibkr = float(cash_tag.value) if cash_tag else 0.0
-            except Exception:
-                cash_ibkr = 0.0
-            nav = nav_positions + cash_ibkr
-            nav_total = float(nav.iloc[-1]) if not nav.empty else None
+        all_snaps = (PortfolioSnapshot.query
+                     .order_by(PortfolioSnapshot.date.asc()).all())
+        snaps = [s for s in all_snaps if pd.Timestamp(s.date) >= cutoff]
 
+        n_total = len(all_snaps)
+        last_date = all_snaps[-1].date.isoformat() if all_snaps else None
+
+        if len(snaps) < 2:
+            return jsonify({
+                'success': True, 'empty': True,
+                'nav_source': 'flex',
+                'message': (
+                    f'Données Flex insuffisantes pour la période "{range_key}" : '
+                    f'{len(snaps)} snapshot(s) sur {nb_jours} jours. '
+                    f'Total en base : {n_total}. Dernier : {last_date}. '
+                    f'Synchronisez Flex depuis les Paramètres → onglet IBKR.'
+                ),
+                'flex_stats': {
+                    'total_snapshots': n_total,
+                    'snapshots_in_range': len(snaps),
+                    'last_snapshot_date': last_date,
+                },
+            })
+
+        nav = pd.Series({pd.Timestamp(s.date): s.nav for s in snaps}).sort_index()
         nav = _tz_naive(nav)
-        if len(nav) < 2:
-            return jsonify({'success': True, 'empty': True,
-                            'message': 'Historique insuffisant', 'summary': stats})
 
-        # TWR : neutralise les gros flux (dépôts/retraits > 20%)
-        raw_ret = nav.pct_change()
-        twr_ret = raw_ret.where(raw_ret.abs() <= 0.20, 0.0).fillna(0.0)
+        last_snap = snaps[-1]
+        cash_flex  = last_snap.cash    # None si pas encore extrait du XML
+        nav_total  = last_snap.nav     # total compte officiel (positions + cash)
+
+        # Diagnostique : quel % des snapshots ont le cash renseigné ?
+        snaps_with_cash = sum(1 for s in all_snaps if s.cash is not None)
+
+        # ── Benchmark SPY ────────────────────────────────────────────────────
+        svc = get_momentum_service()
+        bench_index = None
+        bench_cagr  = None
+        if svc:
+            try:
+                spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
+                if spy_df is not None and not spy_df.empty:
+                    spy = _tz_naive(spy_df['adjClose'].copy())
+                    spy = spy[spy.index >= cutoff]
+                    if len(spy) >= 2:
+                        bench_index = spy / spy.iloc[0]
+                        bd = max(1, (bench_index.index[-1] - bench_index.index[0]).days)
+                        bench_cagr = float(bench_index.iloc[-1] ** (365.0 / bd) - 1)
+            except Exception:
+                pass
+
+        # ── TWR : neutralise les gros flux (dépôts/retraits > 20%) ──────────
+        raw_ret  = nav.pct_change()
+        twr_ret  = raw_ret.where(raw_ret.abs() <= 0.20, 0.0).fillna(0.0)
         twr_index = (1 + twr_ret).cumprod()
-        twr_index = twr_index / twr_index.iloc[0]   # base 1.0 = base 100
+        twr_index = twr_index / twr_index.iloc[0]
 
         daily_ret = twr_ret[twr_ret != 0.0]
-        days = max(1, (nav.index[-1] - nav.index[0]).days)
+        days      = max(1, (nav.index[-1] - nav.index[0]).days)
         total_ret = float(twr_index.iloc[-1] - 1)
-        cagr = float(twr_index.iloc[-1] ** (365.0 / days) - 1) if days >= 1 else 0.0
-        vol_ann = float(daily_ret.std() * (252 ** 0.5)) if len(daily_ret) > 1 else 0.0
-        rf = 0.04
-        sharpe = float((cagr - rf) / vol_ann) if vol_ann > 1e-9 else 0.0
-        cummax = twr_index.cummax()
-        drawdown = (twr_index - cummax) / cummax
-        max_dd = float(drawdown.min())
+        cagr      = float(twr_index.iloc[-1] ** (365.0 / days) - 1) if days >= 1 else 0.0
+        vol_ann   = float(daily_ret.std() * (252 ** 0.5)) if len(daily_ret) > 1 else 0.0
+        rf        = 0.04
+        sharpe    = float((cagr - rf) / vol_ann) if vol_ann > 1e-9 else 0.0
+        cummax    = twr_index.cummax()
+        drawdown  = (twr_index - cummax) / cummax
+        max_dd    = float(drawdown.min())
 
-        # Benchmark SPY, rebasé à 100 également
-        bench_index = None
-        bench_cagr = None
-        if svc:
-            spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
-            if spy_df is not None and not spy_df.empty:
-                spy = _tz_naive(spy_df['adjClose'].copy())
-                spy = spy[spy.index >= cutoff]
-                if len(spy) >= 2:
-                    bench_index = spy / spy.iloc[0]   # base 1.0 comme twr_index
-                    bd = max(1, (bench_index.index[-1] - bench_index.index[0]).days)
-                    bench_cagr = float(bench_index.iloc[-1] ** (365.0 / bd) - 1)
+        # ── Heatmaps ─────────────────────────────────────────────────────────
+        def _fmt_index(s):
+            return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 4)}
+                    for idx, v in s.items()]
 
-        # Rendements journaliers, hebdomadaires et mensuels (pour les heatmaps)
         daily_rets_raw = twr_index.pct_change().dropna()
-        daily_returns = [
+        daily_returns  = [
             {'date': idx.strftime('%Y-%m-%d'), 'return_pct': round(float(v) * 100, 2)}
             for idx, v in daily_rets_raw.items()
         ]
@@ -408,97 +393,176 @@ def perf_dashboard():
         weekly = twr_index.resample('W').last().pct_change().dropna()
         weekly_returns = [
             {'year': idx.isocalendar()[0], 'week': idx.isocalendar()[1],
-             'return_pct': round(float(v) * 100, 2),
-             'date': idx.strftime('%Y-%m-%d')}
+             'return_pct': round(float(v) * 100, 2), 'date': idx.strftime('%Y-%m-%d')}
             for idx, v in weekly.items()
         ]
 
-        def _fmt_index(s):
-            """Série base-1 → liste [{date, value}] en base 100."""
-            return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 4)}
-                    for idx, v in s.items()]
-
-        # Dividendes sur la période
+        # ── Dividendes ───────────────────────────────────────────────────────
         div_rows = Dividend.query.filter(Dividend.date >= cutoff.date()).all()
         dividends_total = round(sum(d.amount for d in div_rows), 2)
-        dividends_by_ticker = {}
+        dividends_by_ticker: dict = {}
         for d in div_rows:
             dividends_by_ticker[d.ticker] = round(dividends_by_ticker.get(d.ticker, 0) + d.amount, 2)
 
-        # Statistiques de composition du portefeuille
-        positions_value = stats.get('total_value', 0)  # valeur des positions seules
-        # Valeur totale = NAV Flex (positions+cash) ou positions+cash reconstruit
-        total_nav = nav_total if nav_total is not None else positions_value + (cash_ibkr or 0)
-        # Recalculer les allocations sur le total NAV (cash inclus) pour le donut
-        if total_nav > 0:
-            for p in positions:
-                mv = p.get('market_value') or 0
-                p['allocation_pct_nav'] = round(mv / total_nav * 100, 2)
-        cash_pct_of_nav = round((cash_ibkr or 0) / total_nav * 100, 1) if total_nav > 0 else None
-
-        top5_alloc = sum(sorted([p.get('allocation_pct_nav', p.get('allocation_pct', 0))
-                                 for p in positions], reverse=True)[:5])
-        best_pos = max(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None)
-        worst_pos = min(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None)
-        winners = [p for p in positions if (p.get('unrealized_pnl') or 0) > 0]
-
-        # Dépôts / retraits sur la période
+        # ── Flux de capitaux ─────────────────────────────────────────────────
         cf_rows = CashFlow.query.filter(CashFlow.date >= cutoff.date()).order_by(CashFlow.date).all()
         cash_flow_list = [cf.to_dict() for cf in cf_rows]
-        # Agrégation mensuelle pour le graphique
-        cf_monthly = {}
+        cf_monthly: dict = {}
         for cf in cf_rows:
             key = cf.date.strftime('%Y-%m')
             cf_monthly[key] = round((cf_monthly.get(key) or 0) + cf.amount, 2)
         cf_monthly_list = [{'month': k, 'amount': v} for k, v in sorted(cf_monthly.items())]
 
+        # ── Positions actuelles : IBKR si connecté (optionnel) ───────────────
+        positions      = []
+        positions_value = 0.0
+        ibkr_connected = False
+        try:
+            if ibkr_service.ensure_connected():
+                stats_ibkr  = ibkr_service.get_portfolio_stats()
+                positions   = stats_ibkr.get('positions', [])
+                positions_value = stats_ibkr.get('total_value', 0.0)
+                ibkr_connected  = True
+        except Exception as e:
+            current_app.logger.warning('perf_dashboard: positions IBKR non disponibles: %s', e)
+
+        # Recalculer les allocations sur le NAV Flex (cash inclus)
+        if nav_total and nav_total > 0:
+            for p in positions:
+                mv = p.get('market_value') or 0
+                p['allocation_pct_nav'] = round(mv / nav_total * 100, 2)
+
+        cash_pct_of_nav = round((cash_flex or 0) / nav_total * 100, 1) if (cash_flex and nav_total) else None
+
+        top5_alloc  = sum(sorted([p.get('allocation_pct_nav', p.get('allocation_pct', 0))
+                                  for p in positions], reverse=True)[:5])
+        best_pos    = max(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None) if positions else None
+        worst_pos   = min(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None) if positions else None
+        winners     = [p for p in positions if (p.get('unrealized_pnl') or 0) > 0]
+
         return jsonify({
             'success': True,
             'range': range_key,
-            'nav_source': nav_source,
+            'nav_source': 'flex',
+            'ibkr_connected': ibkr_connected,
+            'flex_stats': {
+                'total_snapshots': n_total,
+                'snapshots_in_range': len(snaps),
+                'last_snapshot_date': last_date,
+                'snapshots_with_cash': snaps_with_cash,
+            },
             'kpis': {
-                'total_value': round(total_nav, 2),      # total compte (positions + cash)
+                'total_value':    round(nav_total, 2),
                 'positions_value': round(positions_value, 2),
-                'cash': round(cash_ibkr, 2) if cash_ibkr is not None else None,
-                'cash_pct': cash_pct_of_nav,
+                'cash':           round(cash_flex, 2) if cash_flex is not None else None,
+                'cash_pct':       cash_pct_of_nav,
                 'total_return_pct': round(total_ret * 100, 2),
-                'cagr_pct': round(cagr * 100, 2),
+                'cagr_pct':       round(cagr * 100, 2),
                 'bench_cagr_pct': round(bench_cagr * 100, 2) if bench_cagr is not None else None,
                 'cagr_vs_bench_pct': round((cagr - bench_cagr) * 100, 2) if bench_cagr is not None else None,
-                'sharpe': round(sharpe, 2),
+                'sharpe':         round(sharpe, 2),
                 'vol_annual_pct': round(vol_ann * 100, 2),
                 'max_drawdown_pct': round(max_dd * 100, 2),
-                'unrealized_pnl': stats.get('total_unrealized_pnl', 0),
-                'realized_pnl': stats.get('total_realized_pnl', 0),
+                'unrealized_pnl': sum(p.get('unrealized_pnl') or 0 for p in positions),
+                'realized_pnl':   None,
                 'positions_count': len(positions),
-                'winners_count': len(winners),
+                'winners_count':  len(winners),
                 'top5_concentration_pct': round(top5_alloc, 1),
-                'best_position': {'ticker': best_pos['ticker'],
-                                  'pnl': round(best_pos['unrealized_pnl'], 2)} if best_pos else None,
+                'best_position':  {'ticker': best_pos['ticker'],
+                                   'pnl': round(best_pos['unrealized_pnl'], 2)} if best_pos else None,
                 'worst_position': {'ticker': worst_pos['ticker'],
                                    'pnl': round(worst_pos['unrealized_pnl'], 2)} if worst_pos else None,
                 'dividends_total': dividends_total,
             },
             'timeseries': {
-                # Tout en base 100 — neutralise la valeur absolue fictive du compte paper
-                'portfolio': _fmt_index(twr_index),
-                'benchmark': _fmt_index(bench_index) if bench_index is not None else [],
+                'portfolio':  _fmt_index(twr_index),
+                'benchmark':  _fmt_index(bench_index) if bench_index is not None else [],
             },
             'drawdown': [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
                          for idx, v in drawdown.items()],
-            'daily_returns': daily_returns,
-            'monthly_returns': monthly_returns,
-            'weekly_returns': weekly_returns,
-            'positions': positions,
-            'cash_flows': cash_flow_list,
+            'daily_returns':    daily_returns,
+            'monthly_returns':  monthly_returns,
+            'weekly_returns':   weekly_returns,
+            'positions':        positions,
+            'cash_flows':       cash_flow_list,
             'cash_flows_monthly': cf_monthly_list,
             'dividends_by_ticker': [{'ticker': t, 'amount': a}
                                     for t, a in sorted(dividends_by_ticker.items(), key=lambda x: -x[1])],
-            'summary': stats,
         })
     except Exception as e:
         current_app.logger.exception('Erreur dans perf_dashboard')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/flex/preview', methods=['GET'])
+@require_admin
+def flex_preview():
+    """
+    Récupère et parse un rapport Flex LIVE sans rien sauvegarder.
+    Permet de vérifier le format, le contenu et la présence du cash.
+    Retourne un résumé détaillé pour le débogage.
+    """
+    enc_token = Settings.get('flex_token_enc')
+    query_id  = Settings.get('flex_query_id')
+    if not enc_token or not query_id:
+        return jsonify({'success': False, 'error': 'Flex non configuré (token + query_id)'}), 400
+    try:
+        token = decrypt_credential(enc_token, current_app.config.get('SECRET_KEY', ''))
+    except Exception:
+        return jsonify({'success': False, 'error': 'Déchiffrement du token impossible'}), 500
+
+    try:
+        parsed = flex_service.fetch_and_parse(token, query_id)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Flex fetch : {e}'}), 502
+
+    nav_rows  = parsed.get('nav', [])
+    trades    = parsed.get('trades', [])
+    dividends = parsed.get('dividends', [])
+    cash_flows = parsed.get('cash_flows', [])
+
+    # Résumé des champs cash dans les lignes NAV
+    cash_present  = [r for r in nav_rows if r.get('cash') is not None]
+    cash_missing  = [r for r in nav_rows if r.get('cash') is None]
+
+    # Trier par date pour les extraits
+    nav_sorted = sorted(nav_rows, key=lambda r: r['date'])
+
+    def _fmt(r):
+        return {
+            'date': r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']),
+            'nav':  round(r['nav'], 2),
+            'cash': round(r['cash'], 2) if r.get('cash') is not None else None,
+        }
+
+    return jsonify({
+        'success':      True,
+        'account_id':   parsed.get('account_id'),
+        'nav': {
+            'count':        len(nav_rows),
+            'with_cash':    len(cash_present),
+            'without_cash': len(cash_missing),
+            'date_range':   [
+                nav_sorted[0]['date'].isoformat() if nav_sorted else None,
+                nav_sorted[-1]['date'].isoformat() if nav_sorted else None,
+            ],
+            'first_5':  [_fmt(r) for r in nav_sorted[:5]],
+            'last_5':   [_fmt(r) for r in nav_sorted[-5:]],
+        },
+        'trades':    {'count': len(trades)},
+        'dividends': {'count': len(dividends)},
+        'cash_flows': {
+            'count':   len(cash_flows),
+            'sample':  [
+                {
+                    'date': cf['date'].isoformat() if hasattr(cf['date'], 'isoformat') else str(cf['date']),
+                    'amount': cf['amount'],
+                    'description': cf.get('description', ''),
+                }
+                for cf in cash_flows[:10]
+            ],
+        },
+    })
 
 
 @bp.route('/api/flex/credentials', methods=['POST'])
