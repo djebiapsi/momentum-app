@@ -318,17 +318,19 @@ def perf_dashboard():
             return s
 
         # Source NAV : Flex (prioritaire, inclut cash) sinon reconstruction
-        from models import PortfolioSnapshot, Dividend
+        from models import PortfolioSnapshot, Dividend, CashFlow
         snaps = (PortfolioSnapshot.query
                  .filter(PortfolioSnapshot.date >= cutoff.date())
                  .order_by(PortfolioSnapshot.date.asc()).all())
         nav_source = 'flex'
         cash_ibkr = None
+        nav_total = None  # valeur totale du compte (positions + cash) pour les KPIs
         if len(snaps) >= 2:
             nav = pd.Series({pd.Timestamp(s.date): s.nav for s in snaps}).sort_index()
-            # Cash du dernier snapshot disponible
+            # Cash + NAV totale du dernier snapshot disponible
             last_snap = max(snaps, key=lambda s: s.date)
             cash_ibkr = last_snap.cash
+            nav_total = last_snap.nav  # déjà positions+cash dans le Flex
         else:
             # Reconstruction buy & hold : Σ qty_i × prix_i(t) + cash IBKR actuel
             nav_source = 'reconstruction'
@@ -347,7 +349,7 @@ def perf_dashboard():
             nav_df = pd.DataFrame(series).sort_index().ffill().dropna(how='all')
             nav_positions = nav_df.sum(axis=1).dropna()
             nav_positions = nav_positions[nav_positions.index >= cutoff]
-            # Ajouter le cash IBKR actuel (constant sur la période — approximation)
+            # Cash live IBKR (constant sur la période — approximation)
             try:
                 acct = ibkr_service._ib.accountSummary() if ibkr_service._ib else []
                 cash_tag = next((a for a in acct if a.tag == 'TotalCashValue' and a.currency == 'USD'), None)
@@ -355,6 +357,7 @@ def perf_dashboard():
             except Exception:
                 cash_ibkr = 0.0
             nav = nav_positions + cash_ibkr
+            nav_total = float(nav.iloc[-1]) if not nav.empty else None
 
         nav = _tz_naive(nav)
         if len(nav) < 2:
@@ -391,7 +394,12 @@ def perf_dashboard():
                     bd = max(1, (bench_index.index[-1] - bench_index.index[0]).days)
                     bench_cagr = float(bench_index.iloc[-1] ** (365.0 / bd) - 1)
 
-        # Rendements mensuels ET hebdomadaires (pour la heatmap)
+        # Rendements journaliers, hebdomadaires et mensuels (pour les heatmaps)
+        daily_rets_raw = twr_index.pct_change().dropna()
+        daily_returns = [
+            {'date': idx.strftime('%Y-%m-%d'), 'return_pct': round(float(v) * 100, 2)}
+            for idx, v in daily_rets_raw.items()
+        ]
         monthly = twr_index.resample('ME').last().pct_change().dropna()
         monthly_returns = [
             {'year': idx.year, 'month': idx.month, 'return_pct': round(float(v) * 100, 2)}
@@ -418,21 +426,41 @@ def perf_dashboard():
             dividends_by_ticker[d.ticker] = round(dividends_by_ticker.get(d.ticker, 0) + d.amount, 2)
 
         # Statistiques de composition du portefeuille
-        total_value = stats.get('total_value', 0)
-        top5_alloc = sum(sorted([p.get('allocation_pct', 0) for p in positions], reverse=True)[:5])
+        positions_value = stats.get('total_value', 0)  # valeur des positions seules
+        # Valeur totale = NAV Flex (positions+cash) ou positions+cash reconstruit
+        total_nav = nav_total if nav_total is not None else positions_value + (cash_ibkr or 0)
+        # Recalculer les allocations sur le total NAV (cash inclus) pour le donut
+        if total_nav > 0:
+            for p in positions:
+                mv = p.get('market_value') or 0
+                p['allocation_pct_nav'] = round(mv / total_nav * 100, 2)
+        cash_pct_of_nav = round((cash_ibkr or 0) / total_nav * 100, 1) if total_nav > 0 else None
+
+        top5_alloc = sum(sorted([p.get('allocation_pct_nav', p.get('allocation_pct', 0))
+                                 for p in positions], reverse=True)[:5])
         best_pos = max(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None)
         worst_pos = min(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None)
         winners = [p for p in positions if (p.get('unrealized_pnl') or 0) > 0]
+
+        # Dépôts / retraits sur la période
+        cf_rows = CashFlow.query.filter(CashFlow.date >= cutoff.date()).order_by(CashFlow.date).all()
+        cash_flow_list = [cf.to_dict() for cf in cf_rows]
+        # Agrégation mensuelle pour le graphique
+        cf_monthly = {}
+        for cf in cf_rows:
+            key = cf.date.strftime('%Y-%m')
+            cf_monthly[key] = round((cf_monthly.get(key) or 0) + cf.amount, 2)
+        cf_monthly_list = [{'month': k, 'amount': v} for k, v in sorted(cf_monthly.items())]
 
         return jsonify({
             'success': True,
             'range': range_key,
             'nav_source': nav_source,
             'kpis': {
-                'total_value': total_value,
+                'total_value': round(total_nav, 2),      # total compte (positions + cash)
+                'positions_value': round(positions_value, 2),
                 'cash': round(cash_ibkr, 2) if cash_ibkr is not None else None,
-                'cash_pct': round(cash_ibkr / (total_value + cash_ibkr) * 100, 1)
-                            if cash_ibkr and total_value else None,
+                'cash_pct': cash_pct_of_nav,
                 'total_return_pct': round(total_ret * 100, 2),
                 'cagr_pct': round(cagr * 100, 2),
                 'bench_cagr_pct': round(bench_cagr * 100, 2) if bench_cagr is not None else None,
@@ -458,9 +486,12 @@ def perf_dashboard():
             },
             'drawdown': [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
                          for idx, v in drawdown.items()],
+            'daily_returns': daily_returns,
             'monthly_returns': monthly_returns,
             'weekly_returns': weekly_returns,
             'positions': positions,
+            'cash_flows': cash_flow_list,
+            'cash_flows_monthly': cf_monthly_list,
             'dividends_by_ticker': [{'ticker': t, 'amount': a}
                                     for t, a in sorted(dividends_by_ticker.items(), key=lambda x: -x[1])],
             'summary': stats,
@@ -488,7 +519,7 @@ def flex_save_credentials():
 @bp.route('/api/flex/status', methods=['GET'])
 def flex_status():
     """Statut Flex : configuré ? dernière synchro ? volumes importés."""
-    from models import PortfolioSnapshot, Transaction, Dividend
+    from models import PortfolioSnapshot, Transaction, Dividend, CashFlow
     configured = bool(Settings.get('flex_token_enc') and Settings.get('flex_query_id'))
     return jsonify({
         'configured': configured,
@@ -497,6 +528,7 @@ def flex_status():
         'snapshots': PortfolioSnapshot.query.count(),
         'transactions': Transaction.query.count(),
         'dividends': Dividend.query.count(),
+        'cash_flows': CashFlow.query.count(),
     })
 
 
@@ -507,7 +539,7 @@ def flex_sync():
     Récupère le rapport Flex et importe NAV / transactions / dividendes en base.
     Données officielles IBKR (exactes).
     """
-    from models import db, PortfolioSnapshot, Transaction, Dividend
+    from models import db, PortfolioSnapshot, Transaction, Dividend, CashFlow
 
     enc_token = Settings.get('flex_token_enc')
     query_id = Settings.get('flex_query_id')
@@ -525,7 +557,7 @@ def flex_sync():
         Settings.set('flex_last_error', str(e)[:300])
         return jsonify({'success': False, 'error': f'Flex : {e}'}), 502
 
-    nav_n = trade_n = div_n = 0
+    nav_n = trade_n = div_n = cf_n = 0
 
     # Toutes les lectures d'existence d'abord, puis les écritures — et on désactive
     # l'autoflush pour éviter qu'une query déclenche un flush prématuré (cause de
@@ -535,19 +567,23 @@ def flex_sync():
                     round(t.quantity, 4), round(t.price, 4))
                    for t in Transaction.query.all()}
     existing_div = {(d.date, d.ticker, round(d.amount, 2)) for d in Dividend.query.all()}
+    existing_cf = {(cf.date, round(cf.amount, 2)) for cf in CashFlow.query.all()}
 
     with db.session.no_autoflush:
-        # NAV → PortfolioSnapshot. parsed['nav'] peut contenir plusieurs lignes
+        # NAV + cash → PortfolioSnapshot. parsed['nav'] peut contenir plusieurs lignes
         # pour une même date → on déduplique (dernière valeur) avant insertion.
         nav_by_date = {}
         for row in parsed['nav']:
-            nav_by_date[row['date']] = row['nav']
-        for d, val in nav_by_date.items():
+            nav_by_date[row['date']] = row  # garde toute la ligne (nav + cash)
+        for d, row in nav_by_date.items():
             if d in existing_snap:
-                existing_snap[d].nav = val
+                existing_snap[d].nav = row['nav']
+                if row.get('cash') is not None:
+                    existing_snap[d].cash = row['cash']
             else:
-                db.session.add(PortfolioSnapshot(date=d, nav=val))
-                existing_snap[d] = True  # marquer pour éviter un doublon intra-batch
+                db.session.add(PortfolioSnapshot(
+                    date=d, nav=row['nav'], cash=row.get('cash')))
+                existing_snap[d] = True
                 nav_n += 1
 
         # Transactions (dédup par date+ticker+qty+price)
@@ -573,17 +609,31 @@ def flex_sync():
                                     amount=dv['amount'], currency=dv['currency']))
             div_n += 1
 
+        # Flux de capitaux / dépôts / retraits (dédup par date+amount)
+        for cf in parsed.get('cash_flows', []):
+            key = (cf['date'], round(cf['amount'], 2))
+            if key in existing_cf:
+                continue
+            existing_cf.add(key)
+            db.session.add(CashFlow(
+                date=cf['date'], amount=cf['amount'],
+                description=cf.get('description', ''), currency=cf.get('currency', 'USD'),
+            ))
+            cf_n += 1
+
     db.session.commit()
     Settings.set('flex_last_sync', datetime.now().isoformat())
     Settings.set('flex_last_error', '')
 
     return jsonify({
         'success': True,
-        'imported': {'snapshots': nav_n, 'transactions': trade_n, 'dividends': div_n},
+        'imported': {'snapshots': nav_n, 'transactions': trade_n,
+                     'dividends': div_n, 'cash_flows': cf_n},
         'totals': {
             'snapshots': PortfolioSnapshot.query.count(),
             'transactions': Transaction.query.count(),
             'dividends': Dividend.query.count(),
+            'cash_flows': CashFlow.query.count(),
         },
         'account_id': parsed.get('account_id'),
     })

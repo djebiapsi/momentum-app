@@ -173,17 +173,23 @@
 
             // ---- Donut composition ----
             const positions = data.positions || [];
-            _renderComposition(positions);
+            _renderComposition(positions, k.cash_pct);
 
-            // ---- Heatmap : hebdomadaire si ≤ 1Y, mensuelle sinon ----
-            const useWeekly = ['1W','1M','3M','6M','1Y','YTD'].includes(perfRange);
+            // ---- Heatmap : journalière ≤1M, hebdomadaire ≤1Y, mensuelle sinon ----
+            const useDaily = ['1W','1M'].includes(perfRange);
+            const useWeekly = ['3M','6M','1Y','YTD'].includes(perfRange);
             document.getElementById('perf-heatmap-title').textContent =
-                'Heatmap rendements ' + (useWeekly ? 'hebdomadaires' : 'mensuels');
-            if (useWeekly) {
+                'Heatmap rendements ' + (useDaily ? 'journaliers' : useWeekly ? 'hebdomadaires' : 'mensuels');
+            if (useDaily) {
+                _renderHeatmapDaily(data.daily_returns || []);
+            } else if (useWeekly) {
                 _renderHeatmapWeekly(data.weekly_returns || []);
             } else {
                 _renderHeatmap(data.monthly_returns || []);
             }
+
+            // ---- Flux de capitaux (dépôts) ----
+            _renderCashFlows(data.cash_flows_monthly || []);
 
             // ---- P&L par position ----
             const pnlSorted = [...positions]
@@ -209,28 +215,38 @@
         }
 
         // --- Donut composition -------------------------------------------
-        function _renderComposition(positions) {
+        function _renderComposition(positions, cashPct) {
             if (!positions.length) return;
-            const sorted = [...positions].sort((a,b)=>(b.allocation_pct||0)-(a.allocation_pct||0));
+            // Utiliser allocation_pct_nav si disponible (% du total NAV incl. cash)
+            const getAlloc = p => p.allocation_pct_nav ?? p.allocation_pct ?? 0;
+            const sorted = [...positions].sort((a,b)=>getAlloc(b)-getAlloc(a));
             // Regrouper les petites positions (<2%) en "Autres"
             const THRESHOLD = 2;
-            const main = sorted.filter(p => (p.allocation_pct||0) >= THRESHOLD);
-            const others = sorted.filter(p => (p.allocation_pct||0) < THRESHOLD);
+            const main = sorted.filter(p => getAlloc(p) >= THRESHOLD);
+            const others = sorted.filter(p => getAlloc(p) < THRESHOLD);
             const labels = main.map(p => p.ticker);
-            const values = main.map(p => p.allocation_pct || 0);
+            const values = main.map(p => getAlloc(p));
             if (others.length) {
                 labels.push('Autres (' + others.length + ')');
-                values.push(others.reduce((s,p)=>s+(p.allocation_pct||0),0));
+                values.push(others.reduce((s,p)=>s+getAlloc(p),0));
+            }
+            // Ajouter le cash comme slice dédiée
+            if (cashPct != null && cashPct > 0) {
+                labels.push('Cash');
+                values.push(cashPct);
             }
             const PALETTE = ['#7C5CFF','#378ADD','#1D9E75','#E0A030','#D85A30',
                              '#534AB7','#3BBFA3','#E87040','#9B59B6','#2ECC71',
                              '#E74C3C','#F39C12','#1ABC9C','#3498DB','#8E44AD'];
+            // Le cash est toujours gris clair pour le distinguer
+            const bgColors = labels.map((lbl, i) =>
+                lbl === 'Cash' ? 'rgba(150,150,150,0.7)' : PALETTE[i % PALETTE.length]);
             _destroyChart('composition');
             _perfCharts.composition = new Chart(document.getElementById('chart-composition'), {
                 type:'doughnut',
                 data:{ labels, datasets:[{
                     data:values,
-                    backgroundColor:labels.map((_,i)=>PALETTE[i%PALETTE.length]),
+                    backgroundColor:bgColors,
                     borderColor:'#111', borderWidth:2, hoverOffset:6
                 }]},
                 options:{ responsive:true, maintainAspectRatio:false, cutout:'60%',
@@ -344,4 +360,74 @@
             if (['1W','1M'].includes(range)) return 'day';
             if (['3M','6M','YTD','1Y'].includes(range)) return 'month';
             return 'year';
+        }
+
+        // --- Heatmap journalière (1W / 1M) --------------------------------
+        function _renderHeatmapDaily(daily) {
+            const cont = document.getElementById('container-heatmap');
+            if (!daily.length) { cont.innerHTML = '<div class="empty-state">Données insuffisantes</div>'; return; }
+            const DAYS = ['L','M','M','J','V'];  // lundi→vendredi
+            // Organiser par semaine ISO
+            const byWeek = {};
+            let maxAbs = 0;
+            daily.forEach(d => {
+                const dt = new Date(d.date);
+                const dow = dt.getDay(); // 0=dim
+                if (dow === 0 || dow === 6) return; // ignorer week-end
+                const monday = new Date(dt);
+                monday.setDate(dt.getDate() - (dow - 1));
+                const wk = monday.toISOString().slice(0, 10);
+                if (!byWeek[wk]) byWeek[wk] = {};
+                byWeek[wk][dow - 1] = d; // 0=lundi, 4=vendredi
+                maxAbs = Math.max(maxAbs, Math.abs(d.return_pct));
+            });
+            const weeks = Object.keys(byWeek).sort();
+            const cell = d => {
+                if (!d) return `<td style="background:var(--bg-secondary);border-radius:3px;width:36px;height:28px;"></td>`;
+                const v = d.return_pct;
+                const op = Math.max(0.15, Math.min(0.9, Math.abs(v) / (maxAbs || 1)));
+                const col = v >= 0 ? `rgba(29,158,117,${op})` : `rgba(216,90,48,${op})`;
+                const day = new Date(d.date).toLocaleDateString('fr-FR', {day:'numeric',month:'short'});
+                return `<td title="${day} · ${v>=0?'+':''}${v.toFixed(2)}%" style="background:${col};border-radius:3px;text-align:center;font-size:9px;color:#fff;padding:3px 2px;white-space:nowrap;">${v>=0?'+':''}${v.toFixed(1)}</td>`;
+            };
+            let html = '<table style="width:100%;border-collapse:separate;border-spacing:3px;font-size:10px;"><thead><tr>'
+                + `<th style="color:var(--text-muted);font-weight:400;width:52px;"></th>`
+                + DAYS.map(d=>`<th style="color:var(--text-muted);font-weight:400;text-align:center;">${d}</th>`).join('')
+                + '</tr></thead><tbody>';
+            weeks.forEach(wk => {
+                const wkDate = new Date(wk);
+                const label = wkDate.toLocaleDateString('fr-FR', {day:'numeric',month:'short'});
+                html += `<tr><td style="color:var(--text-muted);padding-right:6px;font-size:9px;white-space:nowrap;">${label}</td>`
+                    + Array.from({length:5}, (_,i) => cell(byWeek[wk][i])).join('')
+                    + '</tr>';
+            });
+            html += '</tbody></table>';
+            cont.innerHTML = html;
+        }
+
+        // --- Graphique flux de capitaux ------------------------------------
+        function _renderCashFlows(monthly) {
+            const card = document.getElementById('card-cashflows');
+            if (!monthly.length) { if (card) card.style.display = 'none'; return; }
+            if (card) card.style.display = '';
+            const labels = monthly.map(m => m.month);
+            const values = monthly.map(m => m.amount);
+            _destroyChart('cashflows');
+            _perfCharts.cashflows = new Chart(document.getElementById('chart-cashflows'), {
+                type: 'bar',
+                data: { labels, datasets: [{
+                    data: values,
+                    backgroundColor: values.map(v => v >= 0 ? 'rgba(29,158,117,0.7)' : 'rgba(216,90,48,0.7)'),
+                    borderRadius: 3,
+                }]},
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false },
+                        tooltip: { callbacks: { label: c => ` ${c.parsed.y >= 0 ? '+' : ''}$${Math.abs(c.parsed.y).toLocaleString()}` }} },
+                    scales: {
+                        x: { grid: { color: PERF_GRID }, ticks: { color: '#888' } },
+                        y: { grid: { color: PERF_GRID }, ticks: { color: '#888',
+                            callback: v => (v >= 0 ? '+' : '') + '$' + Math.abs(v / 1000).toFixed(0) + 'k' } }
+                    }
+                }
+            });
         }

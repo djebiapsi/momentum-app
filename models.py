@@ -476,6 +476,32 @@ class IndexConstituent(db.Model):
         }
 
 
+class CashFlow(db.Model):
+    """
+    Flux de capitaux (dépôts / retraits) extraits du rapport Flex IBKR.
+    Permet de visualiser l'historique des apports sur le graphique de performance.
+    """
+    __tablename__ = 'cash_flows'
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False, index=True)
+    amount = db.Column(db.Float, nullable=False)  # positif = dépôt, négatif = retrait
+    description = db.Column(db.String(200))
+    currency = db.Column(db.String(3), default='USD')
+
+    __table_args__ = (
+        db.Index('ix_cash_flow_date', 'date'),
+    )
+
+    def to_dict(self):
+        return {
+            'date': self.date.isoformat(),
+            'amount': self.amount,
+            'description': self.description,
+            'currency': self.currency,
+        }
+
+
 class MarketEvent(db.Model):
     """
     Évènement de marché détecté par le moniteur (cron chaque minute).
@@ -559,6 +585,11 @@ def init_db(app, default_panel):
             'volume': 'FLOAT',
             'low':    'FLOAT',
             'high':   'FLOAT',
+        })
+        # Migration: cash dans les snapshots portfolio
+        _migrate_add_columns(app, 'portfolio_snapshots', {
+            'cash':             'FLOAT',
+            'invested_capital': 'FLOAT',
         })
         
         # Initialiser le panel Long par défaut si vide

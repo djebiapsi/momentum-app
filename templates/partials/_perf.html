@@ -23,7 +23,7 @@
                 <!-- KPI Strip — performance -->
                 <div class="perf-kpi-strip">
                     <div class="perf-kpi-card" id="kpi-total-value">
-                        <div class="perf-kpi-label">Valeur positions</div>
+                        <div class="perf-kpi-label">Valeur totale</div>
                         <div class="perf-kpi-value">—</div>
                         <div class="perf-kpi-delta">—</div>
                     </div>
@@ -112,6 +112,18 @@
                         <div class="perf-chart-title">Drawdown (TWR)</div>
                         <div class="perf-chart-container">
                             <canvas id="chart-drawdown-v2"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Flux de capitaux (dépôts / retraits) -->
+                <div class="perf-chart-row full" id="card-cashflows" style="display:none;">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Flux de capitaux
+                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · dépôts (+) / retraits (−) par mois</span>
+                        </div>
+                        <div class="perf-chart-container" style="min-height:160px;">
+                            <canvas id="chart-cashflows"></canvas>
                         </div>
                     </div>
                 </div>

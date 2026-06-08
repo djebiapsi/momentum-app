@@ -89,26 +89,32 @@ def parse_statement(xml_text: str) -> dict:
     """
     Parse le XML Flex en données structurées.
     Returns: {
-        'nav': [{'date', 'nav'}],
+        'nav': [{'date', 'nav', 'cash'}],
         'trades': [{'date','ticker','type','quantity','price','amount','currency'}],
         'dividends': [{'date','ticker','amount','currency'}],
+        'cash_flows': [{'date','amount','description','currency'}],  # dépôts/retraits
         'account_id': str,
     }
     """
     root = ET.fromstring(xml_text)
-    nav, trades, dividends = [], [], []
+    nav, trades, dividends, cash_flows = [], [], [], []
     account_id = None
 
     for stmt in root.iter('FlexStatement'):
         account_id = stmt.get('accountId') or account_id
 
-        # NAV jour par jour (EquitySummaryByReportDateInBase)
+        # NAV + cash jour par jour (EquitySummaryByReportDateInBase)
         for row in stmt.iter('EquitySummaryByReportDateInBase'):
             d = _parse_flex_date(row.get('reportDate'))
             total = row.get('total')
             if d and total:
                 try:
-                    nav.append({'date': d, 'nav': float(total)})
+                    cash_val = row.get('cash') or row.get('cashReportCurrency')
+                    nav.append({
+                        'date': d,
+                        'nav': float(total),
+                        'cash': float(cash_val) if cash_val else None,
+                    })
                 except ValueError:
                     pass
 
@@ -135,24 +141,35 @@ def parse_statement(xml_text: str) -> dict:
                 'currency': tr.get('currency', 'USD'),
             })
 
-        # Dividendes (CashTransaction type contenant 'Dividend')
+        # CashTransactions : dividendes ET dépôts/retraits
         for ct in stmt.iter('CashTransaction'):
             ttype = (ct.get('type') or '').lower()
-            if 'dividend' not in ttype:
-                continue
             d = _parse_flex_date(ct.get('dateTime') or ct.get('settleDate') or ct.get('reportDate'))
             amount = ct.get('amount')
             if not d or not amount:
                 continue
-            try:
-                dividends.append({
-                    'date': d, 'ticker': ct.get('symbol') or '',
-                    'amount': float(amount), 'currency': ct.get('currency', 'USD'),
-                })
-            except ValueError:
-                pass
 
-    return {'nav': nav, 'trades': trades, 'dividends': dividends, 'account_id': account_id}
+            if 'dividend' in ttype:
+                try:
+                    dividends.append({
+                        'date': d, 'ticker': ct.get('symbol') or '',
+                        'amount': float(amount), 'currency': ct.get('currency', 'USD'),
+                    })
+                except ValueError:
+                    pass
+            elif any(kw in ttype for kw in ('deposit', 'withdrawal', 'transfer')):
+                try:
+                    cash_flows.append({
+                        'date': d,
+                        'amount': float(amount),
+                        'description': ct.get('description') or ttype,
+                        'currency': ct.get('currency', 'USD'),
+                    })
+                except ValueError:
+                    pass
+
+    return {'nav': nav, 'trades': trades, 'dividends': dividends,
+            'cash_flows': cash_flows, 'account_id': account_id}
 
 
 def fetch_and_parse(token: str, query_id: str) -> dict:
