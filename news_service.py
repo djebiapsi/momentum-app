@@ -64,13 +64,12 @@ _DIGEST_SYSTEM = (
 )
 
 _DIGEST_USER_TPL = """\
-Voici {n} articles d'actualité récents provenant de sources internationales et françaises.
+Voici {n} articles d'actualité récents provenant de sources internationales.
 
 {articles}
 
-Rédige un digest structuré en exactement 5 sections. Chaque section contient 3 à 4 puces de \
-1 à 2 phrases. Commence chaque puce par un **mot-clé en gras**. Si une section manque \
-d'informations dans les sources, indique « Pas d'information saillante pour cette période. »
+Rédige un digest structuré en exactement 6 sections. Chaque section contient 3 à 4 puces de \
+1 à 2 phrases. Commence chaque puce par un **mot-clé en gras**.»
 
 ## 🌍 Géopolitique
 Tensions internationales, conflits, diplomatie, relations entre États.
@@ -381,7 +380,7 @@ class NewsService:
         for source, url in WORLD_DIGEST_FEEDS:
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:max_per_feed]:
+                for entry in feed.entries[:]:
                     _add(entry, source)
             except Exception as e:
                 logger.warning('fetch_digest_news: échec RSS %s (%s)', source, e)
@@ -394,8 +393,8 @@ class NewsService:
 
     def summarize_digest(self, news_items):
         """
-        Génère le résumé structuré en 5 thèmes (géopolitique, économie, écologie,
-        politique française, événements majeurs) via LLM ou heuristique.
+        Génère le résumé structuré en 6 thèmes (géopolitique, économie, écologie,
+        politique française, événements majeurs, data & software engineering) via LLM ou heuristique.
         Returns: str (markdown)
         """
         if not news_items:
