@@ -861,7 +861,7 @@ Stratégie Momentum 12-1
                                    recipients: list = None) -> dict:
         """
         Digest d'actualités bi-quotidien (10h / 20h Paris).
-        news_summary : markdown structuré en 5 sections (LLM ou fallback).
+        news_summary : markdown structuré en 6 sections (LLM ou fallback).
         news_items   : liste brute d'articles [{title, link, source, ...}].
         recipients   : liste d'emails ; utilise self.to_email si None.
         """
@@ -873,11 +873,12 @@ Stratégie Momentum 12-1
 
         # ── Palette thèmes ────────────────────────────────────────────
         TOPICS = [
-            ('🌍', 'Géopolitique',      '#1d4ed8', '#1e3a8a'),
-            ('📊', 'Économie mondiale', '#7c3aed', '#4c1d95'),
-            ('🌱', 'Écologie',          '#16a34a', '#14532d'),
-            ('🇫🇷', 'Politique française','#dc2626', '#7f1d1d'),
-            ('⚡', 'Événements majeurs', '#d97706', '#78350f'),
+            ('🌍', 'Géopolitique',              '#1d4ed8', '#1e3a8a'),
+            ('📊', 'Économie mondiale',          '#7c3aed', '#4c1d95'),
+            ('🌱', 'Écologie',                  '#16a34a', '#14532d'),
+            ('🇫🇷', 'Politique française',       '#dc2626', '#7f1d1d'),
+            ('🤖', 'Data & Software Engineering','#0891b2', '#164e63'),
+            ('⚡', 'Événements majeurs',          '#d97706', '#78350f'),
         ]
 
         # ── Convertir le markdown en blocs HTML par section ──────────
@@ -947,7 +948,7 @@ Stratégie Momentum 12-1
 
         # Mots-clés suffisamment spécifiques pour ne pas se chevaucher
         # 'Politique française' ne sera pas confondu avec 'Géo·politique'
-        topic_keywords = ['Géopolitique', 'Économie', 'Écologie', 'Politique française', 'Événements']
+        topic_keywords = ['Géopolitique', 'Économie', 'Écologie', 'Politique française', 'Data', 'Événements']
         sections_html = ''
         for (icon, title, border, bg), kw in zip(TOPICS, topic_keywords):
             lines = _match_section(kw, sections)
@@ -1000,7 +1001,7 @@ Stratégie Momentum 12-1
         {date_str}
       </h1>
       <div style="font-size:13px;color:#94a3b8;margin-top:6px;">
-        Édition {edition} · {heure_str} · 5 thèmes essentiels
+        Édition {edition} · {heure_str} · 6 thèmes essentiels
       </div>
     </div>
 
