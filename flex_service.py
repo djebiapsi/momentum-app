@@ -176,6 +176,24 @@ def parse_statement(xml_text: str) -> dict:
                 except ValueError:
                     pass
 
+    # Enrichir les lignes NAV avec le cash depuis CashReportCurrency si absent
+    # (EquitySummaryByReportDateInBase n'expose pas toujours le champ cash)
+    cash_by_date = {}
+    for row in root.iter('CashReportCurrency'):
+        d = _parse_flex_date(row.get('reportDate') or row.get('toDate') or row.get('toDateLong'))
+        end_cash = row.get('endingCash') or row.get('endingSettledCash')
+        currency = (row.get('currency') or '').upper()
+        # Garder uniquement la devise de base (BASE ou USD) pour éviter les doublons
+        if d and end_cash and currency in ('BASE', 'USD', ''):
+            try:
+                cash_by_date[d] = float(end_cash)
+            except ValueError:
+                pass
+
+    for row in nav:
+        if row.get('cash') is None and row['date'] in cash_by_date:
+            row['cash'] = cash_by_date[row['date']]
+
     return {'nav': nav, 'trades': trades, 'dividends': dividends,
             'cash_flows': cash_flows, 'account_id': account_id}
 

@@ -221,6 +221,29 @@ class IBKRService:
             'winning_count':        len(winners),
         }
 
+    def get_cash_balance(self) -> float | None:
+        """
+        Retourne le cash disponible (TotalCashValue BASE) depuis le compte IBKR.
+        Utilise accountValues() — données synchronisées à la connexion puis en live.
+        Retourne None si non connecté ou non disponible.
+        """
+        if not self._is_connected():
+            return None
+        try:
+            async def fn():
+                return self._ib.accountValues()
+            vals = self._submit(fn(), timeout=10)
+            for v in vals:
+                if v.tag == 'TotalCashValue' and v.currency in ('USD', 'BASE'):
+                    return round(float(v.value), 2)
+            # Fallback : première occurrence de TotalCashValue sans filtre devise
+            for v in vals:
+                if v.tag == 'TotalCashValue':
+                    return round(float(v.value), 2)
+        except Exception as e:
+            logger.warning('get_cash_balance: %s', e)
+        return None
+
     def get_daily_bars(self, ticker: str, duration: str = '2 Y') -> list:
         """
         Récupère les barres journalières ajustées (ADJUSTED_LAST) via IBKR.

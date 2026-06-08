@@ -413,26 +413,35 @@ def perf_dashboard():
             cf_monthly[key] = round((cf_monthly.get(key) or 0) + cf.amount, 2)
         cf_monthly_list = [{'month': k, 'amount': v} for k, v in sorted(cf_monthly.items())]
 
-        # ── Positions actuelles : IBKR si connecté (optionnel) ───────────────
-        positions      = []
+        # ── Positions + cash live : IBKR si connecté (optionnel) ────────────
+        positions       = []
         positions_value = 0.0
-        ibkr_connected = False
+        ibkr_connected  = False
+        cash_ibkr       = None
         try:
             if ibkr_service.ensure_connected():
-                stats_ibkr  = ibkr_service.get_portfolio_stats()
-                positions   = stats_ibkr.get('positions', [])
+                stats_ibkr      = ibkr_service.get_portfolio_stats()
+                positions       = stats_ibkr.get('positions', [])
                 positions_value = stats_ibkr.get('total_value', 0.0)
+                cash_ibkr       = ibkr_service.get_cash_balance()
                 ibkr_connected  = True
         except Exception as e:
             current_app.logger.warning('perf_dashboard: positions IBKR non disponibles: %s', e)
 
-        # Recalculer les allocations sur le NAV Flex (cash inclus)
-        if nav_total and nav_total > 0:
+        # Cash : priorité IBKR live (compte courant), sinon dernier snapshot Flex
+        cash_display = cash_ibkr if cash_ibkr is not None else cash_flex
+
+        # NAV live = positions + cash IBKR si disponible, sinon dernier snapshot Flex
+        nav_live = (positions_value + cash_display) if (ibkr_connected and cash_display is not None) else nav_total
+
+        # Recalculer les allocations sur la NAV live (cash inclus)
+        ref_nav = nav_live if nav_live and nav_live > 0 else nav_total
+        if ref_nav and ref_nav > 0:
             for p in positions:
                 mv = p.get('market_value') or 0
-                p['allocation_pct_nav'] = round(mv / nav_total * 100, 2)
+                p['allocation_pct_nav'] = round(mv / ref_nav * 100, 2)
 
-        cash_pct_of_nav = round((cash_flex or 0) / nav_total * 100, 1) if (cash_flex and nav_total) else None
+        cash_pct_of_nav = round(cash_display / ref_nav * 100, 1) if (cash_display and ref_nav) else None
 
         top5_alloc  = sum(sorted([p.get('allocation_pct_nav', p.get('allocation_pct', 0))
                                   for p in positions], reverse=True)[:5])
@@ -457,10 +466,11 @@ def perf_dashboard():
                 'snapshots_with_cash': snaps_with_cash,
             },
             'kpis': {
-                'total_value':    round(nav_total, 2),
+                'total_value':    round(nav_live if nav_live else nav_total, 2),
                 'positions_value': round(positions_value, 2),
-                'cash':           round(cash_flex, 2) if cash_flex is not None else None,
+                'cash':           round(cash_display, 2) if cash_display is not None else None,
                 'cash_pct':       cash_pct_of_nav,
+                'cash_source':    'ibkr' if cash_ibkr is not None else ('flex' if cash_flex is not None else None),
                 'total_return_pct': round(total_ret * 100, 2),
                 'cagr_pct':       round(cagr * 100, 2),
                 'bench_cagr_pct': round(bench_cagr * 100, 2) if bench_cagr is not None else None,
