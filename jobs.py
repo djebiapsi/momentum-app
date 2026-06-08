@@ -33,21 +33,44 @@ def job_rebalance_reminder():
 # ROUTES - API OPTIONS (PUT & PUT SPREAD)
 # =============================================================================
 
+def _is_us_session():
+    """True si on est en séance régulière US (9h30–16h00 ET, lun–ven)."""
+    from zoneinfo import ZoneInfo
+    from datetime import time as dtime
+    now_et = datetime.now(ZoneInfo('America/New_York'))
+    return now_et.weekday() < 5 and dtime(9, 30) <= now_et.time() < dtime(16, 0)
+
+
 def job_market_monitor():
-    """Cron minute (séance US) : surveille le marché et gère les alertes."""
+    """Cron minute (séance US 9h30–16h00 ET, lun–ven) : alertes en temps réel."""
     with app.app_context():
         try:
-            from zoneinfo import ZoneInfo
-            from datetime import time as dtime
-            now_et = datetime.now(ZoneInfo('America/New_York'))
-            if not (dtime(9, 30) <= now_et.time() < dtime(16, 0)):
-                return  # hors séance régulière
+            if not _is_us_session():
+                return  # hors séance → sortie immédiate, le cron 15-min prend le relais
             result = run_market_monitor()
             if result['opened'] or result['closed']:
                 print(f"[{datetime.now()}] 🔔 Monitor: {len(result['opened'])} ouverte(s), "
                       f"{result['closed']} clôturée(s)")
         except Exception as e:
             print(f"❌ job_market_monitor: {e}")
+
+
+def job_market_monitor_offhours():
+    """
+    Cron 15-min (hors séance US, 7j/7) : surveille VIX, futures et évolutions
+    nocturnes/week-end. Skip automatique pendant la séance pour ne pas doubler
+    avec job_market_monitor.
+    """
+    with app.app_context():
+        try:
+            if _is_us_session():
+                return  # séance active → déjà couvert par le cron minute
+            result = run_market_monitor()
+            if result['opened'] or result['closed']:
+                print(f"[{datetime.now()}] 🌙 Monitor (hors-séance): "
+                      f"{len(result['opened'])} ouverte(s), {result['closed']} clôturée(s)")
+        except Exception as e:
+            print(f"❌ job_market_monitor_offhours: {e}")
 
 
 def job_briefing(session='open'):

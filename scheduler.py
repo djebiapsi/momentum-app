@@ -4,8 +4,9 @@ import functools
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import jobs
-from jobs import (job_market_monitor, job_briefing, job_rebalance_reminder,
-                  job_refresh_prices, job_collect_prices, job_digest_actualites)
+from jobs import (job_market_monitor, job_market_monitor_offhours, job_briefing,
+                  job_rebalance_reminder, job_refresh_prices, job_collect_prices,
+                  job_digest_actualites)
 
 
 def create_scheduler(app):
@@ -19,7 +20,13 @@ def create_scheduler(app):
     scheduler.add_job(
         job_market_monitor,
         CronTrigger(day_of_week='mon-fri', hour='9-16', minute='*', timezone=ET),
-        id='market_monitor', name='Surveillance marché (minute)', replace_existing=True,
+        id='market_monitor', name='Surveillance marché (minute, séance US)', replace_existing=True,
+    )
+    scheduler.add_job(
+        job_market_monitor_offhours,
+        CronTrigger(minute='*/15', timezone=ET),
+        id='market_monitor_offhours', name='Surveillance marché (15-min, hors-séance)',
+        replace_existing=True,
     )
 
     # 2) Briefings : ouverture 9h35, mi-séance 12h30, clôture 16h05 ET
@@ -75,8 +82,9 @@ def create_scheduler(app):
     )
 
     scheduler.start()
-    print("[scheduler] demarre - 7 crons actifs :")
-    print("  - Surveillance marche : chaque minute (9h30-16h00 ET, lun-ven)")
+    print("[scheduler] demarre - 8 crons actifs :")
+    print("  - Surveillance marche (1min)   : 9h30-16h00 ET, lun-ven (séance US)")
+    print("  - Surveillance marche (15-min) : 24h/24, 7j/7 hors séance (VIX nocturne)")
     print("  - Briefings : 9h35 / 12h30 / 16h05 ET (lun-ven)")
     print("  - Rappel reequilibrage : 1er du mois 8h00 ET")
     print("  - Cache de prix : 22h00 ET (lun-ven)")

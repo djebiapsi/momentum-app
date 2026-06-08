@@ -9,7 +9,9 @@ TIINGO_API_KEY=votre_cle_api_tiingo
 
 # Configuration Email avec Resend (https://resend.com)
 RESEND_API_KEY=re_xxxxxxxxxxxx
-EMAIL_FROM=onboarding@resend.dev
+# EMAIL_FROM doit utiliser un domaine vérifié sur resend.com/domains
+# ex: notification@votredomaine.fr
+EMAIL_FROM=notification@votredomaine.fr
 EMAIL_TO=votre@email.com
 
 # Clé secrète Flask (générez-en une avec: python -c "import secrets; print(secrets.token_hex(32))")
