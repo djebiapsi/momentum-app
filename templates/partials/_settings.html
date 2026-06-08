@@ -195,7 +195,7 @@
                 <div id="flex-sync-info" style="font-size:12px;color:var(--text-muted);margin-top:10px;"></div>
             </div>
 
-            <!-- Digest d'actualités -->
+            <!-- Digest d'actualités monde -->
             <div class="card admin-only" style="margin-top:12px;">
                 <div class="card-header">
                     <span class="card-title">🗞️ Digest d'actualités</span>
@@ -210,6 +210,23 @@
                     Envoyer maintenant
                 </button>
                 <div id="digest-send-info" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+            </div>
+
+            <!-- Digest Tech & IA -->
+            <div class="card admin-only" style="margin-top:12px;border-left:3px solid #7c3aed;">
+                <div class="card-header">
+                    <span class="card-title">🤖 Digest Tech &amp; IA</span>
+                    <span class="status-badge" style="font-size:10px;background:#2e1065;color:#a78bfa;">10h Paris</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+                    IA/ML, Data Engineering, Software Eng, Tech culture — 14 flux spécialisés,
+                    envoyé uniquement à <em>kouatebryan38@gmail.com</em>.
+                </p>
+                <button class="btn btn-primary btn-block" onclick="sendDigestTech()" id="btn-send-digest-tech"
+                        style="background:#7c3aed;border-color:#7c3aed;">
+                    Envoyer maintenant
+                </button>
+                <div id="digest-tech-send-info" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
             </div>
 
             <!-- Données de marché (yfinance) -->

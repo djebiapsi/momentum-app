@@ -1027,6 +1027,135 @@ Stratégie Momentum 12-1
         subject = f"🗞️ Digest {edition} — {date_str}"
         return self._send_multi(to_list, subject, html_content, text_plain)
 
+    # =====================================================================
+    # DIGEST TECH & IA
+    # =====================================================================
+
+    def envoyer_digest_tech(self, tech_summary: str, news_items: list,
+                            recipients: list = None) -> dict:
+        """
+        Digest Tech & IA quotidien (10h Paris uniquement).
+        tech_summary : markdown structuré en 4 sections.
+        """
+        from datetime import datetime
+        now      = datetime.now()
+        date_str = now.strftime('%A %d %B %Y').capitalize()
+        heure_str = now.strftime('%H:%M')
+
+        TECH_TOPICS = [
+            ('🤖', 'IA & Machine Learning',        '#7c3aed', '#4c1d95'),
+            ('🛠️', 'Data Engineering & Architecture','#0891b2', '#164e63'),
+            ('💻', 'Software Engineering & Dev',    '#16a34a', '#14532d'),
+            ('🌐', 'Tech & Culture',                '#d97706', '#78350f'),
+        ]
+        TECH_KEYWORDS = ['IA', 'Data Engineering', 'Software Engineering', 'Tech']
+
+        def _parse_sections(md):
+            sections, current = {}, None
+            for line in md.split('\n'):
+                stripped = line.strip()
+                m = re.match(r'^#{1,3}\s+(.+)$', stripped)
+                if m:
+                    current = m.group(1).strip()
+                    sections[current] = []
+                elif current and stripped:
+                    sections[current].append(stripped)
+            return sections
+
+        def _match_section(kw, sections):
+            kw_l = kw.lower()
+            for k, v in sections.items():
+                kl = re.sub(r'[^\w\s\-àâäéèêëîïôùûüç]', '', k.lower()).strip()
+                if kl == kw_l or kl.startswith(kw_l) or kw_l in kl.split():
+                    return v
+            return []
+
+        def _render_tech_section(icon, title, border, bg, lines):
+            if not lines:
+                lines = ["Pas d'information notable pour cette édition."]
+            bullets = ''
+            for line in lines:
+                raw = re.sub(r'^(?:\d+[.)]\s+|[-•*]\s+)', '', line.strip())
+                if not raw:
+                    continue
+                rendered = self._md_inline(raw)
+                bullets += (
+                    f'<div style="margin:6px 0;padding-left:12px;border-left:2px solid {border}50;'
+                    f'font-size:13px;line-height:1.6;color:#d4d4d8;font-family:\'IBM Plex Mono\',monospace;">'
+                    f'<span style="color:{border};margin-right:6px;">›</span>{rendered}</div>'
+                )
+            return f"""
+<div style="background:#0f0f13;border:1px solid #27272a;border-left:4px solid {border};
+            border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <span style="font-size:16px;">{icon}</span>
+    <span style="font-weight:700;font-size:14px;color:#f4f4f5;font-family:\'IBM Plex Mono\',monospace;
+                 letter-spacing:-0.3px;">{title}</span>
+  </div>
+  {bullets}
+</div>"""
+
+        sections     = _parse_sections(tech_summary)
+        sections_html = ''
+        for (icon, title, border, bg), kw in zip(TECH_TOPICS, TECH_KEYWORDS):
+            lines = _match_section(kw, sections)
+            sections_html += _render_tech_section(icon, title, border, bg, lines)
+
+        # Sources
+        sources_html = ''.join(
+            f'<li style="margin-bottom:6px;font-size:12px;font-family:\'IBM Plex Mono\',monospace;">'
+            f'<a href="{html_lib.escape(it.get("link","#"))}" style="color:#86efac;text-decoration:none;">'
+            f'{html_lib.escape(it.get("title",""))}</a>'
+            f'<span style="color:#3f3f46;"> · {html_lib.escape(it.get("source",""))}</span></li>'
+            for it in (news_items or [])[:20]
+        )
+
+        html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#09090b;">
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+              color:#fafafa;background:#09090b;max-width:620px;margin:0 auto;padding:20px;">
+
+    <div style="background:linear-gradient(135deg,#0a0a10 0%,#1a0533 40%,#0a1628 100%);
+                border:1px solid #27272a;color:#fff;padding:28px 24px 20px;
+                border-radius:16px;text-align:center;margin-bottom:18px;
+                box-shadow:0 8px 32px rgba(124,58,237,0.2);">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:2.5px;
+                  color:#a78bfa;margin-bottom:6px;font-weight:600;font-family:'IBM Plex Mono',monospace;">
+        Tech &amp; IA · Digest Matin
+      </div>
+      <h1 style="margin:0 0 4px;font-size:22px;font-weight:800;
+                 background:linear-gradient(90deg,#a78bfa,#38bdf8,#34d399);
+                 -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+                 background-clip:text;font-family:'IBM Plex Mono',monospace;">
+        {date_str}
+      </h1>
+      <div style="font-size:12px;color:#6b7280;margin-top:4px;font-family:'IBM Plex Mono',monospace;">
+        {heure_str} · 4 thèmes · {len(news_items or [])} sources
+      </div>
+    </div>
+
+    {sections_html}
+
+    {'<div style="margin-top:18px;padding-top:16px;border-top:1px solid #1a1a2e;"><div style="font-size:11px;font-weight:600;color:#3f3f46;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;font-family:\'IBM Plex Mono\',monospace;">Sources</div><ul style="padding-left:14px;margin:0;list-style:none;">' + sources_html + '</ul></div>' if sources_html else ''}
+
+    <div style="margin-top:20px;padding-top:14px;border-top:1px solid #1a1a2e;
+                text-align:center;color:#3f3f46;font-size:10px;font-family:'IBM Plex Mono',monospace;">
+      Momentum Strategy App · Digest Tech automatique
+    </div>
+  </div>
+</body></html>"""
+
+        text_plain  = f"DIGEST TECH — {date_str} {heure_str}\n{'='*60}\n\n"
+        text_plain += re.sub(r'\*\*(.+?)\*\*', r'\1', tech_summary)
+        text_plain += "\n\n--- Sources ---\n"
+        for it in (news_items or [])[:20]:
+            text_plain += f"• {it.get('title','')} [{it.get('source','')}]\n  {it.get('link','')}\n"
+
+        to_list = recipients or [self.to_email]
+        subject = f"🤖 Tech & IA — {date_str}"
+        return self._send_multi(to_list, subject, html_content, text_plain)
+
     def envoyer_test(self):
         """
         Envoie un email de test pour vérifier la configuration.

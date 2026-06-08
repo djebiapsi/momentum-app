@@ -47,15 +47,60 @@ WORLD_DIGEST_FEEDS = [
     # Événements majeurs / culture / sciences
     ('Le Monde Société',    'https://www.lemonde.fr/societe/rss_full.xml'),
     ('France Info Sport',   'https://www.francetvinfo.fr/sports.rss'),
-    # Veille globale Dev & Tech (La référence absolue)
-    ('Hacker News',         'https://news.ycombinator.com/rss'),
-    # État de l'art IA & Modèles Open Source
-    ('Hugging Face Blog',   'https://huggingface.co/blog/feed.xml'),
-    # Pratique Data Engineering, Data Science & MLOps
-    ('Towards Data Science','https://towardsdatascience.com/feed'),   
-    # Architecture logicielle & bonnes pratiques de référence
-    ('Martin Fowler',       'https://martinfowler.com/feed.atom'),
 ]
+
+# Flux RSS dédiés au digest Tech & IA (envoyé séparément à 10h)
+TECH_IA_FEEDS = [
+    # Intelligence Artificielle & Machine Learning
+    ('Hugging Face Blog',   'https://huggingface.co/blog/feed.xml'),
+    ('Google Research',     'https://blog.research.google/feeds/posts/default?alt=rss'),
+    ('Towards Data Science','https://towardsdatascience.com/feed'),
+    ('KDnuggets',           'https://www.kdnuggets.com/feed'),
+    # Data Engineering & Architecture Logicielle
+    ('Martin Fowler',       'https://martinfowler.com/feed.atom'),
+    ('InfoQ Architecture',  'https://feed.infoq.com/Architecture/news'),
+    ('Netflix TechBlog',    'https://netflixtechblog.com/feed'),
+    # Software Engineering & Dev
+    ('Hacker News',         'https://news.ycombinator.com/rss'),
+    ('GitHub Engineering',  'https://github.blog/category/engineering/feed/'),
+    ('Developpez.com',      'https://www.developpez.com/index/rss'),
+    # Veille Tech & Culture Geek (FR/EN)
+    ('TechCrunch',          'https://techcrunch.com/feed/'),
+    ('The Verge / Tech',    'https://www.theverge.com/tech/rss/index.xml'),
+    ('Le Monde Pixels',     'https://www.lemonde.fr/pixels/rss_full.xml'),
+    ('Korben',              'https://korben.info/feed'),
+]
+
+_TECH_DIGEST_SYSTEM = (
+    "Tu es un expert en technologie, data engineering, IA et software engineering. "
+    "Tu rédiges TOUJOURS et EXCLUSIVEMENT en français, même si les sources sont en anglais. "
+    "Ton style est synthétique et précis, orienté praticien : tu mets en avant les implications "
+    "concrètes (nouveaux outils, changements d'architecture, sorties de modèles, bonnes pratiques)."
+)
+
+_TECH_DIGEST_USER_TPL = """\
+Voici {n} articles tech récents issus de sources spécialisées.
+
+{articles}
+
+Rédige un digest Tech & IA structuré en exactement 4 sections. Chaque section contient 3 à 5 puces \
+de 1 à 2 phrases. Commence chaque puce par un **mot-clé ou outil en gras**.
+
+## 🤖 IA & Machine Learning
+Nouveaux modèles, benchmarks, recherche, LLM, computer vision, agents IA.
+
+## 🛠️ Data Engineering & Architecture
+Pipelines de données, bases de données, cloud, patterns d'architecture, MLOps.
+
+## 💻 Software Engineering & Dev
+Outils, frameworks, langages, bonnes pratiques, open source notable.
+
+## 🌐 Tech & Culture
+Industrie tech, produits, tendances, culture dev, cybersécurité, actualités majeures.
+
+Traduis systématiquement les termes techniques quand un équivalent français courant existe. \
+Rédige entièrement en français.\
+"""
 
 _DIGEST_SYSTEM = (
     "Tu es rédacteur d'un digest d'actualités quotidien haut de gamme, francophone. "
@@ -438,6 +483,117 @@ class NewsService:
         # Fallback heuristique : liste brute des 15 premiers titres
         lines = ['## Sélection d\'articles du jour\n']
         for it in news_items[:15]:
+            lines.append(f"- **{it['source']}** — {it['title']}")
+        return '\n'.join(lines)
+
+    # ------------------------------------------------------------------
+    # DIGEST TECH & IA (flux spécialisés, envoyé uniquement à 10h)
+    # ------------------------------------------------------------------
+
+    def fetch_tech_digest_news(self, max_per_feed=3):
+        """
+        Agrège les articles depuis TECH_IA_FEEDS.
+        Limite à max_per_feed par source pour contrôler le volume (14 feeds).
+        Returns: [{'title','link','published','source','summary'}]
+        """
+        try:
+            import feedparser
+        except ImportError:
+            logger.error('feedparser non installé — tech digest impossible')
+            return []
+
+        items, seen = [], set()
+
+        def _add(entry, source):
+            title = (getattr(entry, 'title', '') or '').strip()
+            if not title or title.lower() in seen:
+                return
+            seen.add(title.lower())
+            desc = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
+            items.append({
+                'title': title,
+                'link': getattr(entry, 'link', ''),
+                'published': getattr(entry, 'published', '') or '',
+                'published_parsed': getattr(entry, 'published_parsed', None),
+                'source': source,
+                'summary': self._strip_html(desc)[:800],
+            })
+
+        for source, url in TECH_IA_FEEDS:
+            try:
+                feed = feedparser.parse(url)
+                count = 0
+                for entry in feed.entries:
+                    if count >= max_per_feed:
+                        break
+                    _add(entry, source)
+                    count += 1
+            except Exception as e:
+                logger.warning('fetch_tech_digest_news: échec RSS %s (%s)', source, e)
+
+        items.sort(key=lambda x: x['published_parsed'] or (0,), reverse=True)
+        for it in items:
+            it.pop('published_parsed', None)
+        logger.info('fetch_tech_digest_news: %d articles récupérés', len(items))
+        return items
+
+    def summarize_tech_digest(self, news_items):
+        """
+        Génère le résumé structuré en 4 thèmes tech via LLM ou heuristique.
+        Returns: str (markdown)
+        """
+        if not news_items:
+            return "Aucun article tech récupéré pour cette édition."
+
+        self._enrich_content(news_items, limit=min(12, len(news_items)))
+
+        if self.api_key:
+            # Sélectionner les 20 meilleurs articles (diversité de sources)
+            seen_sources, selected = set(), []
+            for it in news_items:
+                if len(selected) >= 20:
+                    break
+                src = it['source']
+                # Max 3 articles par source pour la diversité
+                if sum(1 for s in selected if s['source'] == src) < 3:
+                    selected.append(it)
+
+            blocks = []
+            for it in selected:
+                body = (it.get('content') or it.get('summary') or '').strip()[:self.MAX_CONTENT_CHARS]
+                block = f"[{it['source']}] {it['title']}"
+                if body:
+                    block += f"\n{body}"
+                blocks.append(block)
+
+            articles_text = "\n\n".join(blocks)
+            user_msg = _TECH_DIGEST_USER_TPL.format(n=len(blocks), articles=articles_text)
+            try:
+                r = requests.post(
+                    f'{self.base_url}/chat/completions',
+                    headers={'Authorization': f'Bearer {self.api_key}',
+                             'Content-Type': 'application/json'},
+                    json={
+                        'model': self.model,
+                        'temperature': 0.2,
+                        'max_tokens': 3500,
+                        'messages': [
+                            {'role': 'system', 'content': _TECH_DIGEST_SYSTEM},
+                            {'role': 'user',   'content': user_msg},
+                        ],
+                    },
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                text = (r.json()['choices'][0]['message']['content'] or '').strip()
+                if text:
+                    return text
+            except Exception as e:
+                logger.warning('summarize_tech_digest: API LLM échec (%s) — fallback', e)
+
+        # Fallback heuristique : titres par source
+        lines = ['## Sélection Tech du jour\n']
+        for it in news_items[:20]:
             lines.append(f"- **{it['source']}** — {it['title']}")
         return '\n'.join(lines)
 

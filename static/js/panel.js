@@ -476,6 +476,30 @@
             }
         }
 
+        async function sendDigestTech() {
+            const btn  = document.getElementById('btn-send-digest-tech');
+            const info = document.getElementById('digest-tech-send-info');
+            if (btn)  { btn.disabled = true; btn.textContent = 'Génération en cours (~45s)…'; }
+            if (info) info.textContent = 'Récupération des flux tech + résumé IA…';
+
+            try {
+                const data = await api('/digest/tech/send', { method: 'POST' });
+                if (!data) throw new Error('Pas de réponse');
+                if (data.success) {
+                    showToast(`✅ Digest Tech envoyé (${data.articles || '?'} articles → ${(data.recipients||[]).join(', ')})`, 'success');
+                    if (info) info.textContent = `Envoyé · ${data.articles || '?'} articles · ${new Date().toLocaleTimeString('fr-FR')}`;
+                } else {
+                    showToast(data.message || data.error || 'Erreur lors de l\'envoi', 'error');
+                    if (info) info.textContent = data.message || data.error || 'Erreur';
+                }
+            } catch(e) {
+                showToast('Erreur réseau', 'error');
+                if (info) info.textContent = 'Erreur réseau';
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Envoyer maintenant'; }
+            }
+        }
+
         async function loadIBKRStatus() {
             const data = await api('/ibkr/status');
             if (!data) return;

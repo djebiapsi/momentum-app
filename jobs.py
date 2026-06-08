@@ -112,6 +112,8 @@ DIGEST_RECIPIENTS = [
     'callista.chagnard@gmail.com',
 ]
 
+TECH_DIGEST_RECIPIENT = ['kouatebryan38@gmail.com']
+
 
 def job_digest_actualites():
     """
@@ -139,6 +141,31 @@ def job_digest_actualites():
             print(f"{'✅' if res['success'] else '❌'} Digest {edition}: {res['message']}")
         except Exception as e:
             print(f"❌ job_digest_actualites: {e}")
+
+
+def job_digest_tech():
+    """
+    Digest Tech & IA quotidien (10h Europe/Paris uniquement).
+    Agrège les flux TECH_IA_FEEDS, génère un résumé LLM en 4 thèmes
+    (IA/ML, Data Eng, Software Eng, Tech culture) et envoie à TECH_DIGEST_RECIPIENT.
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 🤖 Digest Tech & IA…")
+        try:
+            news_svc = get_news_service()
+            items = news_svc.fetch_tech_digest_news(max_per_feed=3)
+            if not items:
+                print("⚠️ Digest Tech: aucun article récupéré — envoi annulé")
+                return
+            summary = news_svc.summarize_tech_digest(items)
+            email_svc = get_email_service()
+            if not email_svc.is_configured():
+                print("⚠️ Service email non configuré — digest tech annulé")
+                return
+            res = email_svc.envoyer_digest_tech(summary, items, TECH_DIGEST_RECIPIENT)
+            print(f"{'✅' if res['success'] else '❌'} Digest Tech: {res['message']}")
+        except Exception as e:
+            print(f"❌ job_digest_tech: {e}")
 
 
 def job_refresh_prices():

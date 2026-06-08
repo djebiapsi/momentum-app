@@ -6,7 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 import jobs
 from jobs import (job_market_monitor, job_market_monitor_offhours, job_briefing,
                   job_rebalance_reminder, job_refresh_prices, job_collect_prices,
-                  job_digest_actualites)
+                  job_digest_actualites, job_digest_tech)
 
 
 def create_scheduler(app):
@@ -69,7 +69,7 @@ def create_scheduler(app):
         replace_existing=True,
     )
 
-    # 6) Digest d'actualités : 10h00 et 20h00 Europe/Paris (tous les jours)
+    # 6) Digest d'actualités monde : 10h00 et 20h00 Europe/Paris (tous les jours)
     scheduler.add_job(
         job_digest_actualites,
         CronTrigger(hour=10, minute=0, timezone=PARIS),
@@ -81,6 +81,13 @@ def create_scheduler(app):
         id='digest_soir', name='Digest actualités (soir)', replace_existing=True,
     )
 
+    # 7) Digest Tech & IA : 10h05 Europe/Paris uniquement (→ kouatebryan38@gmail.com)
+    scheduler.add_job(
+        job_digest_tech,
+        CronTrigger(hour=10, minute=5, timezone=PARIS),
+        id='digest_tech', name='Digest Tech & IA (matin)', replace_existing=True,
+    )
+
     scheduler.start()
     print("[scheduler] demarre - 8 crons actifs :")
     print("  - Surveillance marche (1min)   : 9h30-16h00 ET, lun-ven (séance US)")
@@ -90,4 +97,5 @@ def create_scheduler(app):
     print("  - Cache de prix : 22h00 ET (lun-ven)")
     print("  - Collecte yfinance SP500/NDX100 : 00h00 Europe/Paris (quotidien)")
     print("  - Digest actualites : 10h00 + 20h00 Europe/Paris (quotidien)")
+    print("  - Digest Tech & IA  : 10h05 Europe/Paris (quotidien, perso)")
     return scheduler

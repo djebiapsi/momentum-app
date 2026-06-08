@@ -124,6 +124,37 @@ def digest_send():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@bp.route('/api/digest/tech/send', methods=['POST'])
+@require_admin
+def digest_tech_send():
+    """Envoie le digest Tech & IA immédiatement (bouton manuel)."""
+    from jobs import TECH_DIGEST_RECIPIENT
+    data       = request.get_json(silent=True) or {}
+    recipients = data.get('recipients') or TECH_DIGEST_RECIPIENT
+
+    try:
+        news_svc = get_news_service()
+        current_app.logger.info('digest_tech_send: récupération des articles…')
+        items = news_svc.fetch_tech_digest_news(max_per_feed=3)
+        if not items:
+            return jsonify({'success': False,
+                            'message': 'Aucun article tech récupéré (vérifiez la connexion réseau)'}), 502
+
+        current_app.logger.info('digest_tech_send: %d articles, génération du résumé…', len(items))
+        summary = news_svc.summarize_tech_digest(items)
+
+        email_svc = get_email_service()
+        if not email_svc.is_configured():
+            return jsonify({'success': False, 'message': 'Service email non configuré'}), 400
+
+        result = email_svc.envoyer_digest_tech(summary, items, recipients)
+        return jsonify({**result, 'articles': len(items), 'recipients': recipients}), \
+               (200 if result['success'] else 500)
+    except Exception as e:
+        current_app.logger.exception('digest_tech_send: erreur')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # =============================================================================
 # TÂCHES PLANIFIÉES
 # =============================================================================
