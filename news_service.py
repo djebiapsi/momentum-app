@@ -410,7 +410,7 @@ class NewsService:
                     json={
                         'model': self.model,
                         'temperature': 0.25,
-                        'max_tokens': 1000,
+                        'max_tokens': 3000,
                         'messages': [
                             {'role': 'system', 'content': _DIGEST_SYSTEM},
                             {'role': 'user',   'content': user_msg},

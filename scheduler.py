@@ -29,10 +29,10 @@ def create_scheduler(app):
         replace_existing=True,
     )
 
-    # 2) Briefings : ouverture 9h35, mi-séance 12h30, clôture 16h05 ET
+    # 2) Briefings : pre-ouverture 9h15, mi-séance 12h30, clôture 16h05 ET
     scheduler.add_job(
         functools.partial(job_briefing, 'open'),
-        CronTrigger(day_of_week='mon-fri', hour=9, minute=35, timezone=ET),
+        CronTrigger(day_of_week='mon-fri', hour=9, minute=15, timezone=ET),
         id='briefing_open', name="Briefing d'ouverture", replace_existing=True,
     )
     scheduler.add_job(
