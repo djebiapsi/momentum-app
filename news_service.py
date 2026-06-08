@@ -47,6 +47,14 @@ WORLD_DIGEST_FEEDS = [
     # Événements majeurs / culture / sciences
     ('Le Monde Société',    'https://www.lemonde.fr/societe/rss_full.xml'),
     ('France Info Sport',   'https://www.francetvinfo.fr/sports.rss'),
+    # Veille globale Dev & Tech (La référence absolue)
+    ('Hacker News',         'https://news.ycombinator.com/rss'),
+    # État de l'art IA & Modèles Open Source
+    ('Hugging Face Blog',   'https://huggingface.co/blog/feed.xml'),
+    # Pratique Data Engineering, Data Science & MLOps
+    ('Towards Data Science','https://towardsdatascience.com/feed'),   
+    # Architecture logicielle & bonnes pratiques de référence
+    ('Martin Fowler',       'https://martinfowler.com/feed.atom'),
 ]
 
 _DIGEST_SYSTEM = (
@@ -75,6 +83,9 @@ Climat, biodiversité, énergie, catastrophes naturelles, législation environne
 
 ## 🇫🇷 Politique française
 Gouvernement, Assemblée nationale, partis, réformes, actualité politique.
+
+## 🤖 Data & Software Engineering
+Open source, data engineering, data science, MLOps, architecture logicielle.
 
 ## ⚡ Événements majeurs
 Science, technologie, sports, culture, faits marquants de la journée.
