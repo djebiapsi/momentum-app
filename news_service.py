@@ -30,15 +30,23 @@ GLOBAL_FEEDS = [
 
 # Flux RSS pour le digest d'actualités générales (7 jours / 2 fois par jour)
 WORLD_DIGEST_FEEDS = [
+    # Géopolitique / international
     ('BBC World',           'https://feeds.bbci.co.uk/news/world/rss.xml'),
-    ('BBC Science & Env.',  'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml'),
-    ('Reuters Top News',    'https://feeds.reuters.com/reuters/topNews'),
+    ('RFI Monde',           'https://www.rfi.fr/fr/rss'),
     ('Le Monde à la Une',   'https://www.lemonde.fr/rss/une.xml'),
+    # Économie mondiale
+    ('Le Monde Économie',   'https://www.lemonde.fr/economie/rss_full.xml'),
+    ('Les Échos',           'https://www.lesechos.fr/rss/rss_quotidien.xml'),
+    # Écologie / environnement
+    ('Le Monde Planète',    'https://www.lemonde.fr/planete/rss_full.xml'),
+    ('Guardian Environment','https://www.theguardian.com/environment/rss'),
+    ('BBC Science & Env.',  'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml'),
+    # Politique française
     ('Le Monde Politique',  'https://www.lemonde.fr/politique/rss_full.xml'),
     ('France Info',         'https://www.francetvinfo.fr/titres.rss'),
-    ('RFI Monde',           'https://www.rfi.fr/fr/rss'),
-    ('Guardian World',      'https://www.theguardian.com/world/rss'),
-    ('Guardian Environment','https://www.theguardian.com/environment/rss'),
+    # Événements majeurs / culture / sciences
+    ('Le Monde Société',    'https://www.lemonde.fr/societe/rss_full.xml'),
+    ('France Info Sport',   'https://www.francetvinfo.fr/sports.rss'),
 ]
 
 _DIGEST_SYSTEM = (
@@ -330,7 +338,7 @@ class NewsService:
     # DIGEST MONDE (flux multi-thèmes, indépendant des positions)
     # ------------------------------------------------------------------
 
-    def fetch_digest_news(self, max_per_feed=6):
+    def fetch_digest_news(self, max_per_feed=5):
         """
         Agrège des articles depuis les flux RSS du digest monde.
         Returns: [{'title','link','published','source','summary'}]

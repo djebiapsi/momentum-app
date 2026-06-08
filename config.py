@@ -21,8 +21,6 @@ class Config:
     # ==========================================================================
     
     # Clé API Tiingo (OBLIGATOIRE)
-    # En production: définie dans les variables d'environnement Render
-    # En local: définie dans le fichier .env
     TIINGO_API_KEY = os.environ.get('TIINGO_API_KEY')
     
     # Clé secrète Flask pour les sessions
@@ -39,8 +37,8 @@ class Config:
     # Clé API Resend pour l'envoi d'emails
     RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
     
-    # Email de l'expéditeur (domaine vérifié sur Resend ou onboarding@resend.dev)
-    EMAIL_FROM = os.environ.get('EMAIL_FROM', 'onboarding@resend.dev')
+    # Email de l'expéditeur (domaine vérifié sur resend.com/domains)
+    EMAIL_FROM = os.environ.get('EMAIL_FROM', 'notification@enoyer.fr')
     
     # Email du destinataire (votre email personnel)
     EMAIL_TO = os.environ.get('EMAIL_TO')
@@ -49,12 +47,10 @@ class Config:
     # BASE DE DONNÉES
     # ==========================================================================
     
-    # URL de la base de données PostgreSQL
-    # En production: fournie par Render
-    # En local: utilise SQLite par défaut
+    # URL de la base de données PostgreSQL (PostgreSQL en prod, SQLite en local)
     DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///momentum.db')
-    
-    # Correction pour SQLAlchemy (Render utilise postgres:// au lieu de postgresql://)
+
+    # Correction pour SQLAlchemy (certains providers exposent postgres:// au lieu de postgresql://)
     if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
     
@@ -105,7 +101,7 @@ class DevelopmentConfig(Config):
     
 
 class ProductionConfig(Config):
-    """Configuration pour la production (Render)"""
+    """Configuration pour la production"""
     DEBUG = False
 
 

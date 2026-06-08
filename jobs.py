@@ -126,7 +126,7 @@ def job_digest_actualites():
         print(f"[{datetime.now()}] 🗞️ Digest actualités ({edition})…")
         try:
             news_svc = get_news_service()
-            items = news_svc.fetch_digest_news(max_per_feed=6)
+            items = news_svc.fetch_digest_news(max_per_feed=5)
             if not items:
                 print("⚠️ Digest: aucun article récupéré — envoi annulé")
                 return

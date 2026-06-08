@@ -8,7 +8,7 @@ dans logs/api_health_TIMESTAMP.log.
 
 Usage :
   python health_check.py                              # local :5000, token depuis .env
-  python health_check.py https://mon-app.onrender.com # distant
+  python health_check.py https://95.216.198.241       # distant
   python health_check.py http://localhost:5000 --full  # + tests write (calcul, etc.)
   python health_check.py --help
 
@@ -276,7 +276,7 @@ class HealthChecker:
                         lines.append(f"      {n}")
             lines.append("")
             lines.append("Actions correctives :")
-            lines.append("  1. Vérifier que TIINGO_API_KEY est défini dans .env / variables Render")
+            lines.append("  1. Vérifier que TIINGO_API_KEY est défini dans .env")
             lines.append("  2. Vérifier que la DB est accessible (DATABASE_URL)")
             lines.append("  3. Consulter les logs Flask/Gunicorn pour la stack trace complète")
 

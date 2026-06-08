@@ -898,10 +898,24 @@ Stratégie Momentum 12-1
         sections = _parse_sections(news_summary)
 
         def _match_section(keyword: str, sections: dict) -> list:
-            """Cherche une section par mot-clé partiel (insensible à la casse)."""
+            """
+            Cherche une section par mot-clé exact (insensible à la casse).
+            Utilise une correspondance de mot entier pour éviter que 'Politique'
+            matche dans 'Géopolitique'.
+            """
             kw = keyword.lower()
+            # Essai exact d'abord (le mot-clé doit être délimité par espace/début/fin)
             for k, v in sections.items():
-                if kw in k.lower():
+                kl = k.lower()
+                # Retirer les emojis et les #, garder juste le texte
+                kl_clean = re.sub(r'[^\w\s\-àâäéèêëîïôùûüç]', '', kl).strip()
+                if kl_clean == kw or kl_clean.endswith(' ' + kw) or kl_clean.startswith(kw + ' '):
+                    return v
+            # Repli : sous-chaîne mais mot entier (ex: 'économie' dans 'économie mondiale')
+            for k, v in sections.items():
+                kl_clean = re.sub(r'[^\w\s\-àâäéèêëîïôùûüç]', '', k.lower()).strip()
+                words = kl_clean.split()
+                if kw in words or any(kw in w for w in words):
                     return v
             return []
 
@@ -910,7 +924,9 @@ Stratégie Momentum 12-1
                 lines = ['Pas d\'information saillante pour cette édition.']
             bullets = ''
             for line in lines:
-                raw = line.lstrip('-•* \t')
+                # Supprimer UNIQUEMENT le marqueur de liste (-  •  *  1.) sans toucher
+                # au contenu markdown qui suit (ex: **Arménie** doit rester intact)
+                raw = re.sub(r'^(?:\d+[.)]\s+|[-•*]\s+)', '', line.strip())
                 if not raw:
                     continue
                 rendered = self._md_inline(raw)
@@ -929,7 +945,9 @@ Stratégie Momentum 12-1
   {bullets}
 </div>"""
 
-        topic_keywords = ['Géopolitique', 'Économie', 'Écologie', 'Politique', 'Événements']
+        # Mots-clés suffisamment spécifiques pour ne pas se chevaucher
+        # 'Politique française' ne sera pas confondu avec 'Géo·politique'
+        topic_keywords = ['Géopolitique', 'Économie', 'Écologie', 'Politique française', 'Événements']
         sections_html = ''
         for (icon, title, border, bg), kw in zip(TOPICS, topic_keywords):
             lines = _match_section(kw, sections)

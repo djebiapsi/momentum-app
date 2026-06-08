@@ -104,7 +104,7 @@ def digest_send():
     try:
         news_svc = get_news_service()
         current_app.logger.info('digest_send: récupération des articles…')
-        items = news_svc.fetch_digest_news(max_per_feed=6)
+        items = news_svc.fetch_digest_news(max_per_feed=5)
         if not items:
             return jsonify({'success': False,
                             'message': 'Aucun article récupéré (vérifiez la connexion réseau)'}), 502
