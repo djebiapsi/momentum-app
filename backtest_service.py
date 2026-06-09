@@ -983,6 +983,8 @@ class BacktestService:
         stats = self._stats(sim, bench_ret, capital, meta)
         bench_stats = self._benchmark_stats(bench_ret, bench_eq, capital, bench_invested, bench_final)
 
+        twr_daily = [round(float(x), 8) for x in sim['twr_ret'].dropna().tolist()]
+
         return {
             'success': True,
             'equity': self._series_to_points(sim['equity']),
@@ -990,6 +992,7 @@ class BacktestService:
             'invested': self._series_to_points(sim['invested']) if sim_p['dca_amount'] > 0 else [],
             'leverage': self._series_to_points(sim['leverage']) if sim['max_leverage'] > 1.05 else [],
             'drawdown': self._series_to_points(drawdown),
+            'daily_returns': twr_daily,
             'monthly_returns': self._monthly_returns(sim['twr_ret']),
             'yearly_returns': self._yearly_returns(sim['twr_ret'], bench_ret),
             'drawdown_periods': self._drawdown_periods(sim['twr_index']),
@@ -1210,6 +1213,36 @@ class BacktestService:
             'n_rebalances': meta['n_rebalances'],
             'n_universe_changes': meta['n_universe_changes'],
             'n_riskoff_months': meta.get('n_riskoff_months', 0),
+        }
+
+    def monte_carlo(self, daily_returns: list, n_simulations: int = 1000,
+                    horizon_days: int = 252, initial_value: float = 10000.0) -> dict:
+        """Bootstrap Monte Carlo : rééchantillonnage avec remise des rendements journaliers TWR."""
+        arr = np.array(daily_returns, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if len(arr) < 20:
+            return {'error': 'Données insuffisantes (< 20 jours)'}
+        n_simulations = max(100, min(n_simulations, 5000))
+        horizon_days = max(21, min(horizon_days, 1260))
+
+        rng = np.random.default_rng(42)
+        # (n_simulations, horizon_days) : tirage avec remise
+        sampled = rng.choice(arr, size=(n_simulations, horizon_days), replace=True)
+        # Chemins cumulés
+        paths = initial_value * np.cumprod(1.0 + sampled, axis=1)
+        init_col = np.full((n_simulations, 1), initial_value)
+        paths = np.hstack([init_col, paths])
+
+        pcts = np.percentile(paths, [5, 25, 50, 75, 95], axis=0)
+        return {
+            'p5':  [round(float(x), 2) for x in pcts[0]],
+            'p25': [round(float(x), 2) for x in pcts[1]],
+            'p50': [round(float(x), 2) for x in pcts[2]],
+            'p75': [round(float(x), 2) for x in pcts[3]],
+            'p95': [round(float(x), 2) for x in pcts[4]],
+            'n_simulations': n_simulations,
+            'horizon_days': horizon_days,
+            'initial_value': initial_value,
         }
 
     def _benchmark_stats(self, bench_ret, bench_eq, capital, bench_invested, bench_final):

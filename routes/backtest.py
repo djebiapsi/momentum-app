@@ -290,3 +290,29 @@ def backtest_prefill():
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({'success': True,
                     'message': f'Pré-remplissage lancé en arrière-plan (max {max_fetch} tickers).'})
+
+
+@bp.route('/api/backtest/montecarlo', methods=['POST'])
+@require_admin
+def backtest_montecarlo():
+    """Lance une simulation Monte Carlo par bootstrap sur les rendements journaliers TWR."""
+    data = request.get_json() or {}
+    daily_returns = data.get('daily_returns', [])
+    if not daily_returns:
+        return jsonify({'success': False, 'error': 'Aucun rendement journalier fourni'})
+
+    n_simulations = int(data.get('n_simulations', 1000))
+    horizon_days = int(data.get('horizon_days', 252))
+    initial_value = float(data.get('initial_value', 10000.0))
+
+    svc = get_backtest_service()
+    try:
+        result = svc.monte_carlo(daily_returns, n_simulations, horizon_days, initial_value)
+    except Exception as e:
+        current_app.logger.warning('Monte Carlo échec: %s', e)
+        return jsonify({'success': False, 'error': str(e)})
+
+    if 'error' in result:
+        return jsonify({'success': False, 'error': result['error']})
+    result['success'] = True
+    return jsonify(result)

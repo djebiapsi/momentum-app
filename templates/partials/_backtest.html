@@ -129,6 +129,46 @@
                         </div>
                     </div>
 
+                    <!-- Monte Carlo -->
+                    <div class="perf-chart-row full" id="bt-mc-section" style="display:none;">
+                        <div class="perf-chart-card">
+                            <div class="perf-chart-title">🎲 Monte Carlo — distribution des portefeuilles futurs possibles</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px;">
+                                <div>
+                                    <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Horizon</label>
+                                    <div class="perf-range-selector" id="mc-horizon" style="margin:0;">
+                                        <button class="perf-pill" data-days="126">6 mois</button>
+                                        <button class="perf-pill active" data-days="252">1 an</button>
+                                        <button class="perf-pill" data-days="504">2 ans</button>
+                                        <button class="perf-pill" data-days="756">3 ans</button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Simulations</label>
+                                    <input id="mc-n-sim" type="number" value="1000" min="100" max="5000" step="100"
+                                           style="width:90px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                                </div>
+                                <button id="mc-run-btn" class="btn btn-secondary" onclick="runMonteCarlo()" style="height:38px;">
+                                    Lancer Monte Carlo
+                                </button>
+                            </div>
+                            <div id="mc-status" style="display:none;text-align:center;padding:14px;color:var(--text-muted);font-size:13px;"></div>
+                            <div id="mc-results" style="display:none;">
+                                <div id="mc-kpi" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;"></div>
+                                <div class="perf-chart-container">
+                                    <canvas id="bt-chart-mc"></canvas>
+                                </div>
+                                <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.6;">
+                                    Bootstrap par rééchantillonnage aléatoire des rendements journaliers TWR historiques.
+                                    Bandes : <span style="color:rgba(124,92,255,.9);">■</span> p5–p95 ·
+                                    <span style="color:rgba(124,92,255,.6);">■</span> p25–p75 ·
+                                    <span style="color:#7C5CFF;">—</span> médiane (p50).
+                                    <b>Pas de prédiction</b> : suppose que le régime historique se répète.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Drawdown + Heatmap -->
                     <div class="perf-chart-row split">
                         <div class="perf-chart-card">

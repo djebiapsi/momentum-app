@@ -6,6 +6,11 @@ let btYears = 5;
 const _btCharts = {};
 const BT_GRID = 'rgba(255,255,255,.05)';
 
+// État Monte Carlo
+let _mcDailyReturns = [];
+let _mcHorizonDays = 252;
+let _mcInitValue = 10000;
+
 function _btDestroy(key) {
     if (_btCharts[key]) { _btCharts[key].destroy(); delete _btCharts[key]; }
 }
@@ -240,6 +245,34 @@ function _btRender(res) {
         + ` · appel de marge <b>${a.margin_call_enabled ? 'ON' : 'OFF'}</b> (maintenance ${a.maintenance_margin_pct}%)`
         + (a.dca_amount > 0 ? ` · DCA <b>$${a.dca_amount}/mois</b>` : ''),
     ].join('<br>');
+
+    // Prépare la section Monte Carlo
+    _mcDailyReturns = res.daily_returns || [];
+    _mcInitValue = s.final_value || m.capital || 10000;
+    _mcInitMonteCarlo();
+}
+
+function _mcInitMonteCarlo() {
+    const section = document.getElementById('bt-mc-section');
+    if (!section) return;
+    section.style.display = _mcDailyReturns.length >= 20 ? '' : 'none';
+
+    // Branche les pills horizon (une seule fois)
+    document.querySelectorAll('#mc-horizon .perf-pill').forEach(pill => {
+        if (pill._mcBound) return;
+        pill._mcBound = true;
+        pill.addEventListener('click', () => {
+            document.querySelectorAll('#mc-horizon .perf-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            _mcHorizonDays = parseInt(pill.dataset.days, 10);
+        });
+    });
+    _mcHorizonDays = 252;
+
+    // Réinitialise les résultats précédents
+    document.getElementById('mc-results').style.display = 'none';
+    document.getElementById('mc-status').style.display = 'none';
+    _btDestroy('mc');
 }
 
 // --- Levier dans le temps + marqueurs d'appel de marge ----------------
@@ -426,6 +459,126 @@ function _btHeatmap(monthly, containerId) {
     });
     html += '</tbody></table>';
     cont.innerHTML = html;
+}
+
+// =====================================================================
+// MONTE CARLO — bootstrap rééchantillonnage rendements journaliers TWR
+// =====================================================================
+
+async function runMonteCarlo() {
+    if (!_mcDailyReturns.length) return;
+    const btn = document.getElementById('mc-run-btn');
+    const statusEl = document.getElementById('mc-status');
+    const resultsEl = document.getElementById('mc-results');
+
+    btn.disabled = true;
+    btn.textContent = 'Simulation…';
+    statusEl.style.display = 'block';
+    statusEl.textContent = '⏳ Simulation en cours…';
+    resultsEl.style.display = 'none';
+    _btDestroy('mc');
+
+    const nSim = Math.min(5000, Math.max(100, parseInt(document.getElementById('mc-n-sim')?.value || 1000, 10)));
+
+    const res = await api('/backtest/montecarlo', {
+        method: 'POST',
+        body: JSON.stringify({
+            daily_returns: _mcDailyReturns,
+            n_simulations: nSim,
+            horizon_days: _mcHorizonDays,
+            initial_value: _mcInitValue,
+        }),
+    });
+
+    btn.disabled = false;
+    btn.textContent = 'Lancer Monte Carlo';
+    statusEl.style.display = 'none';
+
+    if (!res || !res.success) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = '⚠️ ' + (res?.error || 'Erreur inconnue');
+        return;
+    }
+    _mcRender(res);
+    resultsEl.style.display = 'block';
+}
+
+function _mcRender(mc) {
+    const n = mc.horizon_days;
+    const labels = Array.from({ length: n + 1 }, (_, i) => i);
+
+    const toDs = (data, label, color, fill, tension = 0.2) => ({
+        label, data, borderColor: color, backgroundColor: color,
+        fill, borderWidth: fill === false ? 1.5 : 0,
+        tension, pointRadius: 0,
+    });
+
+    const p5  = mc.p5,  p25 = mc.p25, p50 = mc.p50, p75 = mc.p75, p95 = mc.p95;
+
+    // KPI : p5 / p50 / p95 à l'horizon
+    const kpiItems = [
+        { label: 'Scénario pessimiste (p5)',  value: p5[n],  color: 'var(--accent-short)' },
+        { label: 'Médiane (p50)',              value: p50[n], color: 'var(--text-primary)' },
+        { label: 'Scénario optimiste (p95)',   value: p95[n], color: 'var(--accent-long)'  },
+    ];
+    document.getElementById('mc-kpi').innerHTML = kpiItems.map(k => {
+        const chg = (k.value - mc.initial_value) / mc.initial_value;
+        return `<div class="perf-kpi-card" style="flex:1;min-width:140px;">
+            <div class="perf-kpi-label" style="font-size:10px;">${k.label}</div>
+            <div class="perf-kpi-value" style="color:${k.color};">${_btFmtUsd(k.value)}</div>
+            <div style="font-size:10px;color:${k.color};margin-top:2px;">${_btFmtPct(chg)}</div>
+        </div>`;
+    }).join('');
+
+    // Fan chart : bandes remplies + ligne médiane
+    const alpha95 = 'rgba(124,92,255,0.12)';
+    const alpha50 = 'rgba(124,92,255,0.22)';
+
+    _btDestroy('mc');
+    _btCharts.mc = new Chart(document.getElementById('bt-chart-mc'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                // Bande extérieure p5→p95 (fill entre p5 et p95)
+                { ...toDs(p95, 'p95', alpha95, '+1'), borderColor: 'transparent' },
+                { ...toDs(p5,  'p5',  alpha95, '-1'), borderColor: 'transparent' },
+                // Bande intérieure p25→p75
+                { ...toDs(p75, 'p75', alpha50, '+3'), borderColor: 'transparent' },
+                { ...toDs(p25, 'p25', alpha50, '-3'), borderColor: 'transparent' },
+                // Médiane
+                toDs(p50, 'Médiane (p50)', '#7C5CFF', false),
+            ],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    filter: item => item.dataset.label.startsWith('p50') || item.dataset.label.startsWith('p5') || item.dataset.label.startsWith('p95'),
+                    callbacks: {
+                        title: ctx => `J+${ctx[0].label}`,
+                        label: ctx => {
+                            const lbl = ctx.dataset.label;
+                            if (!lbl.startsWith('p')) return null;
+                            return ` ${lbl} : ${_btFmtUsd(ctx.parsed.y)}`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    grid: { color: BT_GRID },
+                    ticks: { color: '#888', maxTicksLimit: 8, callback: (v) => `J+${v}` },
+                },
+                y: {
+                    grid: { color: BT_GRID },
+                    ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                },
+            },
+        },
+    });
 }
 
 // =====================================================================
