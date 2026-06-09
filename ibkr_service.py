@@ -368,7 +368,12 @@ class IBKRService:
                 last = _num(getattr(t, 'marketPrice', lambda: None)() if callable(getattr(t, 'marketPrice', None)) else None)
             if last is None:
                 last = _num(getattr(t, 'close', None))
+            # Prix de 0 = donnée manquante post-reconnexion IBKR, pas un vrai cours
+            if last is not None and last <= 0:
+                last = None
             prev_close = _num(getattr(t, 'close', None))
+            if prev_close is not None and prev_close <= 0:
+                prev_close = None
             pct = None
             if last is not None and prev_close not in (None, 0):
                 pct = round((last - prev_close) / prev_close * 100, 2)

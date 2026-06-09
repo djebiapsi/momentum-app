@@ -372,7 +372,10 @@ def perf_dashboard():
 
         nav_prev  = nav.shift(1)
         hpr       = (nav - nav_prev - cf_series) / nav_prev
-        hpr       = hpr.fillna(0.0).clip(-0.95, 5.0)  # garde-fou données aberrantes
+        # Garde-fou : exclut les valeurs manifestement aberrantes (erreur de données Flex,
+        # ex. snapshot à 0 ou jump × 100 non lié à un dépôt). N'impacte pas les vraies
+        # journées exceptionnelles car ±95% en une séance est physiquement impossible.
+        hpr       = hpr.fillna(0.0).clip(-0.95, 0.95)
 
         twr_index = (1 + hpr).cumprod()
         twr_index = twr_index / twr_index.iloc[0]

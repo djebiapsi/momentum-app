@@ -3,7 +3,7 @@
 from datetime import datetime
 from models import db, PanelAction
 from services import (ibkr_service, get_momentum_service, get_email_service,
-                     get_backtest_service, get_price_data_service)
+                     get_backtest_service, get_price_data_service, get_news_service)
 from core import compute_and_save_momentum, run_market_monitor, build_briefing_payload
 
 

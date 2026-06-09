@@ -255,7 +255,7 @@ class MarketMonitorService:
                                     f"Bond du VIX de +{vix_pct:.1f}% sur la séance"))
 
         spy = metrics.get('spy_intraday_pct')
-        if spy is not None:
+        if spy is not None and abs(spy) < 80:
             if spy <= t['spy_dd_crit']:
                 breaches.append(self._b('SPY_DRAWDOWN', None, 'critical', spy, t['spy_dd_crit'],
                                         f"S&P 500 en baisse de {spy:.1f}% (seuil {t['spy_dd_crit']:.0f}%)"))
@@ -264,7 +264,7 @@ class MarketMonitorService:
                                         f"S&P 500 en baisse de {spy:.1f}% (seuil {t['spy_dd_warn']:.0f}%)"))
 
         port = metrics.get('portfolio_intraday_pct')
-        if port is not None:
+        if port is not None and abs(port) < 80:
             if port <= t['portfolio_dd_crit']:
                 breaches.append(self._b('PORTFOLIO_DRAWDOWN', None, 'critical', port, t['portfolio_dd_crit'],
                                         f"Portefeuille en baisse de {port:.1f}% (seuil {t['portfolio_dd_crit']:.0f}%)"))
@@ -274,11 +274,16 @@ class MarketMonitorService:
 
         for p in metrics.get('positions', []):
             pct = p.get('pct')
-            if pct is not None and pct <= t['position_drop']:
+            # Ignorer les variations impossibles en séance (signe d'une coupure IBKR)
+            if pct is not None and abs(pct) < 80 and pct <= t['position_drop']:
                 breaches.append(self._b('POSITION_DROP', p['ticker'], 'warning', pct, t['position_drop'],
                                         f"{p['ticker']} chute de {pct:.1f}% (seuil {t['position_drop']:.0f}%)"))
 
         return breaches
+
+    def _is_valid_intraday_pct(self, pct) -> bool:
+        """Retourne False si la variation est physiquement impossible en séance (~±80%)."""
+        return pct is not None and abs(pct) < 80
 
     @staticmethod
     def _b(event_type, ticker, severity, value, threshold, message):
