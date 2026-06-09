@@ -278,6 +278,39 @@ class MomentumService:
             logger.warning('_load_monthly_db %s : %s', ticker, e)
             return None
 
+    def _bulk_load_monthly(self, tickers, date_debut, date_fin):
+        """
+        Charge les barres mensuelles de TOUS les tickers en UNE seule requête
+        (vs une requête par ticker). Indispensable pour calculer le momentum sur
+        ~600 titres sans saturer la DB.
+
+        Returns: dict {ticker: DataFrame(['adjClose'] indexé par date triée)}.
+        Les tickers sans barre ne figurent pas dans le dict.
+        """
+        from models import MonthlyPriceBar
+        out = {}
+        try:
+            syms = [t.upper().strip() for t in tickers if t]
+            d0 = date_cls.fromisoformat(date_debut[:10])
+            d1 = date_cls.fromisoformat(date_fin[:10])
+            rows = (MonthlyPriceBar.query
+                    .with_entities(MonthlyPriceBar.ticker, MonthlyPriceBar.bar_date,
+                                   MonthlyPriceBar.adj_close)
+                    .filter(MonthlyPriceBar.ticker.in_(syms))
+                    .filter(MonthlyPriceBar.bar_date >= d0)
+                    .filter(MonthlyPriceBar.bar_date <= d1)
+                    .order_by(MonthlyPriceBar.ticker, MonthlyPriceBar.bar_date)
+                    .all())
+            if not rows:
+                return out
+            df = pd.DataFrame(rows, columns=['ticker', 'date', 'adjClose'])
+            df['date'] = pd.to_datetime(df['date'])
+            for tk, sub in df.groupby('ticker'):
+                out[tk] = sub[['date', 'adjClose']].set_index('date').sort_index()
+        except Exception as e:
+            logger.warning('_bulk_load_monthly : %s', e)
+        return out
+
     def recuperer_prix_tiingo(self, ticker, date_debut, date_fin):
         """
         Récupère les prix mensuels ajustés.
@@ -397,14 +430,18 @@ class MomentumService:
 
         return momentum, details_mensuels, perf_recent_1m
     
-    def analyser_panel(self, panel_tickers, date_calcul=None):
+    def analyser_panel(self, panel_tickers, date_calcul=None, allow_network=True):
         """
         Analyse l'ensemble du panel d'actions et calcule le momentum de chacune.
-        
+
         Args:
             panel_tickers: Liste des tickers à analyser
             date_calcul: Date du calcul (datetime ou string, None = aujourd'hui)
-        
+            allow_network: si False, calcul DB-only (MonthlyPriceBar uniquement, aucun
+                appel Tiingo/IBKR). Garantit la rapidité sur un grand univers (~600
+                titres) sans risque de timeout — les tickers absents de la base sont
+                simplement signalés en erreur. La collecte nocturne remplit la base.
+
         Returns:
             dict: {
                 'success': bool,
@@ -417,22 +454,36 @@ class MomentumService:
             date_calcul = datetime.now()
         elif isinstance(date_calcul, str):
             date_calcul = datetime.strptime(date_calcul, "%Y-%m-%d")
-        
+
         date_debut, date_fin = self.calculer_periode_analyse(date_calcul)
-        
+        ts_fin = pd.Timestamp(date_fin) + pd.offsets.MonthEnd(0)
+
+        # Pré-chargement bulk des barres mensuelles (1 requête pour tout l'univers)
+        bulk = self._bulk_load_monthly(panel_tickers, date_debut, date_fin)
+
         resultats = []
         erreurs = []
-        
+
         for ticker in panel_tickers:
             ticker = ticker.upper().strip()
-            
-            # Récupération des prix
-            df_prix, erreur = self.recuperer_prix_tiingo(ticker, date_debut, date_fin)
-            
+
+            # 1) Données depuis le bulk DB (cas normal, instantané)
+            df_prix = bulk.get(ticker)
+            if df_prix is not None:
+                df_prix = df_prix[df_prix.index <= ts_fin]
+            erreur = None
+
+            # 2) Repli réseau (Tiingo) seulement si autorisé et données insuffisantes
+            if (df_prix is None or len(df_prix) < 13):
+                if allow_network:
+                    df_prix, erreur = self.recuperer_prix_tiingo(ticker, date_debut, date_fin)
+                else:
+                    erreur = 'Non couvert en base (collecte yfinance requise)'
+
             if erreur:
                 erreurs.append({'ticker': ticker, 'erreur': erreur})
                 continue
-            
+
             # Calcul du momentum avec détails mensuels
             momentum, details_mensuels, perf_recent_1m = self.calculer_momentum_12_1(df_prix)
 
@@ -445,7 +496,7 @@ class MomentumService:
                 })
             else:
                 erreurs.append({'ticker': ticker, 'erreur': 'Données insuffisantes pour le calcul'})
-        
+
         # Tri par momentum décroissant
         resultats.sort(key=lambda x: x['momentum'], reverse=True)
 

@@ -102,7 +102,10 @@ def _run_long_calculation():
         raise ValueError('Univers vide — lance la collecte yfinance (SP500/NDX100)')
     print(f"📊 Momentum long sur {len(panel)} titres (source: {source})")
 
-    resultats = service.analyser_panel(panel, date_calcul)
+    # DB-only : calcul rapide sur l'univers complet sans appels réseau (anti-timeout)
+    resultats = service.analyser_panel(panel, date_calcul, allow_network=False)
+    print(f"📊 Momentum calculé : {len(resultats.get('resultats', []))} titres couverts, "
+          f"{len(resultats.get('erreurs', []))} non couverts")
 
     if not resultats['success']:
         erreurs = resultats.get('erreurs') or []
@@ -170,7 +173,7 @@ def compute_and_save_momentum():
         return None, None
     print(f"📊 Momentum long sur {len(panel)} titres (source: {source})")
 
-    resultats = service.analyser_panel(panel, None)
+    resultats = service.analyser_panel(panel, None, allow_network=False)
     if not resultats['success']:
         print(f"❌ Échec du calcul: {resultats['erreurs']}")
         return None, None
