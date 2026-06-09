@@ -96,6 +96,7 @@ class MarketMonitorService:
             'spy': None, 'spy_intraday_pct': None,
             'portfolio_intraday_pct': None, 'positions': [],
             'regime': None, 'error': None,
+            'using_yfinance_fallback': False,  # True si quotes positions via yfinance (pas IBKR)
         }
 
         # Régime BULL/BEAR (source momentum, cache journalier — pas d'appel lourd)
@@ -150,6 +151,9 @@ class MarketMonitorService:
                     logger.warning('collect_metrics: circuit breaker ouvert après %d échecs '
                                    '— %d prochains ticks via yfinance uniquement',
                                    self._CIRCUIT_OPEN_AFTER, self._CIRCUIT_BYPASS_TICKS)
+
+        if not ibkr_quotes_ok:
+            out['using_yfinance_fallback'] = True
 
         # Fallback yfinance pour SPY / QQQ / VIX — actif même si IBKR est down
         if not ibkr_quotes_ok:

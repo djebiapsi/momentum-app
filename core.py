@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Logique métier partagée entre routes et jobs (extrait de app.py)."""
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import current_app
 from models import (db, Settings, PanelAction, RecommendationHistory,
                     RecommendationDetail, MarketEvent)
@@ -183,6 +183,9 @@ def run_market_monitor():
     monitor = get_market_monitor()
     metrics = monitor.collect_metrics()
     ibkr_up = metrics.get('connected', False)
+    # ibkr_quotes_ok : True uniquement si les quotes IBKR sont valides (pas de fallback yfinance).
+    # Distincts de ibkr_up (connexion établie mais contrats non qualifiables = quotes inutilisables).
+    ibkr_quotes_ok = ibkr_up and not metrics.get('using_yfinance_fallback', False)
     # Données marché disponibles (yfinance ou IBKR) même si IBKR est down
     market_data_ok = bool(metrics.get('spy') or metrics.get('vix'))
     breaches = monitor.evaluate(metrics)
@@ -248,6 +251,9 @@ def run_market_monitor():
         closed += 1
 
     # ---- Cycle breach standard (VIX, SPY, portefeuille, positions) ----
+    # Anti-rebond : ne pas rouvrir un event fermé il y a moins de MIN_REOPEN_MIN minutes.
+    # Évite le spam quand une valeur oscille autour du seuil (ex: INTC à -6.9% / -7.1%).
+    MIN_REOPEN_MIN = 10
     for b in breaches:
         key = (b['event_type'], b['ticker'])
         breach_keys.add(key)
@@ -258,7 +264,17 @@ def run_market_monitor():
                 ev.peak_value = b['value']
             if b['severity'] == 'critical' and ev.severity != 'critical':
                 ev.severity = 'critical'
-        else:  # nouvel épisode → push (pas d'email à l'ouverture)
+        else:  # potentiellement nouvel épisode
+            # Vérifier si un event identique a été fermé récemment (anti-oscillation)
+            recent_close = MarketEvent.query.filter(
+                MarketEvent.event_type == b['event_type'],
+                MarketEvent.ticker == b['ticker'],
+                MarketEvent.ended_at.isnot(None),
+                MarketEvent.ended_at > now - timedelta(minutes=MIN_REOPEN_MIN),
+            ).first()
+            if recent_close:
+                continue  # trop tôt pour rouvrir — silence pendant le cooldown
+
             ev = MarketEvent(
                 event_type=b['event_type'], ticker=b['ticker'], severity=b['severity'],
                 threshold=b['threshold'], trigger_value=b['value'], peak_value=b['value'],
@@ -281,14 +297,30 @@ def run_market_monitor():
             opened.append(b)
 
     # Clôturer les évènements dont la condition n'est plus remplie.
-    # - Alertes VIX/SPY : clôturables dès qu'on a des données marché (yfinance suffit).
-    # - Alertes portefeuille/position : nécessitent IBKR (on ne peut pas vérifier sans quotes de positions).
-    # Absence de données ≠ résolution → on ne clôture jamais sans source fiable.
+    # Règles de clôture :
+    # - POSITION_DROP / PORTFOLIO_DRAWDOWN : requièrent des quotes IBKR valides
+    #   (ibkr_quotes_ok). yfinance seul n'est pas assez précis et cause des oscillations.
+    # - VIX_HIGH / VIX_SPIKE / SPY_DRAWDOWN : yfinance suffit.
+    # - Délai minimum d'ouverture : on ne ferme pas un event ouvert il y a < 5 min
+    #   (une vraie alerte ne se résout pas en quelques secondes).
+    MIN_OPEN_MIN = 5
     MARKET_ONLY_TYPES = {'VIX_HIGH', 'VIX_SPIKE', 'SPY_DRAWDOWN'}
+    POSITION_TYPES = {'POSITION_DROP', 'PORTFOLIO_DRAWDOWN'}
     for key, ev in open_map.items():
         if key in breach_keys:
             continue
-        can_close = ibkr_up or (market_data_ok and ev.event_type in MARKET_ONLY_TYPES)
+        # Délai minimum d'ouverture avant de pouvoir fermer
+        age_min = (now - ev.started_at).total_seconds() / 60 if ev.started_at else 999
+        if age_min < MIN_OPEN_MIN:
+            ev.last_checked_at = now
+            continue
+        # Source de données requise pour clôturer
+        if ev.event_type in POSITION_TYPES:
+            can_close = ibkr_quotes_ok   # positions : quotes IBKR fiables uniquement
+        elif ev.event_type in MARKET_ONLY_TYPES:
+            can_close = market_data_ok   # indices : yfinance suffit
+        else:
+            can_close = ibkr_up          # autres (IBKR_DOWN géré séparément)
         if not can_close:
             ev.last_checked_at = now
             continue
