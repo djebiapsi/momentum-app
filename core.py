@@ -356,7 +356,10 @@ def run_market_monitor():
             ev.last_checked_at = now
             continue
         if ev.event_type in POSITION_TYPES:
-            can_close = ibkr_quotes_ok
+            # Hors séance US : fermeture automatique de fin de journée même sans IBKR.
+            # Les drawdowns intraday n'ont plus de sens après la clôture.
+            from jobs import _is_us_session
+            can_close = ibkr_quotes_ok or (not _is_us_session())
         elif ev.event_type in MARKET_ONLY_TYPES:
             can_close = market_data_ok
         else:
