@@ -202,7 +202,7 @@
                     <span class="status-badge" style="font-size:10px;background:#052e16;color:#4ade80;">PWA iOS / Android</span>
                 </div>
                 <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
-                    Alertes instantanées sans email : IBKR 2FA, déconnexion gateway, alertes marché.
+                    Alertes instantanées : IBKR 2FA, déconnexion gateway, alertes marché.
                     Fonctionne avec le raccourci écran d'accueil (iOS 16.4+ requis).
                 </p>
                 <button class="btn btn-primary btn-block" id="btn-push-toggle" onclick="subscribePush()">
@@ -217,6 +217,40 @@
                     <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;"
                             onclick="loadPushSubscriptions()">🔍 Voir les appareils enregistrés</button>
                 </div>
+            </div>
+
+            <!-- Canal de notification des alertes marché -->
+            <div class="card admin-only" style="margin-top:12px;border-left:3px solid #f59e0b;">
+                <div class="card-header">
+                    <span class="card-title">🎛️ Canal des alertes marché</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
+                    Choisir comment recevoir les notifications à l'ouverture et à la clôture d'un événement
+                    (VIX, drawdown, position, etc.). IBKR déconnecté est toujours en push.
+                </p>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                    <div>
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Ouverture d'alerte</label>
+                        <select id="notif-open" class="form-control" style="font-size:13px;">
+                            <option value="push">📱 Push uniquement</option>
+                            <option value="email">📧 Email uniquement</option>
+                            <option value="both">📱+📧 Push + Email</option>
+                            <option value="silent">🔕 Silencieux</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Clôture d'alerte</label>
+                        <select id="notif-close" class="form-control" style="font-size:13px;">
+                            <option value="push">📱 Push uniquement</option>
+                            <option value="email">📧 Email uniquement</option>
+                            <option value="both">📱+📧 Push + Email</option>
+                            <option value="silent">🔕 Silencieux</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-sm" style="width:100%;"
+                        onclick="saveNotifPrefs()">Enregistrer les préférences</button>
+                <div id="notif-prefs-info" style="font-size:11px;color:var(--text-muted);margin-top:6px;"></div>
             </div>
 
             <!-- Digest d'actualités monde -->

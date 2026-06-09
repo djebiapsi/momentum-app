@@ -172,26 +172,60 @@ def _more_extreme(value, current, event_type):
     return value < current            # drawdowns / chutes : plus négatif = pire
 
 
+def _get_notif_prefs() -> dict:
+    """Lit les préférences canal de notification depuis Settings (avec défauts)."""
+    raw = Settings.get('event_notification_prefs')
+    prefs = {'open': 'push', 'close': 'silent'}
+    if raw:
+        try:
+            allowed = {'push', 'email', 'both', 'silent'}
+            prefs.update({k: v for k, v in json.loads(raw).items()
+                          if k in prefs and v in allowed})
+        except Exception:
+            pass
+    return prefs
+
+
+def _dispatch_notif(mode: str, push_kw: dict, email_fn=None):
+    """
+    Envoie push et/ou email selon le mode ('push'|'email'|'both'|'silent').
+    push_kw  : kwargs pour push_service.send_push_all (title, body, url, tag).
+    email_fn : callable sans argument qui envoie l'email (ou None si indisponible).
+    """
+    if mode == 'silent':
+        return
+    if mode in ('push', 'both'):
+        try:
+            import push_service
+            push_service.send_push_all(**push_kw)
+        except Exception as e:
+            print(f"❌ Push: {e}")
+    if mode in ('email', 'both') and email_fn:
+        try:
+            email_fn()
+        except Exception as e:
+            print(f"❌ Email: {e}")
+
+
 def run_market_monitor():
     """
     Collecte les métriques, évalue les seuils et gère le cycle de vie des
     MarketEvent (création / mise à jour / clôture) avec anti-spam :
-      - 1 seul évènement ouvert par (type, ticker) → 1 seul email d'ouverture ;
-      - clôture (ended_at) + email court quand la condition disparaît.
+      - 1 seul évènement ouvert par (type, ticker) → 1 seul notification d'ouverture ;
+      - clôture (ended_at) + notification quand la condition disparaît.
+    Canal (push/email/both/silent) configurable via Settings 'event_notification_prefs'.
     Retourne un résumé exploitable par la route de test.
     """
     monitor = get_market_monitor()
     metrics = monitor.collect_metrics()
     ibkr_up = metrics.get('connected', False)
-    # ibkr_quotes_ok : True uniquement si les quotes IBKR sont valides (pas de fallback yfinance).
-    # Distincts de ibkr_up (connexion établie mais contrats non qualifiables = quotes inutilisables).
     ibkr_quotes_ok = ibkr_up and not metrics.get('using_yfinance_fallback', False)
-    # Données marché disponibles (yfinance ou IBKR) même si IBKR est down
     market_data_ok = bool(metrics.get('spy') or metrics.get('vix'))
     breaches = monitor.evaluate(metrics)
     now = datetime.utcnow()
     email_svc = get_email_service()
-    configured = email_svc.is_configured()
+    email_ok = email_svc.is_configured()
+    prefs = _get_notif_prefs()
 
     open_events = MarketEvent.query.filter(MarketEvent.ended_at.is_(None)).all()
     open_map = {(e.event_type, e.ticker): e for e in open_events}
@@ -202,14 +236,13 @@ def run_market_monitor():
     IBKR_DOWN_KEY = ('IBKR_DOWN', None)
     ibkr_ev = open_map.pop(IBKR_DOWN_KEY, None)
 
+    # ---- IBKR_DOWN (toujours push — alerte système, hors préférences utilisateur) ----
     if not ibkr_up:
         error_msg = metrics.get('error') or 'IBKR non connecté'
         if ibkr_ev:
-            # Épisode en cours → mise à jour du message de diagnostic
             ibkr_ev.last_checked_at = now
             ibkr_ev.message = error_msg
         else:
-            # Nouvelle coupure → créer l'event + push immédiat
             ibkr_ev = MarketEvent(
                 event_type='IBKR_DOWN', ticker=None, severity='critical',
                 threshold=None, trigger_value=None, peak_value=None,
@@ -217,55 +250,42 @@ def run_market_monitor():
             )
             db.session.add(ibkr_ev)
             db.session.flush()
-            try:
-                import push_service
-                push_service.send_push_all(
-                    title='🚨 IBKR déconnecté — portefeuille non monitoré',
-                    body=error_msg[:200],
-                    url='/',
-                    tag='ibkr-down',
-                )
-                ibkr_ev.notified_open = True
-            except Exception as e:
-                print(f"❌ Push IBKR_DOWN: {e}")
+            _dispatch_notif(
+                'push',  # IBKR_DOWN → toujours push
+                push_kw=dict(title='🚨 IBKR déconnecté — portefeuille non monitoré',
+                             body=error_msg[:200], url='/', tag='ibkr-down'),
+            )
+            ibkr_ev.notified_open = True
             opened.append({'event_type': 'IBKR_DOWN', 'ticker': None,
                            'severity': 'critical', 'value': None,
                            'threshold': None, 'message': error_msg})
     elif ibkr_ev:
-        # IBKR reconnecté → clôturer l'épisode
         ibkr_ev.ended_at = now
         ibkr_ev.last_checked_at = now
         if not ibkr_ev.notified_close:
-            try:
-                import push_service
-                duration = round((now - ibkr_ev.started_at).total_seconds() / 60)
-                push_service.send_push_all(
-                    title='✅ IBKR reconnecté',
-                    body=f"Portefeuille de nouveau monitoré (coupure de {duration} min).",
-                    url='/',
-                    tag='ibkr-reconnected',
-                )
-            except Exception as e:
-                print(f"❌ Push IBKR reconnecté: {e}")
+            duration = round((now - ibkr_ev.started_at).total_seconds() / 60)
+            _dispatch_notif(
+                'push',  # IBKR_DOWN → toujours push
+                push_kw=dict(title='✅ IBKR reconnecté',
+                             body=f"Portefeuille de nouveau monitoré (coupure de {duration} min).",
+                             url='/', tag='ibkr-reconnected'),
+            )
             ibkr_ev.notified_close = True
         closed += 1
 
     # ---- Cycle breach standard (VIX, SPY, portefeuille, positions) ----
-    # Anti-rebond : ne pas rouvrir un event fermé il y a moins de MIN_REOPEN_MIN minutes.
-    # Évite le spam quand une valeur oscille autour du seuil (ex: INTC à -6.9% / -7.1%).
     MIN_REOPEN_MIN = 10
     for b in breaches:
         key = (b['event_type'], b['ticker'])
         breach_keys.add(key)
         ev = open_map.get(key)
-        if ev:  # épisode déjà en cours → mise à jour silencieuse
+        if ev:
             ev.last_checked_at = now
             if ev.peak_value is None or _more_extreme(b['value'], ev.peak_value, b['event_type']):
                 ev.peak_value = b['value']
             if b['severity'] == 'critical' and ev.severity != 'critical':
                 ev.severity = 'critical'
-        else:  # potentiellement nouvel épisode
-            # Vérifier si un event identique a été fermé récemment (anti-oscillation)
+        else:
             recent_close = MarketEvent.query.filter(
                 MarketEvent.event_type == b['event_type'],
                 MarketEvent.ticker == b['ticker'],
@@ -273,7 +293,7 @@ def run_market_monitor():
                 MarketEvent.ended_at > now - timedelta(minutes=MIN_REOPEN_MIN),
             ).first()
             if recent_close:
-                continue  # trop tôt pour rouvrir — silence pendant le cooldown
+                continue
 
             ev = MarketEvent(
                 event_type=b['event_type'], ticker=b['ticker'], severity=b['severity'],
@@ -282,55 +302,46 @@ def run_market_monitor():
             )
             db.session.add(ev)
             db.session.flush()
-            try:
-                import push_service
-                icon = '🚨' if b['severity'] == 'critical' else '⚠️'
-                push_service.send_push_all(
-                    title=f"{icon} Alerte marché",
-                    body=b['message'],
-                    url='/',
-                    tag=f"market-{b['event_type']}-{b['ticker'] or 'global'}",
-                )
-                ev.notified_open = True
-            except Exception as e:
-                print(f"❌ Push alerte: {e}")
+            icon = '🚨' if b['severity'] == 'critical' else '⚠️'
+            _dispatch_notif(
+                prefs['open'],
+                push_kw=dict(title=f"{icon} Alerte marché", body=b['message'],
+                             url='/', tag=f"market-{b['event_type']}-{b['ticker'] or 'global'}"),
+                email_fn=(lambda _b=b: email_svc.envoyer_alerte_marche(_b)) if email_ok else None,
+            )
+            ev.notified_open = True
             opened.append(b)
 
-    # Clôturer les évènements dont la condition n'est plus remplie.
-    # Règles de clôture :
-    # - POSITION_DROP / PORTFOLIO_DRAWDOWN : requièrent des quotes IBKR valides
-    #   (ibkr_quotes_ok). yfinance seul n'est pas assez précis et cause des oscillations.
-    # - VIX_HIGH / VIX_SPIKE / SPY_DRAWDOWN : yfinance suffit.
-    # - Délai minimum d'ouverture : on ne ferme pas un event ouvert il y a < 5 min
-    #   (une vraie alerte ne se résout pas en quelques secondes).
+    # ---- Clôture des évènements résolus ----
     MIN_OPEN_MIN = 5
     MARKET_ONLY_TYPES = {'VIX_HIGH', 'VIX_SPIKE', 'SPY_DRAWDOWN'}
     POSITION_TYPES = {'POSITION_DROP', 'PORTFOLIO_DRAWDOWN'}
     for key, ev in open_map.items():
         if key in breach_keys:
             continue
-        # Délai minimum d'ouverture avant de pouvoir fermer
         age_min = (now - ev.started_at).total_seconds() / 60 if ev.started_at else 999
         if age_min < MIN_OPEN_MIN:
             ev.last_checked_at = now
             continue
-        # Source de données requise pour clôturer
         if ev.event_type in POSITION_TYPES:
-            can_close = ibkr_quotes_ok   # positions : quotes IBKR fiables uniquement
+            can_close = ibkr_quotes_ok
         elif ev.event_type in MARKET_ONLY_TYPES:
-            can_close = market_data_ok   # indices : yfinance suffit
+            can_close = market_data_ok
         else:
-            can_close = ibkr_up          # autres (IBKR_DOWN géré séparément)
+            can_close = ibkr_up
         if not can_close:
             ev.last_checked_at = now
             continue
         ev.ended_at = now
         ev.last_checked_at = now
-        if configured and not ev.notified_close:
-            try:
-                email_svc.envoyer_alerte_resolue(ev.to_dict())
-            except Exception as e:
-                print(f"❌ Email résolu: {e}")
+        if not ev.notified_close:
+            _dispatch_notif(
+                prefs['close'],
+                push_kw=dict(title='✅ Alerte résolue',
+                             body=ev.message or ev.event_type,
+                             url='/', tag=f"resolved-{ev.event_type}-{ev.ticker or 'global'}"),
+                email_fn=(lambda _ev=ev: email_svc.envoyer_alerte_resolue(_ev.to_dict())) if email_ok else None,
+            )
         ev.notified_close = True
         closed += 1
 

@@ -623,6 +623,7 @@
                 loadIBKRStatus();
                 loadFlexStatus();
                 loadPricesStatus();
+                loadNotifPrefs();
             }
             if (pageName === 'perf') loadPerfData();
             if (pageName === 'backtest') loadBacktestDefaults();

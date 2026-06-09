@@ -38,6 +38,37 @@ def market_events():
     return jsonify({'count': len(events), 'events': [e.to_dict() for e in events]})
 
 
+_NOTIF_CHANNELS = {'push', 'email', 'both', 'silent'}
+_NOTIF_DEFAULTS = {'open': 'push', 'close': 'silent'}
+
+
+@bp.route('/api/market/notification-prefs', methods=['GET'])
+def market_notif_prefs_get():
+    """Lit les préférences de notification des événements marché."""
+    raw = Settings.get('event_notification_prefs')
+    prefs = dict(_NOTIF_DEFAULTS)
+    if raw:
+        try:
+            prefs.update({k: v for k, v in json.loads(raw).items()
+                          if k in _NOTIF_DEFAULTS and v in _NOTIF_CHANNELS})
+        except Exception:
+            pass
+    return jsonify(prefs)
+
+
+@bp.route('/api/market/notification-prefs', methods=['POST'])
+@require_admin
+def market_notif_prefs_save():
+    """Sauvegarde les préférences de notification (open/close × push/email/both/silent)."""
+    data = request.get_json(silent=True) or {}
+    prefs = dict(_NOTIF_DEFAULTS)
+    for k in ('open', 'close'):
+        if data.get(k) in _NOTIF_CHANNELS:
+            prefs[k] = data[k]
+    Settings.set('event_notification_prefs', json.dumps(prefs))
+    return jsonify({'success': True, 'prefs': prefs})
+
+
 @bp.route('/api/market/thresholds', methods=['GET', 'POST'])
 def market_thresholds():
     """Lit (GET) ou met à jour (POST, admin) les seuils d'alerte."""

@@ -515,6 +515,26 @@
             if (data?.success) { showToast('Abonnement supprimé', 'success'); loadPushSubscriptions(); }
         }
 
+        async function loadNotifPrefs() {
+            const data = await api('/market/notification-prefs');
+            if (!data) return;
+            const selOpen  = document.getElementById('notif-open');
+            const selClose = document.getElementById('notif-close');
+            if (selOpen  && data.open)  selOpen.value  = data.open;
+            if (selClose && data.close) selClose.value = data.close;
+        }
+
+        async function saveNotifPrefs() {
+            const info = document.getElementById('notif-prefs-info');
+            const open  = document.getElementById('notif-open')?.value;
+            const close = document.getElementById('notif-close')?.value;
+            const data = await api('/market/notification-prefs', {
+                method: 'POST', body: JSON.stringify({ open, close })
+            });
+            if (info) info.textContent = data?.success ? '✅ Préférences enregistrées' : '❌ Erreur';
+            if (data?.success) showToast('Préférences de notification enregistrées', 'success');
+        }
+
         async function sendDigestTech() {
             const btn  = document.getElementById('btn-send-digest-tech');
             const info = document.getElementById('digest-tech-send-info');
