@@ -13,7 +13,9 @@ def create_scheduler(app):
     """Injecte l'app dans les jobs, construit le scheduler et le démarre."""
     jobs.app = app
     scheduler = BackgroundScheduler(job_defaults={
-        'coalesce': True, 'max_instances': 1, 'misfire_grace_time': 60,
+        'coalesce': True,
+        'max_instances': 1,
+        'misfire_grace_time': 60,   # défaut pour le monitor (1 min de tolérance)
     })
     ET = 'America/New_York'
 
@@ -70,15 +72,19 @@ def create_scheduler(app):
     )
 
     # 6) Digest d'actualités monde : 10h00 et 20h00 Europe/Paris (tous les jours)
+    # misfire_grace_time=600 : si l'app redémarre dans les 10 min autour de l'heure
+    # du digest, le job se déclenche quand même (évite les ratés sur redémarrage).
     scheduler.add_job(
         job_digest_actualites,
         CronTrigger(hour=10, minute=0, timezone=PARIS),
         id='digest_matin', name='Digest actualités (matin)', replace_existing=True,
+        misfire_grace_time=600,
     )
     scheduler.add_job(
         job_digest_actualites,
         CronTrigger(hour=20, minute=0, timezone=PARIS),
         id='digest_soir', name='Digest actualités (soir)', replace_existing=True,
+        misfire_grace_time=600,
     )
 
     # 7) Digest Tech & IA : 10h05 Europe/Paris uniquement (→ kouatebryan38@gmail.com)
@@ -86,6 +92,7 @@ def create_scheduler(app):
         job_digest_tech,
         CronTrigger(hour=10, minute=5, timezone=PARIS),
         id='digest_tech', name='Digest Tech & IA (matin)', replace_existing=True,
+        misfire_grace_time=600,
     )
 
     # 8) Rappel screener trimestriel : dernier jour de mars, juin, sept, déc à 9h00 ET
