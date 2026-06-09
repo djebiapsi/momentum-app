@@ -6,9 +6,10 @@ Rejoue la stratégie sur l'historique avec **intérêt composé** et la compare 
 benchmark (SPY).
 
 Spécificités (validées avec l'utilisateur) :
-  - **Univers dynamique** recalculé tous les 3 mois avec le même critère que le
-    screener Long (`ScreenerService` : ADV = prix × volume ≥ 5 M$, classé par
-    log(ADV) → top 50), reconstruit *point-in-time* depuis l'historique prix+volume.
+  - **Univers complet** : l'intégralité des constituants S&P 500 + Nasdaq-100
+    (≈ 600 titres), comme le calcul live. Plus de cap top-N : le momentum 12-1 est
+    classé sur tout l'univers, seul un plancher de liquidité ADV ≥ 5 M$ (réalisme
+    d'exécution) reste appliqué point-in-time depuis l'historique prix+volume.
   - **Config live** : `nb_top`, vol_scaling, frein anti-krach lus dans les `Settings`
     et appliqués (formules de `momentum_service.generer_recommandations` recalculées
     point-in-time, sans appel API « now »).
@@ -31,7 +32,7 @@ Métriques pro via **quantstats** + calculs maison (VaR/CVaR, Omega, Ulcer, dur�
 drawdown, levier moyen, coûts payés…). Import paresseux de quantstats (matplotlib).
 
 Limites assumées (affichées dans l'UI) : biais de survivance résiduel (univers
-candidat = tickers existant aujourd'hui), screen de liquidité (pas fondamental),
+candidat = constituants existant aujourd'hui), plancher de liquidité (pas fondamental),
 appel de marge évalué sur cours de clôture (pas de plus-bas intra-séance), 1ʳᵉ
 exécution lente (fetch Tiingo). Nécessite `TIINGO_API_KEY`.
 """
@@ -68,8 +69,8 @@ TRADING_DAYS = 252
 class BacktestService:
     # Garde-fous / paramètres de la stratégie
     POOL_SIZE = 150            # taille du pool candidat (borne le coût data)
-    UNIVERSE_SIZE = 50         # top-N liquidité retenu par trimestre (= screener live)
-    MIN_ADV = 5_000_000        # seuil ADV (= screener live)
+    UNIVERSE_SIZE = None       # None = pas de cap : momentum sur tout l'univers (SP500+NDX100)
+    MIN_ADV = 5_000_000        # plancher ADV (réalisme d'exécution ; les constituants passent tous)
     ADV_WINDOW = 63            # fenêtre ADV glissant (~1 trimestre de bourse)
     VOL_WINDOW = 126           # fenêtre vol réalisée (= live, 126 j)
     MOM_MIN_MONTHS = 13        # mois nécessaires au momentum 12-1
@@ -427,6 +428,10 @@ class BacktestService:
                        'max_exposure_pct': 250.0, '_baseline': True})
         total = len(combos)
 
+        # Cache momentum partagé sur toute la grille : le momentum 12-1 est identique
+        # d'un combo à l'autre (seule la pondération varie) → calcul ~600 titres une fois.
+        mom_cache = {}
+
         results = []
         for done, combo in enumerate(combos, 1):
             is_baseline = combo.pop('_baseline', False)
@@ -446,7 +451,7 @@ class BacktestService:
                     'portfolio_vol_threshold_pct': 20.0,
                 }
                 wdf, meta_w = self.build_weight_matrix(
-                    monthly_px, daily_ret, dvol, start, params_w)
+                    monthly_px, daily_ret, dvol, start, params_w, mom_cache=mom_cache)
                 if wdf.empty:
                     continue
                 sim = self._simulate(wdf, daily_ret, start, end,
@@ -508,8 +513,12 @@ class BacktestService:
     # 3) Univers trimestriel (re-screen ADV point-in-time)
     # ------------------------------------------------------------------
     def quarterly_universe(self, dvol, as_of, size=None):
-        """Top-N par ADV glissant (≈63 j) à la date `as_of`, filtré ≥ seuil (= screener live)."""
-        size = size or self.UNIVERSE_SIZE
+        """
+        Univers à `as_of` : tous les titres au-dessus du plancher ADV glissant (≈63 j).
+        Plus de cap top-N — le momentum se calcule sur l'univers complet (≈600 titres
+        SP500+NDX100), comme le calcul live. `size` ne plafonne que s'il est > 0.
+        """
+        size = size if size is not None else self.UNIVERSE_SIZE
         window = dvol.loc[:as_of].tail(self.ADV_WINDOW)
         if window.empty:
             return []
@@ -517,8 +526,10 @@ class BacktestService:
         eligible = adv[adv >= self.MIN_ADV]
         if eligible.empty:
             return []
-        # Tri par log(ADV) décroissant = ADV décroissant
-        return list(eligible.sort_values(ascending=False).head(size).index)
+        ranked = eligible.sort_values(ascending=False)  # ADV décroissant
+        if size and size > 0:
+            ranked = ranked.head(size)
+        return list(ranked.index)
 
     # ------------------------------------------------------------------
     # 4) Pondération point-in-time (reproduit generer_recommandations)
@@ -552,7 +563,7 @@ class BacktestService:
         v = float(r.std(ddof=0)) * math.sqrt(TRADING_DAYS)
         return v if v > 1e-6 else self.VOL_DEFAULT
 
-    def compute_weights(self, as_of, universe, monthly_px, daily_ret, params):
+    def compute_weights(self, as_of, universe, monthly_px, daily_ret, params, mom_cache=None):
         """
         Poids cibles à `as_of` pour `universe` (reproduit la config live) :
           1. momentum 12-1 > 0, garder top `nb_top` ;
@@ -560,6 +571,10 @@ class BacktestService:
           3. vol_scaling : w_i = σ_target/σ_i (vol 126 j), exposition plafonnée ;
           4. portfolio_filter : facteur f = min(1, σ_seuil/σ_panier) (vol 126 j pondérée).
         Retourne une pd.Series (index = tickers), somme ≤ 1 (ou levier si vol_scaling).
+
+        `mom_cache` (dict optionnel) : mémoïse le momentum par (ticker, as_of). Le
+        momentum 12-1 ne dépend pas des paramètres de pondération → partager ce cache
+        entre les combos d'optimize() évite de recalculer ~600 momentums × 50 combos.
         """
         nb_top = params['nb_top']
         # 1) sélection momentum
@@ -567,7 +582,15 @@ class BacktestService:
         for t in universe:
             if t not in monthly_px.columns:
                 continue
-            m = self._momentum_12_1(monthly_px[t], as_of)
+            if mom_cache is not None:
+                ckey = (t, as_of)
+                if ckey in mom_cache:
+                    m = mom_cache[ckey]
+                else:
+                    m = self._momentum_12_1(monthly_px[t], as_of)
+                    mom_cache[ckey] = m
+            else:
+                m = self._momentum_12_1(monthly_px[t], as_of)
             if m is not None and m > 0:
                 moms.append((t, m))
         if not moms:
@@ -603,10 +626,13 @@ class BacktestService:
     # ------------------------------------------------------------------
     # 5) Construction de la matrice de poids (univers trimestriel + poids mensuels)
     # ------------------------------------------------------------------
-    def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params):
+    def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params, mom_cache=None):
         """
         Pour chaque fin de mois ≥ start : (ré)évalue l'univers tous les 3 mois, calcule
         les poids cibles. Retourne (weights_df [dates × tickers], meta dict).
+
+        `mom_cache` : passé tel quel à compute_weights pour mémoïser le momentum entre
+        appels successifs (optimize() partage un seul cache sur toute la grille).
         """
         month_ends = [d for d in monthly_px.index if d >= start]
         weights = {}
@@ -626,7 +652,7 @@ class BacktestService:
                     universe = new_u
             if not universe:
                 continue
-            w = self.compute_weights(d, universe, monthly_px, daily_ret, params)
+            w = self.compute_weights(d, universe, monthly_px, daily_ret, params, mom_cache=mom_cache)
             # Risk-off (aucun momentum positif) → on passe réellement en cash
             # (ligne de poids nulle), au lieu de conserver le panier du mois précédent.
             if w.empty:

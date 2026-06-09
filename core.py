@@ -4,9 +4,40 @@ import json
 from datetime import datetime, timedelta
 from flask import current_app
 from models import (db, Settings, PanelAction, RecommendationHistory,
-                    RecommendationDetail, MarketEvent)
+                    RecommendationDetail, MarketEvent, IndexConstituent)
 from services import (ibkr_service, get_momentum_service, get_email_service,
                       get_market_monitor, get_news_service, get_cached_positions)
+
+
+def get_long_universe():
+    """
+    Univers du momentum long : l'intégralité des constituants S&P 500 + Nasdaq-100
+    (≈ 600 titres dédupliqués), depuis la table IndexConstituent peuplée par la
+    collecte yfinance nocturne.
+
+    Cascade de repli (robustesse si la collecte n'a jamais tourné) :
+      1. IndexConstituent actifs (SP500 ∪ NDX100)         — source normale
+      2. PanelAction actif (ancien panel manuel)          — repli legacy
+      3. config DEFAULT_PANEL                              — repli ultime
+
+    Returns: (tickers: list[str], source: str)
+    """
+    rows = (IndexConstituent.query
+            .filter_by(is_active=True)
+            .filter(IndexConstituent.index_name.in_(('SP500', 'NDX100')))
+            .all())
+    tickers = sorted({r.ticker for r in rows if r.ticker})
+    if tickers:
+        return tickers, 'index_constituents'
+
+    # Repli 1 : ancien panel manuel
+    panel = [a.ticker for a in PanelAction.query.filter_by(is_active=True).all()]
+    if panel:
+        return panel, 'panel_action'
+
+    # Repli 2 : panel par défaut codé en dur
+    default = list(current_app.config.get('DEFAULT_PANEL', []))
+    return default, 'default_config'
 
 
 def _get_vol_scaling_settings():
@@ -25,9 +56,37 @@ def _get_vol_scaling_settings():
     }
 
 
+# Nb de lignes du classement momentum persistées par calcul. Sur un univers de
+# ~600 titres, seuls le top actionnable + un leaderboard de contexte ont de la
+# valeur ; persister les ~550 "Sortir" restants gonflerait la base pour rien.
+RECO_PERSIST_LIMIT = 50
+
+
+def _persist_reco_details(history, recommandations, nb_top):
+    """Persiste le classement momentum, borné à max(RECO_PERSIST_LIMIT, nb_top) lignes."""
+    limit = max(RECO_PERSIST_LIMIT, int(nb_top))
+    recos = recommandations['recommandations']
+    # Les recos sont déjà triées par rang croissant ; on garde le haut du classement.
+    for r in recos[:limit]:
+        dm = r.get('details_mensuels')
+        pr = r.get('perf_recent_1m')
+        vol = r.get('vol_annualisee')
+        db.session.add(RecommendationDetail(
+            history_id=history.id,
+            ticker=r['ticker'],
+            momentum=float(r['momentum']),
+            signal=r['signal'],
+            allocation=float(r['allocation']),
+            rank=int(r['rank']),
+            perf_recent_1m=float(pr) if pr is not None else None,
+            vol_annualisee=float(vol) if vol is not None else None,
+            details_mensuels=json.dumps(dm) if dm else None,
+        ))
+
+
 def _run_long_calculation():
     """
-    Logique commune : récupère le panel, calcule le momentum, sauvegarde l'historique.
+    Logique commune : récupère l'univers, calcule le momentum, sauvegarde l'historique.
     Retourne (history, recommandations) ou lève une ValueError/RuntimeError.
     """
     service = get_momentum_service()
@@ -38,11 +97,10 @@ def _run_long_calculation():
     date_calcul = Settings.get('date_calcul', '') or None
     vs = _get_vol_scaling_settings()
 
-    actions = PanelAction.query.filter_by(is_active=True).all()
-    panel = [a.ticker for a in actions]
-
+    panel, source = get_long_universe()
     if not panel:
-        raise ValueError('Panel vide - ajoutez des actions')
+        raise ValueError('Univers vide — lance la collecte yfinance (SP500/NDX100)')
+    print(f"📊 Momentum long sur {len(panel)} titres (source: {source})")
 
     resultats = service.analyser_panel(panel, date_calcul)
 
@@ -64,21 +122,7 @@ def _run_long_calculation():
     db.session.add(history)
     db.session.flush()
 
-    for r in recommandations['recommandations']:
-        dm = r.get('details_mensuels')
-        pr = r.get('perf_recent_1m')
-        vol = r.get('vol_annualisee')
-        db.session.add(RecommendationDetail(
-            history_id=history.id,
-            ticker=r['ticker'],
-            momentum=float(r['momentum']),
-            signal=r['signal'],
-            allocation=float(r['allocation']),
-            rank=int(r['rank']),
-            perf_recent_1m=float(pr) if pr is not None else None,
-            vol_annualisee=float(vol) if vol is not None else None,
-            details_mensuels=json.dumps(dm) if dm else None,
-        ))
+    _persist_reco_details(history, recommandations, nb_top)
 
     db.session.commit()
     return history, recommandations
@@ -120,11 +164,11 @@ def compute_and_save_momentum():
         return None, None
 
     nb_top = int(Settings.get('nb_top', current_app.config.get('DEFAULT_NB_TOP', 5)))
-    actions = PanelAction.query.filter_by(is_active=True).all()
-    panel = [a.ticker for a in actions]
+    panel, source = get_long_universe()
     if not panel:
-        print("❌ Panel vide")
+        print("❌ Univers vide — lance la collecte yfinance (SP500/NDX100)")
         return None, None
+    print(f"📊 Momentum long sur {len(panel)} titres (source: {source})")
 
     resultats = service.analyser_panel(panel, None)
     if not resultats['success']:
@@ -143,22 +187,7 @@ def compute_and_save_momentum():
     db.session.add(history)
     db.session.flush()
 
-    for r in recommandations['recommandations']:
-        dm = r.get('details_mensuels')
-        pr = r.get('perf_recent_1m')
-        vol = r.get('vol_annualisee')
-        detail = RecommendationDetail(
-            history_id=history.id,
-            ticker=r['ticker'],
-            momentum=float(r['momentum']),
-            signal=r['signal'],
-            allocation=float(r['allocation']),
-            rank=int(r['rank']),
-            perf_recent_1m=float(pr) if pr is not None else None,
-            vol_annualisee=float(vol) if vol is not None else None,
-            details_mensuels=json.dumps(dm) if dm else None,
-        )
-        db.session.add(detail)
+    _persist_reco_details(history, recommandations, nb_top)
 
     db.session.commit()
     print(f"✅ Recommandations sauvegardées (ID: {history.id})")
