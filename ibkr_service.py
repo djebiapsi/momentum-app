@@ -195,7 +195,7 @@ class IBKRService:
 
         async def fn():
             return self._ib.portfolio()
-        portfolio = self._submit(fn(), timeout=20)
+        portfolio = self._submit(fn(), timeout=8)
         return self._format_portfolio(portfolio)
 
     def get_portfolio_stats(self) -> dict:
@@ -328,19 +328,20 @@ class IBKRService:
         symbols = [t.upper() for t in tickers if t]
 
         async def fn():
+            import asyncio as _asyncio
             contracts = {}
             for sym in symbols:
                 contracts[sym] = Stock(sym, 'SMART', 'USD')
             if include_vix:
                 contracts['VIX'] = Index('VIX', 'CBOE', 'USD')
 
-            # Qualifier les contrats (ignore ceux qui échouent)
+            # Qualifier les contrats avec timeout individuel pour ne pas bloquer le loop
             valid = {}
             for sym, c in contracts.items():
                 try:
-                    await self._ib.qualifyContractsAsync(c)
+                    await _asyncio.wait_for(self._ib.qualifyContractsAsync(c), timeout=5.0)
                     valid[sym] = c
-                except Exception as e:
+                except (_asyncio.TimeoutError, Exception) as e:
                     logger.warning('get_quotes: contrat non qualifié %s (%s)', sym, e)
 
             if not valid:
@@ -349,10 +350,15 @@ class IBKRService:
             # 1 = temps réel ; 3 = différé (15 min). On tente le temps réel puis on
             # laisse le différé prendre le relais si pas d'abonnement.
             self._ib.reqMarketDataType(3)
-            tickers_data = await self._ib.reqTickersAsync(*valid.values())
+            # asyncio.wait_for garantit l'annulation propre de la coroutine si timeout
+            # (contrairement à _submit timeout qui abandonne sans annuler → loop bouché)
+            tickers_data = await _asyncio.wait_for(
+                self._ib.reqTickersAsync(*valid.values()),
+                timeout=8.0,
+            )
             return {c.symbol: t for c, t in zip(valid.values(), tickers_data)}
 
-        raw = self._submit(fn(), timeout=60)
+        raw = self._submit(fn(), timeout=15)
 
         def _num(x):
             try:

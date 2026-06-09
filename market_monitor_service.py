@@ -29,9 +29,16 @@ class MarketMonitorService:
         'position_drop': -7.0,   # chute intraday d'une position (%)
     }
 
+    # Circuit breaker quotes IBKR : après N échecs consécutifs, bypass IBKR
+    # pendant BYPASS_TICKS ticks (yfinance direct). Se reset à 0 sur succès.
+    _CIRCUIT_OPEN_AFTER = 3
+    _CIRCUIT_BYPASS_TICKS = 5
+
     def __init__(self, ibkr_service, momentum_service):
         self.ibkr = ibkr_service
         self.momentum = momentum_service
+        self._ibkr_quotes_fail_streak = 0   # échecs consécutifs de get_quotes
+        self._ibkr_quotes_bypass_left = 0   # ticks restants en bypass
 
     # ------------------------------------------------------------------
     # Seuils
@@ -120,11 +127,29 @@ class MarketMonitorService:
         quotes = {}
         ibkr_quotes_ok = False
         if ibkr_connected:
-            try:
-                quotes = self.ibkr.get_quotes(quote_tickers, include_vix=True)
-                ibkr_quotes_ok = bool(quotes.get('SPY') or quotes.get('VIX'))
-            except Exception as e:
-                logger.warning('collect_metrics: IBKR quotes indisponibles (%s) → yfinance', e)
+            if self._ibkr_quotes_bypass_left > 0:
+                # Circuit ouvert : on bypasse IBKR quotes sans même essayer
+                self._ibkr_quotes_bypass_left -= 1
+                logger.info('collect_metrics: circuit breaker actif (%d ticks restants) → yfinance direct',
+                            self._ibkr_quotes_bypass_left)
+            else:
+                try:
+                    quotes = self.ibkr.get_quotes(quote_tickers, include_vix=True)
+                    ibkr_quotes_ok = bool(quotes.get('SPY') or quotes.get('VIX'))
+                    if ibkr_quotes_ok:
+                        self._ibkr_quotes_fail_streak = 0  # succès → reset streak
+                    else:
+                        self._ibkr_quotes_fail_streak += 1
+                except Exception as e:
+                    self._ibkr_quotes_fail_streak += 1
+                    logger.warning('collect_metrics: IBKR quotes indisponibles (%s) → yfinance', e)
+
+                if self._ibkr_quotes_fail_streak >= self._CIRCUIT_OPEN_AFTER:
+                    self._ibkr_quotes_bypass_left = self._CIRCUIT_BYPASS_TICKS
+                    self._ibkr_quotes_fail_streak = 0
+                    logger.warning('collect_metrics: circuit breaker ouvert après %d échecs '
+                                   '— %d prochains ticks via yfinance uniquement',
+                                   self._CIRCUIT_OPEN_AFTER, self._CIRCUIT_BYPASS_TICKS)
 
         # Fallback yfinance pour SPY / QQQ / VIX — actif même si IBKR est down
         if not ibkr_quotes_ok:
