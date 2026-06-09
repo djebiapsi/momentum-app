@@ -172,6 +172,38 @@ def _more_extreme(value, current, event_type):
     return value < current            # drawdowns / chutes : plus négatif = pire
 
 
+def _still_in_hysteresis(ev, metrics) -> bool:
+    """
+    Retourne True si la métrique est encore trop proche du seuil pour clôturer
+    l'event (zone d'hystérésis). Évite les fermetures prématurées quand la valeur
+    oscille autour du seuil de déclenchement.
+
+    Facteurs d'hystérésis (seuil de fermeture = seuil_ouverture × facteur) :
+      VIX_SPIKE  : ferme si vix_pct  <  threshold × 0.60  (ex: 20% → ferme si < 12%)
+      VIX_HIGH   : ferme si vix      <  threshold × 0.88  (ex: 25  → ferme si < 22)
+      SPY_DRAWDOWN        : ferme si spy_pct  >  threshold × 0.60  (ex: -4% → ferme si > -2.4%)
+      PORTFOLIO_DRAWDOWN  : ferme si port_pct >  threshold × 0.60
+    """
+    t = ev.threshold
+    if t is None:
+        return False
+
+    et = ev.event_type
+    if et == 'VIX_SPIKE':
+        v = metrics.get('vix_pct')
+        return v is not None and v >= t * 0.60
+    if et == 'VIX_HIGH':
+        v = metrics.get('vix')
+        return v is not None and v >= t * 0.88
+    if et == 'SPY_DRAWDOWN':
+        v = metrics.get('spy_intraday_pct')
+        return v is not None and v <= t * 0.60
+    if et == 'PORTFOLIO_DRAWDOWN':
+        v = metrics.get('portfolio_intraday_pct')
+        return v is not None and v <= t * 0.60
+    return False
+
+
 def _get_notif_prefs() -> dict:
     """Lit les préférences canal de notification depuis Settings (avec défauts)."""
     raw = Settings.get('event_notification_prefs')
@@ -229,7 +261,7 @@ def run_market_monitor():
 
     open_events = MarketEvent.query.filter(MarketEvent.ended_at.is_(None)).all()
     open_map = {(e.event_type, e.ticker): e for e in open_events}
-    breach_keys, opened = set(), []
+    breach_keys, opened, closed = set(), [], 0
 
     # ---- IBKR_DOWN : géré en dehors du cycle breach standard ----
     # On le pop d'open_map pour qu'il ne soit PAS touché par la boucle de clôture générale.
@@ -330,6 +362,10 @@ def run_market_monitor():
         else:
             can_close = ibkr_up
         if not can_close:
+            ev.last_checked_at = now
+            continue
+        # Hystérésis : ne pas fermer si la valeur est encore proche du seuil
+        if _still_in_hysteresis(ev, metrics):
             ev.last_checked_at = now
             continue
         ev.ended_at = now
