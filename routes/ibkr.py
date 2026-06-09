@@ -358,13 +358,26 @@ def perf_dashboard():
             except Exception:
                 pass
 
-        # ── TWR : neutralise les gros flux (dépôts/retraits > 20%) ──────────
-        raw_ret  = nav.pct_change()
-        twr_ret  = raw_ret.where(raw_ret.abs() <= 0.20, 0.0).fillna(0.0)
-        twr_index = (1 + twr_ret).cumprod()
+        # ── TWR via Modified Dietz : HPR_t = (NAV_t - NAV_{t-1} - CF_t) / NAV_{t-1}
+        # Soustrait exactement chaque dépôt/retrait du numérateur, quel que soit
+        # son montant — contrairement à l'ancienne heuristique (seuil 20%).
+        all_cf = CashFlow.query.filter(
+            CashFlow.date >= nav.index[0].date()
+        ).order_by(CashFlow.date).all()
+        cf_by_date: dict = {}
+        for cf in all_cf:
+            ts = pd.Timestamp(cf.date)
+            cf_by_date[ts] = cf_by_date.get(ts, 0.0) + cf.amount
+        cf_series = pd.Series(cf_by_date, dtype=float).reindex(nav.index).fillna(0.0)
+
+        nav_prev  = nav.shift(1)
+        hpr       = (nav - nav_prev - cf_series) / nav_prev
+        hpr       = hpr.fillna(0.0).clip(-0.95, 5.0)  # garde-fou données aberrantes
+
+        twr_index = (1 + hpr).cumprod()
         twr_index = twr_index / twr_index.iloc[0]
 
-        daily_ret = twr_ret[twr_ret != 0.0]
+        daily_ret = hpr.iloc[1:]  # exclure le premier NaN converti en 0
         days      = max(1, (nav.index[-1] - nav.index[0]).days)
         total_ret = float(twr_index.iloc[-1] - 1)
         cagr      = float(twr_index.iloc[-1] ** (365.0 / days) - 1) if days >= 1 else 0.0
