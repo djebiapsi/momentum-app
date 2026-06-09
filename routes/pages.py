@@ -25,10 +25,10 @@ def index():
 @bp.route('/sw.js')
 def service_worker():
     """Sert le service worker depuis la racine pour que son scope couvre '/'."""
-    resp = make_response(send_from_directory('../static', 'sw.js'))
+    resp = make_response(current_app.send_static_file('sw.js'))
     resp.headers['Content-Type'] = 'application/javascript'
     resp.headers['Service-Worker-Allowed'] = '/'
-    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return resp
 
 

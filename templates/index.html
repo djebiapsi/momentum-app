@@ -90,8 +90,23 @@
     }
 
     async function subscribePush() {
-        const reg = window._swReg;
-        if (!reg) { showToast('Service Worker non disponible', 'error'); return; }
+        if (!('serviceWorker' in navigator)) {
+            showToast('Service Worker non supporté sur ce navigateur', 'error'); return;
+        }
+        if (!('PushManager' in window)) {
+            showToast('Push non supporté — iOS 16.4+ requis, ajouter à l\'écran d\'accueil', 'error'); return;
+        }
+        // Récupérer ou enregistrer le SW au moment du clic (évite le race condition)
+        let reg = window._swReg;
+        if (!reg) {
+            try {
+                reg = await navigator.serviceWorker.getRegistration('/');
+                if (!reg) reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+                window._swReg = reg;
+            } catch(e) {
+                showToast('Erreur SW: ' + e.message, 'error'); return;
+            }
+        }
 
         const perm = await Notification.requestPermission();
         if (perm !== 'granted') { showToast('Permission refusée', 'error'); return; }
