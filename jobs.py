@@ -16,14 +16,28 @@ _ibkr_down_notified = False   # évite les notifications répétées pour la mê
 
 def job_rebalance_reminder():
     """
-    Cron mensuel (1er du mois). Calcule le momentum, le sauvegarde, et envoie
-    l'email « C'est le moment de rééquilibrer ! » avec bouton de téléchargement.
+    Cron mensuel (1er du mois). Calcule le momentum, le sauvegarde, envoie
+    l'email de rééquilibrage ET une notification push.
     """
     with app.app_context():
         print(f"[{datetime.now()}] 🔄 Rappel mensuel de rééquilibrage…")
         recommandations, history = compute_and_save_momentum()
         if not recommandations:
             return
+
+        # Push notification
+        try:
+            import push_service
+            nb_top = len([r for r in recommandations.get('recommandations', [])
+                          if r.get('signal') == 'Investir'])
+            push_service.send_push_all(
+                title='🔄 Rééquilibrage mensuel',
+                body=f"C'est le 1er du mois — il est temps de rééquilibrer ton portefeuille ({nb_top} positions recommandées).",
+                url='/',
+                tag='rebalance',
+            )
+        except Exception as e:
+            print(f"⚠️ Push rééquilibrage: {e}")
 
         email_svc = get_email_service()
         if email_svc.is_configured():
@@ -272,6 +286,30 @@ def job_digest_actualites():
             print(f"{'✅' if res['success'] else '❌'} Digest {edition}: {res['message']}")
         except Exception as e:
             print(f"❌ job_digest_actualites: {e}")
+
+
+def job_screener_reminder():
+    """
+    Cron trimestriel (dernier jour de Q1/Q2/Q3/Q4).
+    Notification push : « C'est le moment de mettre à jour le screener. »
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 📊 Rappel trimestriel screener…")
+        try:
+            import push_service
+            from datetime import date
+            today = date.today()
+            quarters = {3: 'Q1', 6: 'Q2', 9: 'Q3', 12: 'Q4'}
+            quarter = quarters.get(today.month, '')
+            push_service.send_push_all(
+                title='📊 Mise à jour screener',
+                body=f"Fin de {quarter} — c'est le moment de relancer le screener et de mettre à jour le panel d'actions.",
+                url='/',
+                tag='screener-reminder',
+            )
+            print(f"✅ Push screener {quarter} envoyé")
+        except Exception as e:
+            print(f"❌ job_screener_reminder: {e}")
 
 
 def job_digest_tech():

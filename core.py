@@ -202,7 +202,7 @@ def run_market_monitor():
                 ev.peak_value = b['value']
             if b['severity'] == 'critical' and ev.severity != 'critical':
                 ev.severity = 'critical'
-        else:  # nouvel épisode → créer + alerter une fois
+        else:  # nouvel épisode → push (pas d'email à l'ouverture)
             ev = MarketEvent(
                 event_type=b['event_type'], ticker=b['ticker'], severity=b['severity'],
                 threshold=b['threshold'], trigger_value=b['value'], peak_value=b['value'],
@@ -210,12 +210,18 @@ def run_market_monitor():
             )
             db.session.add(ev)
             db.session.flush()
-            if configured:
-                try:
-                    email_svc.envoyer_alerte_marche(ev.to_dict())
-                    ev.notified_open = True
-                except Exception as e:
-                    print(f"❌ Email alerte: {e}")
+            try:
+                import push_service
+                icon = '🚨' if b['severity'] == 'critical' else '⚠️'
+                push_service.send_push_all(
+                    title=f"{icon} Alerte marché",
+                    body=b['message'],
+                    url='/',
+                    tag=f"market-{b['event_type']}-{b['ticker'] or 'global'}",
+                )
+                ev.notified_open = True
+            except Exception as e:
+                print(f"❌ Push alerte: {e}")
             opened.append(b)
 
     # Clôturer les évènements dont la condition n'est plus remplie.

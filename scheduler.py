@@ -6,7 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 import jobs
 from jobs import (job_market_monitor, job_market_monitor_offhours, job_briefing,
                   job_rebalance_reminder, job_refresh_prices, job_collect_prices,
-                  job_digest_actualites, job_digest_tech)
+                  job_digest_actualites, job_digest_tech, job_screener_reminder)
 
 
 def create_scheduler(app):
@@ -88,6 +88,13 @@ def create_scheduler(app):
         id='digest_tech', name='Digest Tech & IA (matin)', replace_existing=True,
     )
 
+    # 8) Rappel screener trimestriel : dernier jour de mars, juin, sept, déc à 9h00 ET
+    scheduler.add_job(
+        job_screener_reminder,
+        CronTrigger(month='3,6,9,12', day='last', hour=9, minute=0, timezone=ET),
+        id='screener_reminder', name='Rappel screener trimestriel', replace_existing=True,
+    )
+
     scheduler.start()
     print("[scheduler] demarre - 8 crons actifs :")
     print("  - Surveillance marche (1min)   : 9h30-16h00 ET, lun-ven (séance US)")
@@ -98,4 +105,5 @@ def create_scheduler(app):
     print("  - Collecte yfinance SP500/NDX100 : 00h00 Europe/Paris (quotidien)")
     print("  - Digest actualites : 10h00 + 20h00 Europe/Paris (quotidien)")
     print("  - Digest Tech & IA  : 10h05 Europe/Paris (quotidien, perso)")
+    print("  - Screener trimestriel : dernier jour de Q1/Q2/Q3/Q4 à 9h00 ET")
     return scheduler
