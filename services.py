@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Registre des services (singletons) — extrait de app.py.
 Les accesseurs lisent la config via current_app (contexte requête/app)."""
+import logging
+logger = logging.getLogger(__name__)
 from flask import current_app
 from config import get_config
 from momentum_service import MomentumService
@@ -18,6 +20,11 @@ from price_data_service import PriceDataService
 
 # Services (singletons initialisés à la demande)
 momentum_service = None
+
+# Cache des dernières positions connues (évite les timeouts du briefing)
+_positions_cache: list = []
+_positions_cache_ts: float = 0.0
+_POSITIONS_CACHE_TTL = 1800  # 30 min
 email_service = None
 screener_service = None
 short_screener_service = None
@@ -106,6 +113,32 @@ def get_finviz_screener_service():
     if finviz_screener_service is None:
         finviz_screener_service = FinvizScreenerService()
     return finviz_screener_service
+
+
+def get_cached_positions() -> list:
+    """
+    Retourne les dernières positions IBKR connues.
+    Tente d'abord une requête live ; si timeout/erreur, retourne le cache (≤30 min).
+    Permet au briefing d'avoir des données même si les quotes TWS tardent.
+    """
+    import time
+    global _positions_cache, _positions_cache_ts
+    try:
+        if ibkr_service.ensure_connected():
+            stats = ibkr_service.get_portfolio_stats()
+            positions = stats.get('positions', [])
+            if positions:
+                _positions_cache = positions
+                _positions_cache_ts = time.time()
+            return positions
+    except Exception as e:
+        logger.warning('get_cached_positions: live failed (%s)', e)
+
+    age = time.time() - _positions_cache_ts
+    if _positions_cache and age < _POSITIONS_CACHE_TTL:
+        logger.info('get_cached_positions: utilise cache (âge=%.0fs)', age)
+        return _positions_cache
+    return []
 
 
 def get_options_service():

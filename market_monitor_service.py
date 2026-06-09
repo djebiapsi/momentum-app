@@ -113,11 +113,25 @@ class MarketMonitorService:
         port_tickers = [p['ticker'] for p in positions if p.get('ticker')]
         quote_tickers = list(dict.fromkeys(['SPY', 'QQQ'] + port_tickers))
 
+        quotes = {}
+        ibkr_quotes_ok = False
         try:
             quotes = self.ibkr.get_quotes(quote_tickers, include_vix=True)
+            ibkr_quotes_ok = bool(quotes.get('SPY') or quotes.get('VIX'))
         except Exception as e:
-            out['error'] = f'Cotations indisponibles: {e}'
-            return out
+            logger.warning('collect_metrics: IBKR quotes indisponibles (%s) → yfinance', e)
+
+        # Fallback yfinance pour SPY / QQQ / VIX si IBKR échoue ou retourne vide
+        if not ibkr_quotes_ok:
+            yf_data = self._yfinance_quotes(['SPY', 'QQQ', '^VIX'])
+            for sym, mapped in [('SPY','SPY'), ('QQQ','QQQ'), ('^VIX','VIX')]:
+                if mapped not in quotes and sym in yf_data:
+                    quotes[mapped] = yf_data[sym]
+            if yf_data:
+                logger.info('collect_metrics: quotes via yfinance (IBKR indisponible)')
+            elif not quotes:
+                # ni IBKR ni yfinance → on continue sans données marché (pas d'early return)
+                logger.warning('collect_metrics: aucune source de quotes disponible')
 
         # VIX
         vix = quotes.get('VIX')
@@ -167,6 +181,33 @@ class MarketMonitorService:
             out['portfolio_intraday_pct'] = round(weighted, 2)
 
         return out
+
+    @staticmethod
+    def _yfinance_quotes(symbols: list) -> dict:
+        """
+        Fallback yfinance : récupère last / prev_close / pct pour une liste de symboles.
+        Utilisé quand IBKR est connecté mais les quotes TWS échouent (pré-ouverture,
+        restart nocturne, abonnements manquants).
+        """
+        result = {}
+        try:
+            import yfinance as yf
+            for sym in symbols:
+                try:
+                    hist = yf.Ticker(sym).history(period='5d', interval='1d')
+                    if hist.empty:
+                        continue
+                    last = float(hist['Close'].iloc[-1])
+                    prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else None
+                    pct  = round((last - prev) / prev * 100, 2) if prev else None
+                    # Clé de sortie : '^VIX' → 'VIX'
+                    key = sym.lstrip('^')
+                    result[sym] = {'last': last, 'prev_close': prev, 'pct': pct, 'source': 'yfinance'}
+                except Exception as e:
+                    logger.debug('_yfinance_quotes %s: %s', sym, e)
+        except ImportError:
+            pass
+        return result
 
     def _compute_technicals(self, quotes) -> dict:
         """

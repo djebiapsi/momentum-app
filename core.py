@@ -6,7 +6,7 @@ from flask import current_app
 from models import (db, Settings, PanelAction, RecommendationHistory,
                     RecommendationDetail, MarketEvent)
 from services import (ibkr_service, get_momentum_service, get_email_service,
-                      get_market_monitor, get_news_service)
+                      get_market_monitor, get_news_service, get_cached_positions)
 
 
 def _get_vol_scaling_settings():
@@ -250,41 +250,97 @@ def run_market_monitor():
             'opened': opened, 'closed': closed, 'ibkr_up': ibkr_up}
 
 
+def _get_briefing_macro_yfinance() -> dict:
+    """
+    Récupère VIX / SPY / QQQ via yfinance — pas de timeout IBKR, fonctionne
+    en pré/post-marché. Retourne les 2 dernières clôtures pour calculer la variation.
+    """
+    result = {}
+    try:
+        import yfinance as yf
+        for sym, key in [('^VIX', 'vix'), ('SPY', 'spy'), ('QQQ', 'qqq')]:
+            try:
+                hist = yf.Ticker(sym).history(period='5d', interval='1d')
+                if hist.empty:
+                    continue
+                last = float(hist['Close'].iloc[-1])
+                prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else None
+                pct  = round((last - prev) / prev * 100, 2) if prev else None
+                result[key]          = last
+                result[f'{key}_pct'] = pct
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug('_get_briefing_macro_yfinance %s: %s', sym, e)
+    except ImportError:
+        pass
+    return result
+
+
 def build_briefing_payload(session):
     """Construit le payload du briefing (régime, VIX, positions, technicals, news)."""
     import time as _time
 
+    # ── Données marché via yfinance (fiable pré/post marché, pas de timeout) ──
+    macro = _get_briefing_macro_yfinance()
+
+    # ── IBKR : connexion rapide pour les positions uniquement ───────────────
     monitor = get_market_monitor()
+    ibkr_available = ibkr_service.ensure_connected()
 
-    # Retry IBKR : 3 tentatives espacées de 8s avant de se résoudre à envoyer
-    # un briefing partiel. L'IB Gateway redémarre chaque nuit (~5-10 min) ;
-    # attendre un peu suffit souvent à récupérer des données complètes.
-    metrics = None
-    for attempt in range(3):
-        metrics = monitor.collect_metrics()
-        if not metrics.get('error'):
-            break
-        if attempt < 2:
-            print(f"⚠️ Briefing: IBKR indisponible (tentative {attempt+1}/3), nouvelle tentative dans 8s…")
-            _time.sleep(8)
+    # Si IBKR connecté, tenter collect_metrics avec un timeout court (15s max)
+    # pour les intraday positions. Si ça prend trop de temps → on passe.
+    metrics = {'positions': [], 'regime': None, 'error': None,
+               'technicals': {}, 'vix': macro.get('vix'),
+               'vix_pct': macro.get('vix_pct'),
+               'spy': macro.get('spy'), 'spy_intraday_pct': macro.get('spy_pct'),
+               'qqq': macro.get('qqq'), 'qqq_intraday_pct': macro.get('qqq_pct')}
+    if ibkr_available:
+        try:
+            import concurrent.futures as _cf
+            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(monitor.collect_metrics)
+                try:
+                    ibkr_metrics = fut.result(timeout=20)
+                    # Garder seulement les données IBKR utiles (positions, regime, technicals)
+                    metrics['positions']  = ibkr_metrics.get('positions') or []
+                    metrics['regime']     = ibkr_metrics.get('regime')
+                    metrics['technicals'] = ibkr_metrics.get('technicals') or {}
+                    # Compléter les indices si IBKR a des données plus fraîches
+                    if ibkr_metrics.get('spy_intraday_pct') is not None:
+                        metrics['spy_intraday_pct'] = ibkr_metrics['spy_intraday_pct']
+                    if ibkr_metrics.get('vix') is not None:
+                        metrics['vix'] = ibkr_metrics['vix']
+                except _cf.TimeoutError:
+                    print("⚠️ Briefing: collect_metrics timeout 20s → données macro yfinance")
+                    ibkr_available = False
+        except Exception as e:
+            print(f"⚠️ Briefing: collect_metrics erreur ({e})")
 
-    ibkr_available = not metrics.get('error')
+    ibkr_available = ibkr_available and not metrics.get('error')
 
-    # Perf intraday par position (depuis les quotes IBKR)
+    # Perf intraday par position (depuis les quotes IBKR si disponibles)
     intraday_map = {p['ticker']: p for p in (metrics.get('positions') or [])}
 
     stats, positions = None, []
     try:
-        if ibkr_available and ibkr_service.ensure_connected():
-            s = ibkr_service.get_portfolio_stats()
-            stats = {k: s.get(k) for k in ('total_value', 'total_pnl', 'return_pct', 'positions_count')}
-            raw_positions = s.get('positions', [])
-            for p in raw_positions:
-                t = p.get('ticker', '')
-                intra = intraday_map.get(t, {})
-                p['intraday_pct'] = intra.get('pct')
-                p['last_price']   = intra.get('last')
-            positions = raw_positions
+        if ibkr_available:
+            # get_cached_positions : tente live (timeout 20s), retombe sur cache ≤30 min
+            raw_positions = get_cached_positions()
+            if raw_positions:
+                total_value   = sum(p.get('market_value') or 0 for p in raw_positions)
+                total_unrl    = sum(p.get('unrealized_pnl') or 0 for p in raw_positions)
+                stats = {
+                    'total_value':     round(total_value, 2),
+                    'total_pnl':       round(total_unrl, 2),
+                    'return_pct':      None,
+                    'positions_count': len(raw_positions),
+                }
+                for p in raw_positions:
+                    t = p.get('ticker', '')
+                    intra = intraday_map.get(t, {})
+                    p['intraday_pct'] = intra.get('pct')
+                    p['last_price']   = intra.get('last')
+                positions = raw_positions
     except Exception as e:
         print(f"⚠️ Briefing: positions indisponibles ({e})")
 
