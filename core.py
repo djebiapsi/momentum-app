@@ -182,7 +182,9 @@ def run_market_monitor():
     """
     monitor = get_market_monitor()
     metrics = monitor.collect_metrics()
-    ibkr_up = not metrics.get('error')   # False si IBKR déconnecté
+    ibkr_up = metrics.get('connected', False)
+    # Données marché disponibles (yfinance ou IBKR) même si IBKR est down
+    market_data_ok = bool(metrics.get('spy') or metrics.get('vix'))
     breaches = monitor.evaluate(metrics)
     now = datetime.utcnow()
     email_svc = get_email_service()
@@ -225,29 +227,32 @@ def run_market_monitor():
             opened.append(b)
 
     # Clôturer les évènements dont la condition n'est plus remplie.
-    # IMPORTANT : si IBKR est déconnecté on n'a aucune donnée réelle —
-    # on ne clôture PAS les alertes ouvertes (absence de données ≠ résolution).
+    # - Alertes VIX/SPY : clôturables dès qu'on a des données marché (yfinance suffit).
+    # - Alertes portefeuille/position : nécessitent IBKR (on ne peut pas vérifier sans quotes de positions).
+    # Absence de données ≠ résolution → on ne clôture jamais sans source fiable.
+    MARKET_ONLY_TYPES = {'VIX_HIGH', 'VIX_SPIKE', 'SPY_DRAWDOWN'}
     closed = 0
-    if ibkr_up:
-        for key, ev in open_map.items():
-            if key not in breach_keys:
-                ev.ended_at = now
-                ev.last_checked_at = now
-                if configured and not ev.notified_close:
-                    try:
-                        email_svc.envoyer_alerte_resolue(ev.to_dict())
-                    except Exception as e:
-                        print(f"❌ Email résolu: {e}")
-                ev.notified_close = True
-                closed += 1
-    else:
-        # Garder les alertes ouvertes en vie mais noter la dernière vérification
-        for ev in open_map.values():
+    for key, ev in open_map.items():
+        if key in breach_keys:
+            continue
+        can_close = ibkr_up or (market_data_ok and ev.event_type in MARKET_ONLY_TYPES)
+        if not can_close:
             ev.last_checked_at = now
+            continue
+        ev.ended_at = now
+        ev.last_checked_at = now
+        if configured and not ev.notified_close:
+            try:
+                email_svc.envoyer_alerte_resolue(ev.to_dict())
+            except Exception as e:
+                print(f"❌ Email résolu: {e}")
+        ev.notified_close = True
+        closed += 1
 
     db.session.commit()
     return {'metrics': metrics, 'breaches': breaches,
-            'opened': opened, 'closed': closed, 'ibkr_up': ibkr_up}
+            'opened': opened, 'closed': closed,
+            'ibkr_up': ibkr_up, 'market_data_ok': market_data_ok}
 
 
 def _get_briefing_macro_yfinance() -> dict:

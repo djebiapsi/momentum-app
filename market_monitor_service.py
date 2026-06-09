@@ -97,41 +97,53 @@ class MarketMonitorService:
         except Exception as e:
             logger.warning('collect_metrics: régime indisponible (%s)', e)
 
-        if not self.ibkr.ensure_connected():
+        ibkr_connected = self.ibkr.ensure_connected()
+        out['connected'] = ibkr_connected
+        if not ibkr_connected:
             out['error'] = 'IBKR non connecté'
-            return out
-        out['connected'] = True
 
-        # Positions du portefeuille (pour pondérer le drawdown global)
+        # Positions du portefeuille (IBKR uniquement — aucune source alternative fiable)
         positions = []
-        try:
-            stats = self.ibkr.get_portfolio_stats()
-            positions = stats.get('positions', [])
-        except Exception as e:
-            logger.warning('collect_metrics: positions indisponibles (%s)', e)
+        if ibkr_connected:
+            try:
+                stats = self.ibkr.get_portfolio_stats()
+                positions = stats.get('positions', [])
+            except Exception as e:
+                logger.warning('collect_metrics: positions indisponibles (%s)', e)
 
         port_tickers = [p['ticker'] for p in positions if p.get('ticker')]
         quote_tickers = list(dict.fromkeys(['SPY', 'QQQ'] + port_tickers))
 
         quotes = {}
         ibkr_quotes_ok = False
-        try:
-            quotes = self.ibkr.get_quotes(quote_tickers, include_vix=True)
-            ibkr_quotes_ok = bool(quotes.get('SPY') or quotes.get('VIX'))
-        except Exception as e:
-            logger.warning('collect_metrics: IBKR quotes indisponibles (%s) → yfinance', e)
+        if ibkr_connected:
+            try:
+                quotes = self.ibkr.get_quotes(quote_tickers, include_vix=True)
+                ibkr_quotes_ok = bool(quotes.get('SPY') or quotes.get('VIX'))
+            except Exception as e:
+                logger.warning('collect_metrics: IBKR quotes indisponibles (%s) → yfinance', e)
 
-        # Fallback yfinance pour SPY / QQQ / VIX si IBKR échoue ou retourne vide
+        # Fallback yfinance pour SPY / QQQ / VIX — actif même si IBKR est down
         if not ibkr_quotes_ok:
             yf_data = self._yfinance_quotes(['SPY', 'QQQ', '^VIX'])
-            for sym, mapped in [('SPY','SPY'), ('QQQ','QQQ'), ('^VIX','VIX')]:
+            for sym, mapped in [('SPY', 'SPY'), ('QQQ', 'QQQ'), ('^VIX', 'VIX')]:
                 if mapped not in quotes and sym in yf_data:
                     quotes[mapped] = yf_data[sym]
             if yf_data:
-                logger.info('collect_metrics: quotes via yfinance (IBKR indisponible)')
+                logger.info('collect_metrics: SPY/QQQ/VIX via yfinance (%s)',
+                            'IBKR down' if not ibkr_connected else 'quotes IBKR vides')
             elif not quotes:
-                # ni IBKR ni yfinance → on continue sans données marché (pas d'early return)
                 logger.warning('collect_metrics: aucune source de quotes disponible')
+
+        # Fallback yfinance pour les positions dont IBKR n'a pas renvoyé de quote
+        missing_pos = [t for t in port_tickers if t not in quotes]
+        if missing_pos:
+            yf_pos = self._yfinance_quotes(missing_pos)
+            for sym, data in yf_pos.items():
+                if sym not in quotes:
+                    quotes[sym] = data
+            if yf_pos:
+                logger.info('collect_metrics: %d position(s) via yfinance fallback', len(yf_pos))
 
         # VIX
         vix = quotes.get('VIX')
@@ -185,23 +197,58 @@ class MarketMonitorService:
     @staticmethod
     def _yfinance_quotes(symbols: list) -> dict:
         """
-        Fallback yfinance : récupère last / prev_close / pct pour une liste de symboles.
-        Utilisé quand IBKR est connecté mais les quotes TWS échouent (pré-ouverture,
-        restart nocturne, abonnements manquants).
+        Fallback yfinance : récupère last / prev_close / pct (intraday réel) pour une
+        liste de symboles. Utilisé quand IBKR est down ou renvoie des quotes vides.
+
+        Stratégie :
+        - fast_info (léger, pas de DL complet) pour last_price et previous_close
+        - Fallback history intraday 5m pour last si fast_info indisponible
+        - Fallback history daily pour prev_close si fast_info indisponible
         """
         result = {}
         try:
             import yfinance as yf
             for sym in symbols:
                 try:
-                    hist = yf.Ticker(sym).history(period='5d', interval='1d')
-                    if hist.empty:
+                    ticker = yf.Ticker(sym)
+                    last = None
+                    prev = None
+
+                    # Tentative fast_info (la plus légère, données temps réel/différé)
+                    try:
+                        fi = ticker.fast_info
+                        lp = fi.last_price
+                        pc = fi.previous_close
+                        if lp and float(lp) > 0:
+                            last = float(lp)
+                        if pc and float(pc) > 0:
+                            prev = float(pc)
+                    except Exception:
+                        pass
+
+                    # Fallback : historique intraday 5 min pour le prix courant
+                    if last is None:
+                        try:
+                            intra = ticker.history(period='1d', interval='5m')
+                            if not intra.empty:
+                                last = float(intra['Close'].iloc[-1])
+                        except Exception:
+                            pass
+
+                    # Fallback : historique journalier pour prev_close
+                    # Pendant la séance daily[-1] = clôture d'hier (barre du jour non fermée)
+                    if prev is None:
+                        try:
+                            daily = ticker.history(period='5d', interval='1d')
+                            if not daily.empty:
+                                prev = float(daily['Close'].iloc[-1])
+                        except Exception:
+                            pass
+
+                    if last is None:
                         continue
-                    last = float(hist['Close'].iloc[-1])
-                    prev = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else None
-                    pct  = round((last - prev) / prev * 100, 2) if prev else None
-                    # Clé de sortie : '^VIX' → 'VIX'
-                    key = sym.lstrip('^')
+
+                    pct = round((last - prev) / prev * 100, 2) if prev and prev > 0 else None
                     result[sym] = {'last': last, 'prev_close': prev, 'pct': pct, 'source': 'yfinance'}
                 except Exception as e:
                     logger.debug('_yfinance_quotes %s: %s', sym, e)
