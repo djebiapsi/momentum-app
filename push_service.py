@@ -28,11 +28,17 @@ def _get_or_create_vapid_keys():
     if priv and pub:
         return priv, pub
     try:
+        import base64
         from py_vapid import Vapid
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding, PublicFormat)
         v = Vapid()
         v.generate_keys()
+        # Clé privée PEM (utilisée par pywebpush)
         priv = v.private_pem().decode()
-        pub  = v.public_key_str()
+        # Clé publique : uncompressed EC point (65 bytes) → base64url sans padding
+        pub_bytes = v.public_key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        pub = base64.urlsafe_b64encode(pub_bytes).rstrip(b'=').decode()
         Settings.set(_VAPID_PRIVATE_KEY, priv)
         Settings.set(_VAPID_PUBLIC_KEY,  pub)
         logger.info('Clés VAPID générées et stockées')
@@ -76,16 +82,37 @@ def send_push(subscription_info: dict, title: str, body: str,
             'badge': badge,
             'tag':   tag or title,
         })
-        webpush(
+        response = webpush(
             subscription_info=subscription_info,
             data=payload,
             vapid_private_key=priv,
             vapid_claims={'sub': VAPID_CLAIMS_SUB},
+            content_type='application/json',
         )
-        return True
+        return response.status_code in (200, 201, 202)
     except Exception as e:
-        logger.warning('send_push: échec (%s)', e)
+        err_str = str(e)
+        # 410 Gone = abonné révoqué (iOS a retiré la permission)
+        if '410' in err_str:
+            logger.info('send_push: abonné révoqué (410), suppression')
+            _remove_subscription_by_endpoint(subscription_info.get('endpoint', ''))
+        else:
+            logger.warning('send_push: échec (%s)', e)
         return False
+
+
+def _remove_subscription_by_endpoint(endpoint: str):
+    """Supprime un abonnement expiré/révoqué de la base."""
+    if not endpoint:
+        return
+    try:
+        from models import db, PushSubscription
+        sub = PushSubscription.query.filter_by(endpoint=endpoint).first()
+        if sub:
+            db.session.delete(sub)
+            db.session.commit()
+    except Exception as e:
+        logger.warning('_remove_subscription: %s', e)
 
 
 def send_push_all(title: str, body: str, url: str = '/', tag: str = None) -> dict:
