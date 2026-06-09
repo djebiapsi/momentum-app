@@ -514,7 +514,7 @@ class MarketEvent(db.Model):
     __tablename__ = 'market_events'
 
     id = db.Column(db.Integer, primary_key=True)
-    # VIX_HIGH | VIX_SPIKE | SPY_DRAWDOWN | PORTFOLIO_DRAWDOWN | POSITION_DROP
+    # VIX_HIGH | VIX_SPIKE | SPY_DRAWDOWN | PORTFOLIO_DRAWDOWN | POSITION_DROP | IBKR_DOWN
     event_type = db.Column(db.String(32), nullable=False, index=True)
     ticker = db.Column(db.String(12), nullable=True)  # pour POSITION_DROP
     severity = db.Column(db.String(10), nullable=False, default='warning')  # warning | critical

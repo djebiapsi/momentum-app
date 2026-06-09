@@ -100,7 +100,10 @@ class MarketMonitorService:
         ibkr_connected = self.ibkr.ensure_connected()
         out['connected'] = ibkr_connected
         if not ibkr_connected:
-            out['error'] = 'IBKR non connecté'
+            last_err = getattr(self.ibkr, '_last_error', None) or 'IBKR non connecté'
+            out['error'] = last_err
+            logger.warning('collect_metrics: IBKR non connecté — %s (port %s)',
+                           last_err, getattr(self.ibkr, 'port', '?'))
 
         # Positions du portefeuille (IBKR uniquement — aucune source alternative fiable)
         positions = []

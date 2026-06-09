@@ -178,6 +178,9 @@ class IBKRService:
                 self._ensure_trading()
             return True
         if self._last_failed_at and (time.time() - self._last_failed_at) < self.CONNECT_COOLDOWN:
+            remaining = self.CONNECT_COOLDOWN - (time.time() - self._last_failed_at)
+            logger.debug('ensure_connected: cooldown actif (%.0fs restants) — dernière erreur : %s',
+                         remaining, self._last_error)
             return False
         readonly = not trading_mode
         return self.connect(force=False, readonly=readonly).get('success', False)

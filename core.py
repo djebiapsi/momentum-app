@@ -194,6 +194,60 @@ def run_market_monitor():
     open_map = {(e.event_type, e.ticker): e for e in open_events}
     breach_keys, opened = set(), []
 
+    # ---- IBKR_DOWN : géré en dehors du cycle breach standard ----
+    # On le pop d'open_map pour qu'il ne soit PAS touché par la boucle de clôture générale.
+    IBKR_DOWN_KEY = ('IBKR_DOWN', None)
+    ibkr_ev = open_map.pop(IBKR_DOWN_KEY, None)
+
+    if not ibkr_up:
+        error_msg = metrics.get('error') or 'IBKR non connecté'
+        if ibkr_ev:
+            # Épisode en cours → mise à jour du message de diagnostic
+            ibkr_ev.last_checked_at = now
+            ibkr_ev.message = error_msg
+        else:
+            # Nouvelle coupure → créer l'event + push immédiat
+            ibkr_ev = MarketEvent(
+                event_type='IBKR_DOWN', ticker=None, severity='critical',
+                threshold=None, trigger_value=None, peak_value=None,
+                message=error_msg, started_at=now, last_checked_at=now,
+            )
+            db.session.add(ibkr_ev)
+            db.session.flush()
+            try:
+                import push_service
+                push_service.send_push_all(
+                    title='🚨 IBKR déconnecté — portefeuille non monitoré',
+                    body=error_msg[:200],
+                    url='/',
+                    tag='ibkr-down',
+                )
+                ibkr_ev.notified_open = True
+            except Exception as e:
+                print(f"❌ Push IBKR_DOWN: {e}")
+            opened.append({'event_type': 'IBKR_DOWN', 'ticker': None,
+                           'severity': 'critical', 'value': None,
+                           'threshold': None, 'message': error_msg})
+    elif ibkr_ev:
+        # IBKR reconnecté → clôturer l'épisode
+        ibkr_ev.ended_at = now
+        ibkr_ev.last_checked_at = now
+        if not ibkr_ev.notified_close:
+            try:
+                import push_service
+                duration = round((now - ibkr_ev.started_at).total_seconds() / 60)
+                push_service.send_push_all(
+                    title='✅ IBKR reconnecté',
+                    body=f"Portefeuille de nouveau monitoré (coupure de {duration} min).",
+                    url='/',
+                    tag='ibkr-reconnected',
+                )
+            except Exception as e:
+                print(f"❌ Push IBKR reconnecté: {e}")
+            ibkr_ev.notified_close = True
+        closed += 1
+
+    # ---- Cycle breach standard (VIX, SPY, portefeuille, positions) ----
     for b in breaches:
         key = (b['event_type'], b['ticker'])
         breach_keys.add(key)
@@ -231,7 +285,6 @@ def run_market_monitor():
     # - Alertes portefeuille/position : nécessitent IBKR (on ne peut pas vérifier sans quotes de positions).
     # Absence de données ≠ résolution → on ne clôture jamais sans source fiable.
     MARKET_ONLY_TYPES = {'VIX_HIGH', 'VIX_SPIKE', 'SPY_DRAWDOWN'}
-    closed = 0
     for key, ev in open_map.items():
         if key in breach_keys:
             continue

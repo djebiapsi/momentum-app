@@ -62,8 +62,8 @@ def _is_us_session():
 def _handle_ibkr_connectivity(ibkr_up: bool):
     """
     Suit la connectivité IBKR entre les appels du cron.
-    - Si down > 5 min : push notification + tentative de redémarrage du gateway.
-    - Remet à zéro le tracking quand la connexion revient.
+    - La push notification de coupure est gérée par run_market_monitor (MarketEvent IBKR_DOWN).
+    - Ici : déclenchement de l'auto-restart après 5 min de coupure continue.
     """
     global _ibkr_down_since, _ibkr_down_notified
     if ibkr_up:
@@ -76,28 +76,16 @@ def _handle_ibkr_connectivity(ibkr_up: bool):
     # IBKR est down
     if _ibkr_down_since is None:
         _ibkr_down_since = datetime.now()
-        print(f"[{datetime.now()}] ⚠️ IBKR down depuis {_ibkr_down_since}")
+        print(f"[{datetime.now()}] ⚠️ IBKR down — suivi démarré")
         return
 
     elapsed = (datetime.now() - _ibkr_down_since).total_seconds()
     if elapsed >= 300 and not _ibkr_down_notified:
         _ibkr_down_notified = True
         minutes = int(elapsed // 60)
-        print(f"[{datetime.now()}] 🚨 IBKR down depuis {minutes} min — push + tentative restart")
+        print(f"[{datetime.now()}] 🔄 IBKR down depuis {minutes} min — tentative auto-restart")
 
-        # Push notification
-        try:
-            import push_service
-            push_service.send_push_all(
-                title='🚨 IB Gateway déconnecté',
-                body=f'IBKR est hors ligne depuis {minutes} min. Tentative de redémarrage automatique en cours.',
-                url='/',
-                tag='ibkr-down',
-            )
-        except Exception as e:
-            print(f"⚠️ Push IBKR down: {e}")
-
-        # Tentative de redémarrage automatique
+        # Tentative de redémarrage automatique (push géré par MarketEvent à l'ouverture)
         try:
             _auto_restart_gateway()
         except Exception as e:
