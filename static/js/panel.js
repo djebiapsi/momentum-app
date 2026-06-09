@@ -479,7 +479,6 @@
         async function sendPushTest() {
             const info = document.getElementById('push-test-info');
             if (info) info.textContent = 'Envoi…';
-            // Afficher d'abord le nombre réel d'abonnés
             const status = await api('/push/status');
             const nb = status?.subscribers ?? '?';
             try {
@@ -488,6 +487,32 @@
                     ? `✅ Envoyé à ${data.sent}/${nb} appareil(s)${data.failed ? ` (${data.failed} échec)` : ''}`
                     : `❌ ${data?.message || data?.error || 'Erreur'}`;
             } catch(e) { if (info) info.textContent = 'Erreur réseau'; }
+        }
+
+        async function loadPushSubscriptions() {
+            const el = document.getElementById('push-subs-list');
+            if (!el) return;
+            el.textContent = 'Chargement…';
+            try {
+                const data = await api('/push/subscriptions');
+                if (!data || !data.subscriptions) { el.textContent = 'Erreur'; return; }
+                const list = data.subscriptions;
+                if (!list.length) { el.textContent = 'Aucun appareil enregistré.'; return; }
+                el.innerHTML = list.map(s => {
+                    const date = s.created_at ? new Date(s.created_at).toLocaleDateString('fr-FR') : '?';
+                    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #1f2937;">
+                        <span>📱 <b>${s.label}</b> <span style="color:var(--text-muted)">…${s.endpoint_short}</span></span>
+                        <span style="color:var(--text-muted);margin-left:8px;">${date}
+                        <button onclick="deletePushSub(${s.id})" style="margin-left:6px;background:#7f1d1d;border:none;color:#fca5a5;border-radius:4px;padding:1px 6px;cursor:pointer;font-size:10px;">✕</button>
+                        </span></div>`;
+                }).join('');
+            } catch(e) { el.textContent = 'Erreur réseau'; }
+        }
+
+        async function deletePushSub(id) {
+            if (!confirm('Supprimer cet abonnement ?')) return;
+            const data = await api(`/push/subscriptions/${id}`, { method: 'DELETE' });
+            if (data?.success) { showToast('Abonnement supprimé', 'success'); loadPushSubscriptions(); }
         }
 
         async function sendDigestTech() {

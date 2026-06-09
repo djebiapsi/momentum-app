@@ -209,9 +209,14 @@
                     🔔 Activer les notifications push
                 </button>
                 <div id="push-status-info" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></div>
-                <button class="btn btn-secondary btn-sm admin-only" style="margin-top:8px;width:100%;"
-                        onclick="sendPushTest()">Envoyer une notification test</button>
-                <div id="push-test-info" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+                <div class="admin-only" style="margin-top:12px;">
+                    <button class="btn btn-secondary btn-sm" style="width:100%;"
+                            onclick="sendPushTest()">Envoyer une notification test</button>
+                    <div id="push-test-info" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+                    <div id="push-subs-list" style="margin-top:10px;font-size:11px;"></div>
+                    <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;"
+                            onclick="loadPushSubscriptions()">🔍 Voir les appareils enregistrés</button>
+                </div>
             </div>
 
             <!-- Digest d'actualités monde -->

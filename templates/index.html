@@ -196,16 +196,20 @@
 
     async function _syncPushSubscription(sub) {
         const j = sub.toJSON();
-        await fetch('/api/push/subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(adminToken ? {'X-Admin-Token': adminToken} : {}) },
-            body: JSON.stringify({
-                endpoint: j.endpoint,
-                keys: j.keys,
-                label: navigator.userAgent.includes('iPhone') ? 'iPhone' :
-                       navigator.userAgent.includes('iPad')   ? 'iPad'   : 'Navigateur',
-            }),
-        }).catch(() => {});
+        const label = navigator.userAgent.includes('iPhone') ? 'iPhone' :
+                      navigator.userAgent.includes('iPad')   ? 'iPad'   : 'Navigateur';
+        try {
+            const resp = await fetch('/api/push/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(adminToken ? {'X-Admin-Token': adminToken} : {}) },
+                body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys, label }),
+            });
+            if (!resp.ok) {
+                console.warn('_syncPushSubscription: serveur a refusé (' + resp.status + ')');
+            }
+        } catch(e) {
+            console.warn('_syncPushSubscription: erreur réseau', e);
+        }
     }
 
     async function _refreshPushStatus() {
@@ -217,7 +221,22 @@
             btn.textContent = 'Désactiver les notifications';
             btn.onclick = unsubscribePush;
             btn.style.background = '#374151';
-            if (info) info.textContent = '✅ Actif sur cet appareil';
+            // Vérifier si cet endpoint est bien connu du serveur
+            try {
+                const subs = await fetch('/api/push/subscriptions',
+                    { headers: adminToken ? {'X-Admin-Token': adminToken} : {} });
+                if (subs.ok) {
+                    const data = await subs.json();
+                    const known = data.subscriptions.some(s => sub.endpoint.endsWith(s.endpoint_short));
+                    if (info) info.textContent = known
+                        ? '✅ Actif et enregistré côté serveur'
+                        : '⚠️ SW actif localement mais NON enregistré côté serveur — re-cliquer "Activer"';
+                } else {
+                    if (info) info.textContent = '✅ Actif sur cet appareil';
+                }
+            } catch(e) {
+                if (info) info.textContent = '✅ Actif sur cet appareil';
+            }
         } else {
             btn.textContent = '🔔 Activer les notifications push';
             btn.onclick = subscribePush;

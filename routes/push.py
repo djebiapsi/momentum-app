@@ -18,9 +18,12 @@ def push_vapid_key():
 
 
 @bp.route('/api/push/subscribe', methods=['POST'])
-@require_admin
 def push_subscribe():
-    """Enregistre ou met à jour un abonnement push (envoyé par le SW après permission)."""
+    """Enregistre ou met à jour un abonnement push (envoyé par le SW après permission).
+    Pas de @require_admin : l'endpoint push est chiffré avec la clé du device,
+    et on veut que le re-sync automatique au chargement de page fonctionne même
+    si l'adminToken n'est pas en localStorage (ex: après rotation iOS).
+    """
     data = request.get_json(silent=True) or {}
     endpoint = data.get('endpoint', '').strip()
     keys     = data.get('keys') or {}
@@ -67,6 +70,32 @@ def push_status():
     key   = push_service.get_vapid_public_key()
     count = PushSubscription.query.count()
     return jsonify({'configured': bool(key), 'public_key': key, 'subscribers': count})
+
+
+@bp.route('/api/push/subscriptions', methods=['GET'])
+@require_admin
+def push_list_subscriptions():
+    """Liste tous les abonnements actifs avec leur label (pour diagnostic)."""
+    subs = PushSubscription.query.order_by(PushSubscription.created_at.desc()).all()
+    return jsonify({'subscriptions': [
+        {
+            'id': s.id,
+            'label': s.label or 'Inconnu',
+            'endpoint_short': s.endpoint[-30:] if s.endpoint else '',
+            'created_at': s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in subs
+    ]})
+
+
+@bp.route('/api/push/subscriptions/<int:sub_id>', methods=['DELETE'])
+@require_admin
+def push_delete_subscription(sub_id):
+    """Supprime manuellement un abonnement (pour nettoyer les endpoints morts)."""
+    sub = PushSubscription.query.get_or_404(sub_id)
+    db.session.delete(sub)
+    db.session.commit()
+    return jsonify({'success': True})
 
 
 @bp.route('/api/push/test', methods=['POST'])
