@@ -87,7 +87,6 @@ def send_push(subscription_info: dict, title: str, body: str,
             data=payload,
             vapid_private_key=priv,
             vapid_claims={'sub': VAPID_CLAIMS_SUB},
-            content_type='application/json',
         )
         return response.status_code in (200, 201, 202)
     except Exception as e:

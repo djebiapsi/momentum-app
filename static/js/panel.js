@@ -479,11 +479,14 @@
         async function sendPushTest() {
             const info = document.getElementById('push-test-info');
             if (info) info.textContent = 'Envoi…';
+            // Afficher d'abord le nombre réel d'abonnés
+            const status = await api('/push/status');
+            const nb = status?.subscribers ?? '?';
             try {
                 const data = await api('/push/test', { method: 'POST' });
                 if (info) info.textContent = data?.success
-                    ? `✅ Envoyé (${data.sent} appareil(s))`
-                    : `❌ ${data?.error || 'Erreur'}`;
+                    ? `✅ Envoyé à ${data.sent}/${nb} appareil(s)${data.failed ? ` (${data.failed} échec)` : ''}`
+                    : `❌ ${data?.message || data?.error || 'Erreur'}`;
             } catch(e) { if (info) info.textContent = 'Erreur réseau'; }
         }
 
