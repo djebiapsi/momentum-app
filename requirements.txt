@@ -55,6 +55,9 @@ ib_async
 cryptography
 docker
 
+# Web Push notifications (PWA)
+pywebpush
+
 # Tests
 pytest
 

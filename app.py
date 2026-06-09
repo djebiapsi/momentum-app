@@ -31,6 +31,7 @@ from routes.ibkr import bp as ibkr_bp
 from routes.market import bp as market_bp
 from routes.backtest import bp as backtest_bp
 from routes.prices import bp as prices_bp
+from routes.push import bp as push_bp
 from scheduler import create_scheduler
 
 
@@ -60,6 +61,7 @@ def create_app():
     app.register_blueprint(market_bp)
     app.register_blueprint(backtest_bp)
     app.register_blueprint(prices_bp)
+    app.register_blueprint(push_bp)
 
     return app
 

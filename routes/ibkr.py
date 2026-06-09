@@ -72,9 +72,15 @@ def ibkr_set_trading_mode():
 
     Settings.set('ibkr_trading_mode', mode)
 
-    # Notifier avant la 2FA
+    # Notifier avant la 2FA (push uniquement — plus rapide qu'un email)
     try:
-        get_email_service().envoyer_notification_gateway()
+        import push_service
+        push_service.send_push_all(
+            title='🔐 IB Gateway — 2FA requis',
+            body='Le gateway IBKR redémarre. Approuvez la 2FA sur votre téléphone IBKR dans quelques secondes.',
+            url='/',
+            tag='ibkr-2fa',
+        )
     except Exception:
         pass
 

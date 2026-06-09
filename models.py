@@ -557,6 +557,21 @@ class MarketEvent(db.Model):
         }
 
 
+class PushSubscription(db.Model):
+    """Abonnement Web Push d'un appareil (PWA iOS / Chrome / Firefox)."""
+    __tablename__ = 'push_subscriptions'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    endpoint   = db.Column(db.Text, unique=True, nullable=False)
+    p256dh     = db.Column(db.Text, nullable=False)
+    auth       = db.Column(db.Text, nullable=False)
+    label      = db.Column(db.String(100))   # ex: "iPhone Bryan"
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_info(self):
+        return {'endpoint': self.endpoint, 'keys': {'p256dh': self.p256dh, 'auth': self.auth}}
+
+
 def init_db(app, default_panel):
     """
     Initialise la base de données et charge les valeurs par défaut.

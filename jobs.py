@@ -9,6 +9,10 @@ from core import compute_and_save_momentum, run_market_monitor, build_briefing_p
 
 app = None  # injecté par scheduler.create_scheduler()
 
+# Suivi de la déconnexion IBKR (module-level pour persister entre appels du cron)
+_ibkr_down_since = None
+_ibkr_down_notified = False   # évite les notifications répétées pour la même coupure
+
 
 def job_rebalance_reminder():
     """
@@ -41,6 +45,131 @@ def _is_us_session():
     return now_et.weekday() < 5 and dtime(9, 30) <= now_et.time() < dtime(16, 0)
 
 
+def _handle_ibkr_connectivity(ibkr_up: bool):
+    """
+    Suit la connectivité IBKR entre les appels du cron.
+    - Si down > 5 min : push notification + tentative de redémarrage du gateway.
+    - Remet à zéro le tracking quand la connexion revient.
+    """
+    global _ibkr_down_since, _ibkr_down_notified
+    if ibkr_up:
+        if _ibkr_down_since is not None:
+            print(f"[{datetime.now()}] ✅ IBKR reconnecté (était down depuis {_ibkr_down_since})")
+        _ibkr_down_since = None
+        _ibkr_down_notified = False
+        return
+
+    # IBKR est down
+    if _ibkr_down_since is None:
+        _ibkr_down_since = datetime.now()
+        print(f"[{datetime.now()}] ⚠️ IBKR down depuis {_ibkr_down_since}")
+        return
+
+    elapsed = (datetime.now() - _ibkr_down_since).total_seconds()
+    if elapsed >= 300 and not _ibkr_down_notified:
+        _ibkr_down_notified = True
+        minutes = int(elapsed // 60)
+        print(f"[{datetime.now()}] 🚨 IBKR down depuis {minutes} min — push + tentative restart")
+
+        # Push notification
+        try:
+            import push_service
+            push_service.send_push_all(
+                title='🚨 IB Gateway déconnecté',
+                body=f'IBKR est hors ligne depuis {minutes} min. Tentative de redémarrage automatique en cours.',
+                url='/',
+                tag='ibkr-down',
+            )
+        except Exception as e:
+            print(f"⚠️ Push IBKR down: {e}")
+
+        # Tentative de redémarrage automatique
+        try:
+            _auto_restart_gateway()
+        except Exception as e:
+            print(f"⚠️ Auto-restart gateway: {e}")
+
+
+def _auto_restart_gateway():
+    """
+    Tente de redémarrer le conteneur IB Gateway en récupérant les credentials
+    depuis Settings (déchiffrés avec la clé courante).
+    """
+    from models import Settings
+    from ibkr_service import decrypt_credential, _make_fernet
+    from flask import current_app
+
+    secret = current_app.config.get('SECRET_KEY', '')
+    enc_user = Settings.get('ibkr_username_enc')
+    enc_pass = Settings.get('ibkr_password_enc')
+    mode     = Settings.get('ibkr_trading_mode', 'live')
+
+    if not enc_user or not enc_pass:
+        print("⚠️ Auto-restart: credentials IBKR absents")
+        return
+
+    try:
+        username = decrypt_credential(enc_user, secret)
+        password = decrypt_credential(enc_pass, secret)
+    except Exception as e:
+        print(f"⚠️ Auto-restart: déchiffrement impossible ({e})")
+        return
+
+    print(f"[{datetime.now()}] 🔄 Redémarrage IB Gateway (mode={mode})…")
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        net_name = 'momentum-app_internal'
+        for c in client.containers.list(all=True, filters={'name': 'ib-gateway'}):
+            try:
+                c.stop(timeout=10)
+                c.remove()
+            except Exception:
+                pass
+        container = client.containers.create(
+            'ghcr.io/gnzsnz/ib-gateway:stable',
+            name='momentum-app-ib-gateway-1',
+            detach=True,
+            restart_policy={'Name': 'unless-stopped'},
+            labels={'autoheal': 'true'},
+            environment={
+                'TWS_USERID': username, 'TWS_PASSWORD': password,
+                'TRADING_MODE': mode,
+                'TWS_SETTINGS_PATH': '/home/ibgateway/Jts',
+                'VNC_SERVER_PASSWORD': 'changeme',
+                'TWS_ACCEPT_INCOMING': 'accept',
+                'AUTO_RESTART_TIME': '11:30 PM',
+                'TIME_ZONE': 'America/New_York',
+                'RELOGIN_AFTER_TWOFA_TIMEOUT': 'yes',
+                'TWOFA_TIMEOUT_ACTION': 'restart',
+            },
+            ports={'5900/tcp': ('127.0.0.1', 5900)},
+            healthcheck={
+                'test': ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4001' || exit 1"],
+                'interval': 60_000_000_000, 'timeout': 10_000_000_000,
+                'retries': 3, 'start_period': 180_000_000_000,
+            },
+        )
+        network = client.networks.get(net_name)
+        network.connect(container, aliases=['ib-gateway'])
+        container.start()
+        print(f"✅ IB Gateway redémarré (mode={mode}) — 2FA requise dans ~90s")
+
+        # Notification push du redémarrage
+        try:
+            import push_service
+            push_service.send_push_all(
+                title='🔄 Gateway redémarré — 2FA requise',
+                body='IB Gateway vient d\'être redémarré automatiquement. Approuvez la 2FA sur votre téléphone IBKR.',
+                url='/',
+                tag='ibkr-restart',
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"❌ Redémarrage gateway échoué: {e}")
+
+
 def job_market_monitor():
     """Cron minute (séance US 9h30–16h00 ET, lun–ven) : alertes en temps réel."""
     with app.app_context():
@@ -48,6 +177,7 @@ def job_market_monitor():
             if not _is_us_session():
                 return  # hors séance → sortie immédiate, le cron 15-min prend le relais
             result = run_market_monitor()
+            _handle_ibkr_connectivity(result.get('ibkr_up', True))
             if result['opened'] or result['closed']:
                 print(f"[{datetime.now()}] 🔔 Monitor: {len(result['opened'])} ouverte(s), "
                       f"{result['closed']} clôturée(s)")
@@ -66,6 +196,7 @@ def job_market_monitor_offhours():
             if _is_us_session():
                 return  # séance active → déjà couvert par le cron minute
             result = run_market_monitor()
+            _handle_ibkr_connectivity(result.get('ibkr_up', True))
             if result['opened'] or result['closed']:
                 print(f"[{datetime.now()}] 🌙 Monitor (hors-séance): "
                       f"{len(result['opened'])} ouverte(s), {result['closed']} clôturée(s)")

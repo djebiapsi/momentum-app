@@ -476,6 +476,17 @@
             }
         }
 
+        async function sendPushTest() {
+            const info = document.getElementById('push-test-info');
+            if (info) info.textContent = 'Envoi…';
+            try {
+                const data = await api('/push/test', { method: 'POST' });
+                if (info) info.textContent = data?.success
+                    ? `✅ Envoyé (${data.sent} appareil(s))`
+                    : `❌ ${data?.error || 'Erreur'}`;
+            } catch(e) { if (info) info.textContent = 'Erreur réseau'; }
+        }
+
         async function sendDigestTech() {
             const btn  = document.getElementById('btn-send-digest-tech');
             const info = document.getElementById('digest-tech-send-info');
