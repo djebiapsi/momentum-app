@@ -272,7 +272,7 @@ class NewsService:
     MAX_PER_TICKER = 2         # articles par position envoyés au modèle
     MAX_FETCH_ARTICLES = 10    # nb d'articles dont on récupère le corps complet
     MAX_CONTENT_CHARS = 900    # contenu max par article
-    MAX_OUTPUT_TOKENS = 700    # plafond de tokens générés
+    MAX_OUTPUT_TOKENS = 1500    # plafond de tokens générés
 
     def summarize(self, news_items, context='', tickers=None):
         """
