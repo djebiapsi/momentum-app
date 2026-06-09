@@ -7,6 +7,10 @@
     "background_color": "#0a1628",
     "theme_color": "#1e3a5f",
     "orientation": "portrait",
+    "serviceworker": {
+        "src": "/sw.js",
+        "scope": "/"
+    },
     "icons": [
         {
             "src": "/static/icons/icon-192.png",

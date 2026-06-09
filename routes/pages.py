@@ -2,7 +2,7 @@
 """Route page principale."""
 import json
 from datetime import datetime
-from flask import Blueprint, jsonify, request, make_response, current_app, render_template
+from flask import Blueprint, jsonify, request, make_response, current_app, render_template, send_from_directory
 from models import (db, Settings, PanelAction, RecommendationHistory,
                     RecommendationDetail, ShortPanelAction,
                     ShortRecommendationHistory, ShortRecommendationDetail,
@@ -20,6 +20,16 @@ bp = Blueprint('pages', __name__)
 def index():
     """Page principale de l'application"""
     return render_template('index.html')
+
+
+@bp.route('/sw.js')
+def service_worker():
+    """Sert le service worker depuis la racine pour que son scope couvre '/'."""
+    resp = make_response(send_from_directory('../static', 'sw.js'))
+    resp.headers['Content-Type'] = 'application/javascript'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 
 # =============================================================================

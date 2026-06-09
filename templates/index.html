@@ -68,7 +68,7 @@
         // Enregistrer / mettre à jour le SW
         let reg;
         try {
-            reg = await navigator.serviceWorker.register('/static/sw.js', { scope: '/' });
+            reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
         } catch(e) { console.warn('SW register:', e); return; }
 
         // Stocker la reg globalement pour le bouton dans les settings
