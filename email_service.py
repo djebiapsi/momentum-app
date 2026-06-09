@@ -560,11 +560,20 @@ Stratégie Momentum 12-1
             'news_summary': str, 'news_items': [{'title','link','source','ticker'}],
         }
         """
-        session = payload.get('session', 'open')
+        session        = payload.get('session', 'open')
+        ibkr_available = payload.get('ibkr_available', True)
         titles = {'open': "Briefing d'ouverture", 'mid': 'Briefing mi-séance',
                   'close': 'Briefing de clôture'}
         emojis = {'open': '🔔', 'mid': '🕛', 'close': '🌙'}
         now = datetime.now().strftime('%Y-%m-%d %H:%M ET')
+
+        ibkr_banner = (
+            '<div style="background:#431407;border:1px solid #7c2d12;border-radius:8px;'
+            'padding:10px 14px;margin-bottom:14px;font-size:12px;color:#fca5a5;">'
+            '⚠️ <strong>IB Gateway hors ligne</strong> — Les données de marché (VIX, positions, '
+            'perf intraday) sont indisponibles pour ce briefing. '
+            'Le gateway redémarre automatiquement chaque nuit à 23h30 ET.</div>'
+        ) if not ibkr_available else ''
 
         # ── Helpers ──────────────────────────────────────────────────────
         def _pct_span(v, bold=False, suffix='%'):
@@ -698,7 +707,7 @@ Stratégie Momentum 12-1
                 font-size:14px;line-height:1.6;color:#d4d4d8;">{summary_html}</div>
     {('<ul style="padding-left:18px;margin:12px 0 0;font-size:13px;">' + links + '</ul>') if links else ''}"""
 
-        body = cards_row1 + cards_row2 + technicals_block + positions_block + news_block
+        body = ibkr_banner + cards_row1 + cards_row2 + technicals_block + positions_block + news_block
         html = self._html_shell(titles.get(session, 'Briefing'), now, body,
                                 accent='#1d4ed8,#7c3aed', emoji=emojis.get(session, '📈'))
 

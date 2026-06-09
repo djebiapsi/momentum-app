@@ -182,6 +182,7 @@ def run_market_monitor():
     """
     monitor = get_market_monitor()
     metrics = monitor.collect_metrics()
+    ibkr_up = not metrics.get('error')   # False si IBKR déconnecté
     breaches = monitor.evaluate(metrics)
     now = datetime.utcnow()
     email_svc = get_email_service()
@@ -217,45 +218,66 @@ def run_market_monitor():
                     print(f"❌ Email alerte: {e}")
             opened.append(b)
 
-    # Clôturer les évènements dont la condition n'est plus remplie
+    # Clôturer les évènements dont la condition n'est plus remplie.
+    # IMPORTANT : si IBKR est déconnecté on n'a aucune donnée réelle —
+    # on ne clôture PAS les alertes ouvertes (absence de données ≠ résolution).
     closed = 0
-    for key, ev in open_map.items():
-        if key not in breach_keys:
-            ev.ended_at = now
+    if ibkr_up:
+        for key, ev in open_map.items():
+            if key not in breach_keys:
+                ev.ended_at = now
+                ev.last_checked_at = now
+                if configured and not ev.notified_close:
+                    try:
+                        email_svc.envoyer_alerte_resolue(ev.to_dict())
+                    except Exception as e:
+                        print(f"❌ Email résolu: {e}")
+                ev.notified_close = True
+                closed += 1
+    else:
+        # Garder les alertes ouvertes en vie mais noter la dernière vérification
+        for ev in open_map.values():
             ev.last_checked_at = now
-            if configured and not ev.notified_close:
-                try:
-                    email_svc.envoyer_alerte_resolue(ev.to_dict())
-                except Exception as e:
-                    print(f"❌ Email résolu: {e}")
-            ev.notified_close = True
-            closed += 1
 
     db.session.commit()
     return {'metrics': metrics, 'breaches': breaches,
-            'opened': opened, 'closed': closed}
+            'opened': opened, 'closed': closed, 'ibkr_up': ibkr_up}
 
 
 def build_briefing_payload(session):
     """Construit le payload du briefing (régime, VIX, positions, technicals, news)."""
+    import time as _time
+
     monitor = get_market_monitor()
-    metrics = monitor.collect_metrics()
+
+    # Retry IBKR : 3 tentatives espacées de 8s avant de se résoudre à envoyer
+    # un briefing partiel. L'IB Gateway redémarre chaque nuit (~5-10 min) ;
+    # attendre un peu suffit souvent à récupérer des données complètes.
+    metrics = None
+    for attempt in range(3):
+        metrics = monitor.collect_metrics()
+        if not metrics.get('error'):
+            break
+        if attempt < 2:
+            print(f"⚠️ Briefing: IBKR indisponible (tentative {attempt+1}/3), nouvelle tentative dans 8s…")
+            _time.sleep(8)
+
+    ibkr_available = not metrics.get('error')
 
     # Perf intraday par position (depuis les quotes IBKR)
     intraday_map = {p['ticker']: p for p in (metrics.get('positions') or [])}
 
     stats, positions = None, []
     try:
-        if ibkr_service.ensure_connected():
+        if ibkr_available and ibkr_service.ensure_connected():
             s = ibkr_service.get_portfolio_stats()
             stats = {k: s.get(k) for k in ('total_value', 'total_pnl', 'return_pct', 'positions_count')}
             raw_positions = s.get('positions', [])
-            # Enrichir chaque position avec la perf intraday et le cours live
             for p in raw_positions:
                 t = p.get('ticker', '')
                 intra = intraday_map.get(t, {})
-                p['intraday_pct'] = intra.get('pct')    # % depuis clôture précédente
-                p['last_price']   = intra.get('last')   # cours live
+                p['intraday_pct'] = intra.get('pct')
+                p['last_price']   = intra.get('last')
             positions = raw_positions
     except Exception as e:
         print(f"⚠️ Briefing: positions indisponibles ({e})")
@@ -275,6 +297,7 @@ def build_briefing_payload(session):
 
     return {
         'session': session,
+        'ibkr_available': ibkr_available,
         'regime': metrics.get('regime'),
         'vix': metrics.get('vix'), 'vix_pct': metrics.get('vix_pct'),
         'spy': metrics.get('spy'), 'spy_intraday_pct': metrics.get('spy_intraday_pct'),
