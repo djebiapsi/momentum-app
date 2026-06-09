@@ -21,27 +21,48 @@ VAPID_CLAIMS_SUB   = 'mailto:admin@momentum.app'
 
 
 def _get_or_create_vapid_keys():
-    """Génère les clés VAPID si absentes et les stocke en Settings."""
+    """
+    Génère les clés VAPID si absentes et les stocke en Settings.
+    Utilise cryptography.ec.generate_private_key(SECP256R1) directement
+    pour garantir une courbe nommée (P-256) compatible pywebpush/py_vapid.
+    """
     from models import Settings
     priv = Settings.get(_VAPID_PRIVATE_KEY)
     pub  = Settings.get(_VAPID_PUBLIC_KEY)
     if priv and pub:
-        return priv, pub
+        # Vérifier que la clé stockée est rechargeable (migration si ancienne clé)
+        try:
+            from py_vapid import Vapid
+            Vapid.from_pem(priv.encode())
+            return priv, pub
+        except Exception:
+            logger.warning('Clés VAPID en base invalides — régénération')
+
     try:
         import base64
-        from py_vapid import Vapid
+        from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives.serialization import (
-            Encoding, PublicFormat)
-        v = Vapid()
-        v.generate_keys()
-        # Clé privée PEM (utilisée par pywebpush)
-        priv = v.private_pem().decode()
+            Encoding, PublicFormat, PrivateFormat, NoEncryption)
+        from cryptography.hazmat.backends import default_backend
+        from py_vapid import Vapid
+
+        # Générer avec courbe nommée (pas de paramètres explicites) pour éviter
+        # l'erreur "EC curves with explicit parameters" dans py_vapid/pywebpush
+        priv_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+        priv = priv_key.private_bytes(
+            Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
+        ).decode()
+
+        # Vérifier que Vapid peut charger cette clé
+        v = Vapid.from_pem(priv.encode())
+
         # Clé publique : uncompressed EC point (65 bytes) → base64url sans padding
         pub_bytes = v.public_key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
         pub = base64.urlsafe_b64encode(pub_bytes).rstrip(b'=').decode()
+
         Settings.set(_VAPID_PRIVATE_KEY, priv)
         Settings.set(_VAPID_PUBLIC_KEY,  pub)
-        logger.info('Clés VAPID générées et stockées')
+        logger.info('Clés VAPID générées et stockées (SECP256R1 named curve)')
         return priv, pub
     except Exception as e:
         logger.error('Génération clés VAPID impossible: %s', e)
@@ -65,15 +86,14 @@ def send_push(subscription_info: dict, title: str, body: str,
     subscription_info : {'endpoint': ..., 'keys': {'p256dh': ..., 'auth': ...}}
     Retourne True si succès.
     """
-    from models import Settings
-    priv = Settings.get(_VAPID_PRIVATE_KEY)
-    if not priv:
-        priv, _ = _get_or_create_vapid_keys()
+    priv, _ = _get_or_create_vapid_keys()
     if not priv:
         logger.warning('send_push: clés VAPID manquantes')
         return False
     try:
         from pywebpush import webpush, WebPushException
+        from py_vapid import Vapid
+        vapid_obj = Vapid.from_pem(priv.encode())
         payload = json.dumps({
             'title': title,
             'body':  body,
@@ -85,7 +105,7 @@ def send_push(subscription_info: dict, title: str, body: str,
         response = webpush(
             subscription_info=subscription_info,
             data=payload,
-            vapid_private_key=priv,
+            vapid_private_key=vapid_obj,
             vapid_claims={'sub': VAPID_CLAIMS_SUB},
         )
         return response.status_code in (200, 201, 202)
