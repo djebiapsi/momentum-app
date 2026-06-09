@@ -6,10 +6,10 @@ Rejoue la stratégie sur l'historique avec **intérêt composé** et la compare 
 benchmark (SPY).
 
 Spécificités (validées avec l'utilisateur) :
-  - **Univers complet** : l'intégralité des constituants S&P 500 + Nasdaq-100
-    (≈ 600 titres), comme le calcul live. Plus de cap top-N : le momentum 12-1 est
-    classé sur tout l'univers, seul un plancher de liquidité ADV ≥ 5 M$ (réalisme
-    d'exécution) reste appliqué point-in-time depuis l'historique prix+volume.
+  - **Méthode identique à `calculate`** : le momentum 12-1 est classé sur TOUT
+    l'univers disponible (constituants S&P 500 + Nasdaq-100 collectés), sans aucun
+    screener — ni cap top-N, ni filtre de liquidité ADV. Un titre entre point-in-time
+    dès qu'il a ≥13 mois d'historique, et sort si son momentum passe ≤ 0.
   - **Config live** : `nb_top`, vol_scaling, frein anti-krach lus dans les `Settings`
     et appliqués (formules de `momentum_service.generer_recommandations` recalculées
     point-in-time, sans appel API « now »).
@@ -69,9 +69,8 @@ TRADING_DAYS = 252
 class BacktestService:
     # Garde-fous / paramètres de la stratégie
     POOL_SIZE = 150            # taille du pool candidat (borne le coût data)
-    UNIVERSE_SIZE = None       # None = pas de cap : momentum sur tout l'univers (SP500+NDX100)
-    MIN_ADV = 5_000_000        # plancher ADV (réalisme d'exécution ; les constituants passent tous)
-    ADV_WINDOW = 63            # fenêtre ADV glissant (~1 trimestre de bourse)
+    MIN_ADV = 5_000_000        # plancher ADV — UNIQUEMENT pour le pool de repli Tiingo IEX
+                               # (build_candidate_pool) ; PAS de filtre liquidité au backtest
     VOL_WINDOW = 126           # fenêtre vol réalisée (= live, 126 j)
     MOM_MIN_MONTHS = 13        # mois nécessaires au momentum 12-1
     VOL_DEFAULT = 0.20         # vol par défaut si données insuffisantes (= live)
@@ -109,7 +108,8 @@ class BacktestService:
 
         Le biais de survivant reste présent (on collecte les constituants actuels),
         mais l'univers est bien plus large qu'avant (120 → 500+ tickers).
-        La sélection ADV point-in-time se fait ensuite dans quarterly_universe().
+        Aucune sélection ADV ensuite : le momentum se classe sur tout le pool, comme
+        le calcul live (build_weight_matrix).
         """
         # 1) Priorité : DB yfinance (constituants SP500/NDX100 collectés)
         pool = self._pool_from_yfinance_db()
@@ -139,9 +139,8 @@ class BacktestService:
     def _pool_from_yfinance_db(self):
         """
         Pool depuis les données yfinance en base (MarketPriceBar source='yfinance').
-        Retourne tous les symboles US valides avec suffisamment de barres daily.
-        La sélection finale par ADV se fait dans quarterly_universe() — ici on veut
-        l'univers le plus large possible.
+        Retourne tous les symboles US valides avec suffisamment de barres daily —
+        c'est l'univers complet sur lequel le momentum sera classé (aucun filtre ADV).
         """
         try:
             from models import MarketPriceBar, db
@@ -510,29 +509,7 @@ class BacktestService:
         return {'pool': len(pool), 'fetched': fetched}
 
     # ------------------------------------------------------------------
-    # 3) Univers trimestriel (re-screen ADV point-in-time)
-    # ------------------------------------------------------------------
-    def quarterly_universe(self, dvol, as_of, size=None):
-        """
-        Univers à `as_of` : tous les titres au-dessus du plancher ADV glissant (≈63 j).
-        Plus de cap top-N — le momentum se calcule sur l'univers complet (≈600 titres
-        SP500+NDX100), comme le calcul live. `size` ne plafonne que s'il est > 0.
-        """
-        size = size if size is not None else self.UNIVERSE_SIZE
-        window = dvol.loc[:as_of].tail(self.ADV_WINDOW)
-        if window.empty:
-            return []
-        adv = window.mean(numeric_only=True).dropna()
-        eligible = adv[adv >= self.MIN_ADV]
-        if eligible.empty:
-            return []
-        ranked = eligible.sort_values(ascending=False)  # ADV décroissant
-        if size and size > 0:
-            ranked = ranked.head(size)
-        return list(ranked.index)
-
-    # ------------------------------------------------------------------
-    # 4) Pondération point-in-time (reproduit generer_recommandations)
+    # 3) Pondération point-in-time (reproduit generer_recommandations)
     # ------------------------------------------------------------------
     @staticmethod
     def _momentum_12_1(monthly_series, as_of):
@@ -628,30 +605,25 @@ class BacktestService:
     # ------------------------------------------------------------------
     def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params, mom_cache=None):
         """
-        Pour chaque fin de mois ≥ start : (ré)évalue l'univers tous les 3 mois, calcule
-        les poids cibles. Retourne (weights_df [dates × tickers], meta dict).
+        Pour chaque fin de mois ≥ start : calcule les poids cibles en classant le
+        momentum sur TOUT l'univers disponible — **aucun screener, identique à
+        `calculate`**. Un titre entre point-in-time dès qu'il a ≥13 mois d'historique
+        (sinon _momentum_12_1 renvoie None → exclu) ; il sort si son momentum ≤ 0.
 
-        `mom_cache` : passé tel quel à compute_weights pour mémoïser le momentum entre
-        appels successifs (optimize() partage un seul cache sur toute la grille).
+        `dvol` n'est plus utilisé (le filtre de liquidité ADV a été retiré pour aligner
+        la méthode sur le calcul live). `mom_cache` : mémoïse le momentum entre appels
+        successifs (optimize() partage un seul cache sur toute la grille).
+
+        Retourne (weights_df [dates × tickers], meta dict).
         """
         month_ends = [d for d in monthly_px.index if d >= start]
+        # Univers = pool complet, comme calculate. La disponibilité du momentum
+        # (≥13 mois à la date) gère l'entrée point-in-time, pas un screener.
+        universe = list(monthly_px.columns)
         weights = {}
-        universe = None
-        n_universe_changes = 0
         n_riskoff = 0
-        first_month = month_ends[0].to_period('M') if month_ends else None
 
         for d in month_ends:
-            # Re-screen trimestriel : tous les 3 mois (en partant du 1er mois)
-            months_since = (d.to_period('M') - first_month).n if first_month else 0
-            if universe is None or months_since % 3 == 0:
-                new_u = self.quarterly_universe(dvol, d)
-                if new_u:
-                    if universe is not None and set(new_u) != set(universe):
-                        n_universe_changes += 1
-                    universe = new_u
-            if not universe:
-                continue
             w = self.compute_weights(d, universe, monthly_px, daily_ret, params, mom_cache=mom_cache)
             # Risk-off (aucun momentum positif) → on passe réellement en cash
             # (ligne de poids nulle), au lieu de conserver le panier du mois précédent.
@@ -660,7 +632,7 @@ class BacktestService:
                 n_riskoff += 1
             weights[d] = w
 
-        meta = {'n_rebalances': 0, 'n_universe_changes': n_universe_changes,
+        meta = {'n_rebalances': 0, 'n_universe_changes': 0,
                 'n_riskoff_months': n_riskoff}
         if not weights:
             return pd.DataFrame(), meta
