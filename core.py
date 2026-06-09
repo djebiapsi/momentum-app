@@ -277,97 +277,155 @@ def _get_briefing_macro_yfinance() -> dict:
 
 
 def build_briefing_payload(session):
-    """Construit le payload du briefing (régime, VIX, positions, technicals, news)."""
-    import time as _time
+    """
+    Construit le payload du briefing.
+    Sources intentionnellement séparées pour éviter les blocages IBKR :
+    - Positions     : IBKR portfolio() direct (ne passe PAS par get_quotes)
+    - VIX/SPY/QQQ   : yfinance (fiable pré/post marché, aucun timeout IBKR)
+    - Intraday %    : yfinance par ticker de position
+    - Régime/technicals : Tiingo via momentum_service (pas d'IBKR)
+    - News          : RSS + LLM
+    """
+    import concurrent.futures as _cf
 
-    # ── Données marché via yfinance (fiable pré/post marché, pas de timeout) ──
+    # ── 1. Données macro via yfinance ─────────────────────────────────────────
     macro = _get_briefing_macro_yfinance()
 
-    # ── IBKR : connexion rapide pour les positions uniquement ───────────────
-    monitor = get_market_monitor()
-    ibkr_available = ibkr_service.ensure_connected()
-
-    # Si IBKR connecté, tenter collect_metrics avec un timeout court (15s max)
-    # pour les intraday positions. Si ça prend trop de temps → on passe.
-    metrics = {'positions': [], 'regime': None, 'error': None,
-               'technicals': {}, 'vix': macro.get('vix'),
-               'vix_pct': macro.get('vix_pct'),
-               'spy': macro.get('spy'), 'spy_intraday_pct': macro.get('spy_pct'),
-               'qqq': macro.get('qqq'), 'qqq_intraday_pct': macro.get('qqq_pct')}
-    if ibkr_available:
-        try:
-            import concurrent.futures as _cf
-            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(monitor.collect_metrics)
-                try:
-                    ibkr_metrics = fut.result(timeout=20)
-                    # Garder seulement les données IBKR utiles (positions, regime, technicals)
-                    metrics['positions']  = ibkr_metrics.get('positions') or []
-                    metrics['regime']     = ibkr_metrics.get('regime')
-                    metrics['technicals'] = ibkr_metrics.get('technicals') or {}
-                    # Compléter les indices si IBKR a des données plus fraîches
-                    if ibkr_metrics.get('spy_intraday_pct') is not None:
-                        metrics['spy_intraday_pct'] = ibkr_metrics['spy_intraday_pct']
-                    if ibkr_metrics.get('vix') is not None:
-                        metrics['vix'] = ibkr_metrics['vix']
-                except _cf.TimeoutError:
-                    print("⚠️ Briefing: collect_metrics timeout 20s → données macro yfinance")
-                    ibkr_available = False
-        except Exception as e:
-            print(f"⚠️ Briefing: collect_metrics erreur ({e})")
-
-    ibkr_available = ibkr_available and not metrics.get('error')
-
-    # Perf intraday par position (depuis les quotes IBKR si disponibles)
-    intraday_map = {p['ticker']: p for p in (metrics.get('positions') or [])}
-
-    stats, positions = None, []
+    # ── 2. Positions IBKR — appel DIRECT et isolé (sans get_quotes) ──────────
+    # portfolio() est un attribut en cache ib_async, pas une requête réseau —
+    # mais il peut être bloqué si get_quotes() tourne en même temps sur le socket.
+    # On l'isole dans un thread avec timeout court et cache ≤30 min en fallback.
+    raw_positions = []
+    ibkr_available = False
     try:
-        if ibkr_available:
-            # get_cached_positions : tente live (timeout 20s), retombe sur cache ≤30 min
-            raw_positions = get_cached_positions()
-            if raw_positions:
-                total_value   = sum(p.get('market_value') or 0 for p in raw_positions)
-                total_unrl    = sum(p.get('unrealized_pnl') or 0 for p in raw_positions)
-                stats = {
-                    'total_value':     round(total_value, 2),
-                    'total_pnl':       round(total_unrl, 2),
-                    'return_pct':      None,
-                    'positions_count': len(raw_positions),
-                }
-                for p in raw_positions:
-                    t = p.get('ticker', '')
-                    intra = intraday_map.get(t, {})
-                    p['intraday_pct'] = intra.get('pct')
-                    p['last_price']   = intra.get('last')
-                positions = raw_positions
+        if ibkr_service.ensure_connected():
+            def _fetch_positions():
+                return ibkr_service.get_portfolio_stats()
+            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_fetch_positions)
+                try:
+                    s = fut.result(timeout=12)
+                    raw_positions = s.get('positions', [])
+                    ibkr_available = True
+                    # Mettre à jour le cache de positions
+                    import time as _t
+                    from services import _positions_cache, _positions_cache_ts, _POSITIONS_CACHE_TTL
+                    import services as _svc
+                    if raw_positions:
+                        _svc._positions_cache = raw_positions
+                        _svc._positions_cache_ts = _t.time()
+                except _cf.TimeoutError:
+                    print("⚠️ Briefing: positions IBKR timeout 12s → cache")
     except Exception as e:
-        print(f"⚠️ Briefing: positions indisponibles ({e})")
+        print(f"⚠️ Briefing: IBKR positions erreur ({e})")
 
+    # Fallback cache si la requête live a échoué
+    if not raw_positions:
+        raw_positions = get_cached_positions()
+        if raw_positions:
+            print("⚠️ Briefing: utilise cache positions")
+
+    # ── 3. Intraday % via yfinance pour les tickers du portefeuille ───────────
+    tickers_pos = [p['ticker'] for p in raw_positions if p.get('ticker')]
+    intraday_yf = {}
+    if tickers_pos:
+        try:
+            import yfinance as yf
+            hist_data = yf.download(
+                tickers_pos, period='5d', interval='1d',
+                group_by='ticker', auto_adjust=True, progress=False
+            )
+            for t in tickers_pos:
+                try:
+                    col = hist_data['Close'][t] if len(tickers_pos) > 1 else hist_data['Close']
+                    col = col.dropna()
+                    if len(col) >= 2:
+                        last = float(col.iloc[-1])
+                        prev = float(col.iloc[-2])
+                        pct  = round((last - prev) / prev * 100, 2) if prev else None
+                        intraday_yf[t] = {'last': last, 'pct': pct}
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"⚠️ Briefing: intraday yfinance ({e})")
+
+    # Enrichir les positions avec intraday
+    stats = None
+    positions = []
+    if raw_positions:
+        total_value = sum(p.get('market_value') or 0 for p in raw_positions)
+        total_unrl  = sum(p.get('unrealized_pnl') or 0 for p in raw_positions)
+        stats = {
+            'total_value':     round(total_value, 2),
+            'total_pnl':       round(total_unrl, 2),
+            'return_pct':      None,
+            'positions_count': len(raw_positions),
+        }
+        for p in raw_positions:
+            t = p.get('ticker', '')
+            yf_data = intraday_yf.get(t, {})
+            p['intraday_pct'] = yf_data.get('pct')
+            p['last_price']   = yf_data.get('last')
+        positions = raw_positions
+
+    # ── 4. Régime marché + technicals (Tiingo, aucun IBKR) ───────────────────
+    regime     = None
+    technicals = {}
+    try:
+        svc = get_momentum_service()
+        if svc:
+            regime = svc.get_market_regime()
+    except Exception:
+        pass
+    try:
+        monitor = get_market_monitor()
+        # _compute_technicals utilise seulement les données Tiingo déjà cachées
+        fake_quotes = {}  # pas de quotes IBKR, technicals depuis DB
+        technicals = monitor._compute_technicals(fake_quotes)
+    except Exception:
+        pass
+
+    # ── 5. Calcul portfolio intraday pondéré ─────────────────────────────────
+    portfolio_intraday_pct = None
+    if positions:
+        total_mv = sum(abs(p.get('market_value') or 0) for p in positions)
+        if total_mv:
+            weighted = sum(
+                (abs(p.get('market_value') or 0) / total_mv) * (p.get('intraday_pct') or 0)
+                for p in positions
+            )
+            portfolio_intraday_pct = round(weighted, 2)
+
+    # ── 6. News ───────────────────────────────────────────────────────────────
     tickers = [p['ticker'] for p in positions if p.get('ticker')]
     news_items, news_summary = [], ''
     try:
         ns = get_news_service()
         news_items = ns.fetch_news(tickers)
-        regime = (metrics.get('regime') or {}).get('regime', '?')
-        ctx = (f"régime {regime}, VIX {metrics.get('vix')}, "
-               f"SPY {metrics.get('spy_intraday_pct')}% intraday, "
-               f"QQQ {metrics.get('qqq_intraday_pct')}% intraday")
+        reg_str = (regime or {}).get('regime', '?') if isinstance(regime, dict) else str(regime or '?')
+        ctx = (f"régime {reg_str}, VIX {macro.get('vix')}, "
+               f"SPY {macro.get('spy_pct')}% intraday, "
+               f"QQQ {macro.get('qqq_pct')}% intraday")
         news_summary = ns.summarize(news_items, context=ctx, tickers=tickers)
     except Exception as e:
         print(f"⚠️ Briefing: news indisponibles ({e})")
 
     return {
-        'session': session,
-        'ibkr_available': ibkr_available,
-        'regime': metrics.get('regime'),
-        'vix': metrics.get('vix'), 'vix_pct': metrics.get('vix_pct'),
-        'spy': metrics.get('spy'), 'spy_intraday_pct': metrics.get('spy_intraday_pct'),
-        'qqq': metrics.get('qqq'), 'qqq_intraday_pct': metrics.get('qqq_intraday_pct'),
-        'portfolio_intraday_pct': metrics.get('portfolio_intraday_pct'),
-        'technicals': metrics.get('technicals') or {},
-        'stats': stats, 'positions': positions,
-        'news_summary': news_summary, 'news_items': news_items,
+        'session':               session,
+        'ibkr_available':        ibkr_available,
+        'regime':                regime,
+        'vix':                   macro.get('vix'),
+        'vix_pct':               macro.get('vix_pct'),
+        'spy':                   macro.get('spy'),
+        'spy_intraday_pct':      macro.get('spy_pct'),
+        'qqq':                   macro.get('qqq'),
+        'qqq_intraday_pct':      macro.get('qqq_pct'),
+        'portfolio_intraday_pct': portfolio_intraday_pct,
+        'technicals':            technicals,
+        'stats':                 stats,
+        'positions':             positions,
+        'news_summary':          news_summary,
+        'news_items':            news_items,
     }
 
 
