@@ -45,8 +45,8 @@ BENCHMARKS = ['SPY', 'QQQ', '^GSPC', '^NDX']
 
 class PriceDataService:
     # --- Horizons de collecte -------------------------------------------------
-    MONTHLY_YEARS = 20      # historique mensuel max
-    DAILY_YEARS = 11         # daily : 5 ans de backtest + ~13 mois de lookback momentum
+    MONTHLY_YEARS = 32      # historique mensuel max
+    DAILY_YEARS = 32         # daily : 30 ans de backtest + ~13 mois de lookback momentum
 
     # --- Rate limiting --------------------------------------------------------
     CHUNK_SIZE = 40         # tickers par lot yf.download (threads internes)
