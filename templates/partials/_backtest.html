@@ -24,6 +24,8 @@
                                 <button class="perf-pill" data-years="3">3 ans</button>
                                 <button class="perf-pill active" data-years="5">5 ans</button>
                                 <button class="perf-pill" data-years="10">10 ans</button>
+                                <button class="perf-pill" data-years="20">20 ans</button>
+                                <button class="perf-pill" data-years="30">30 ans</button>
                             </div>
                         </div>
                         <div>
@@ -125,6 +127,16 @@
                             <div class="perf-chart-title">Courbe d'équité (intérêt composé) vs benchmark</div>
                             <div class="perf-chart-container">
                                 <canvas id="bt-chart-equity"></canvas>
+                            </div>
+                            <div id="bt-regime-legend" style="display:none;gap:16px;justify-content:center;align-items:center;margin-top:8px;font-size:11px;color:var(--text-muted);">
+                                <span style="display:inline-flex;align-items:center;gap:5px;">
+                                    <span style="width:14px;height:10px;background:rgba(29,158,117,.35);border-radius:2px;display:inline-block;"></span>
+                                    Marché haussier (benchmark &gt; SMA200)
+                                </span>
+                                <span style="display:inline-flex;align-items:center;gap:5px;">
+                                    <span style="width:14px;height:10px;background:rgba(216,90,48,.4);border-radius:2px;display:inline-block;"></span>
+                                    Marché baissier (benchmark &lt; SMA200)
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -264,6 +276,8 @@
                                 <div class="perf-range-selector" id="opt-years" style="margin:0;">
                                     <button class="perf-pill" data-years="5">5 ans</button>
                                     <button class="perf-pill active" data-years="10">10 ans</button>
+                                    <button class="perf-pill" data-years="20">20 ans</button>
+                                    <button class="perf-pill" data-years="30">30 ans</button>
                                 </div>
                             </div>
                             <div>

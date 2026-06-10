@@ -6,6 +6,35 @@ let btYears = 5;
 const _btCharts = {};
 const BT_GRID = 'rgba(255,255,255,.05)';
 
+// Plugin Chart.js : bandes de fond bull (vert) / bear (rouge) selon le régime
+// de marché (benchmark vs SMA200). Les segments sont passés via
+// options.plugins.regimeBands.segments. Dessiné AVANT les courbes (beforeDatasetsDraw).
+const _regimeBandsPlugin = {
+    id: 'regimeBands',
+    beforeDatasetsDraw(chart, args, opts) {
+        const segs = (opts && opts.segments) || [];
+        if (!segs.length) return;
+        const xs = chart.scales.x;
+        const area = chart.chartArea;
+        if (!xs || !area) return;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(area.left, area.top, area.right - area.left, area.bottom - area.top);
+        ctx.clip();  // ne pas déborder de la zone de tracé
+        for (const s of segs) {
+            let x0 = xs.getPixelForValue(new Date(s.start).getTime());
+            let x1 = xs.getPixelForValue(new Date(s.end).getTime());
+            const left = Math.max(area.left, Math.min(x0, x1));
+            const right = Math.min(area.right, Math.max(x0, x1));
+            if (right <= left) continue;
+            ctx.fillStyle = s.regime === 'bull' ? 'rgba(29,158,117,.10)' : 'rgba(216,90,48,.13)';
+            ctx.fillRect(left, area.top, right - left, area.bottom - area.top);
+        }
+        ctx.restore();
+    },
+};
+
 // État Monte Carlo
 let _mcDailyReturns = [];
 let _mcHorizonDays = 252;
@@ -186,16 +215,24 @@ function _btRender(res) {
     ];
     if (inv.length) eqDatasets.push(
         { label: 'Capital investi (DCA)', data: inv, borderColor: '#888', borderDash: [4, 4], borderWidth: 1, tension: 0, pointRadius: 0, fill: false });
+    const regimeSegments = res.regime_segments || [];
     _btDestroy('equity');
     _btCharts.equity = new Chart(document.getElementById('bt-chart-equity'), {
         type: 'line',
         data: { datasets: eqDatasets },
+        plugins: [_regimeBandsPlugin],
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
             plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
+                regimeBands: { segments: regimeSegments },
                 tooltip: { callbacks: { label: c => ` ${c.dataset.label}: $${Math.round(c.parsed.y).toLocaleString()}` } } },
             scales: { x: { type: 'time', time: { unit }, grid: { color: BT_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
                 y: { type: 'logarithmic', grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' } } } }
     });
+    // Légende des bandes de régime sous le graphe
+    const regimeLegend = document.getElementById('bt-regime-legend');
+    if (regimeLegend) {
+        regimeLegend.style.display = regimeSegments.length ? 'flex' : 'none';
+    }
 
     // Drawdown
     const dd = (res.drawdown || []).map(p => ({ x: p.t, y: p.v * 100 }));

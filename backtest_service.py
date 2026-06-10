@@ -192,6 +192,23 @@ class BacktestService:
         df['date'] = pd.to_datetime(df['date'])
         return df.set_index('date').sort_index()
 
+    @staticmethod
+    def _earliest_daily_date():
+        """
+        Date de la plus ancienne barre daily yfinance en base (profondeur réelle du
+        cache de simulation). Sert à clamper la période d'un backtest 20-30 ans tant
+        que le daily n'a pas été backfillé en profondeur. None si indisponible.
+        """
+        try:
+            from models import MarketPriceBar, db
+            from sqlalchemy import func
+            d = (db.session.query(func.min(MarketPriceBar.bar_date))
+                 .filter(MarketPriceBar.source == 'yfinance').scalar())
+            return d
+        except Exception as e:
+            logger.warning('_earliest_daily_date : %s', e)
+            return None
+
     def _load_db(self, ticker, start_date):
         """Charge adjClose/close/volume/low/high depuis MarketPriceBar (≥ start_date)."""
         try:
@@ -389,6 +406,10 @@ class BacktestService:
         # ── chargement des données (1 seule fois) ────────────────────────
         end = pd.Timestamp.now().normalize()
         start = end - pd.DateOffset(years=int(years))
+        # Clamp à la profondeur daily réelle (cf. run()) — évite un cache vide sur 20-30 ans
+        earliest = self._earliest_daily_date()
+        if earliest is not None and start < pd.Timestamp(earliest):
+            start = pd.Timestamp(earliest)
         nb_jours = int((end - start).days) + 13 * 31 + 200
 
         pool = self.build_candidate_pool()
@@ -916,6 +937,19 @@ class BacktestService:
         }
         end = pd.Timestamp.now().normalize()
         start = end - pd.DateOffset(years=int(years))
+
+        # Clamp de la date de début à la profondeur réellement disponible en base.
+        # Sans ça, demander 20-30 ans alors que le daily ne remonte qu'à ~2015 ferait
+        # rejeter TOUS les tickers par _db_covers (« historique trop court ») → repli
+        # réseau capé à 40 tickers, qui jette les données 2015+ déjà présentes.
+        clamped_years = False
+        earliest = self._earliest_daily_date()
+        if earliest is not None:
+            earliest_ts = pd.Timestamp(earliest)
+            if start < earliest_ts:
+                start = earliest_ts
+                clamped_years = True
+
         # Fenêtre data : période + lookback momentum (13 mois) + marge vol (126 j)
         nb_jours = int((end - start).days) + 13 * 31 + 200
 
@@ -934,9 +968,12 @@ class BacktestService:
             low_aligned = low_px.reindex(index=close_px.index, columns=close_px.columns)
             low_ret = low_aligned / close_px.shift(1) - 1.0
 
-        # Benchmark (DB d'abord, sinon récupération ; SPY → fallback ^GSPC)
+        # Benchmark (DB d'abord, sinon récupération ; SPY → fallback ^GSPC).
+        # Chargé avec ~1 an de lookback avant `start` pour que la SMA200 (régime
+        # bull/bear) soit déjà valide dès le début de la courbe d'équité.
+        bench_load_start = (start - pd.Timedelta(days=400)).date()
         def _bench(sym):
-            df = self._load_db(sym, start.date())
+            df = self._load_db(sym, bench_load_start)
             if not self._db_covers(df, start.date()):
                 df, _ = self._fetch_ticker(sym, nb_jours)
             return df
@@ -990,6 +1027,7 @@ class BacktestService:
             'invested': self._series_to_points(sim['invested']) if sim_p['dca_amount'] > 0 else [],
             'leverage': self._series_to_points(sim['leverage']) if sim['max_leverage'] > 1.05 else [],
             'drawdown': self._series_to_points(drawdown),
+            'regime_segments': self._regime_segments(bench_close, dates),
             'daily_returns': twr_daily,
             'monthly_returns': self._monthly_returns(sim['twr_ret']),
             'yearly_returns': self._yearly_returns(sim['twr_ret'], bench_ret),
@@ -1011,12 +1049,14 @@ class BacktestService:
                 'n_riskoff_months': meta.get('n_riskoff_months', 0),
                 'warnings': ([
                     "Biais de survivance résiduel : l'univers candidat est constitué des "
-                    "tickers liquides existant aujourd'hui (les titres délistés sont absents).",
-                    "Le re-screen reproduit le critère de liquidité (ADV), pas un "
-                    "screen fondamental.",
+                    "tickers existant aujourd'hui (les titres délistés sont absents).",
                     "Les appels de marge sont évalués sur le plus-bas intraday (low yfinance) "
                     "quand disponible, sinon sur le cours de clôture.",
                 ] + ([
+                    f"⚠️ Période demandée ({years} ans) tronquée : le cache daily ne remonte "
+                    f"qu'au {start.strftime('%Y-%m-%d')}. Lance une collecte COMPLÈTE "
+                    f"(Config → Données de marché → recollecte complète) pour backtester plus loin."
+                ] if clamped_years else []) + ([
                     "⚠️ RUINE : l'effet de levier a été balayé par une chute violente "
                     "(equity tombée à zéro). Le backtest s'arrête à cette date."
                 ] if sim['ruined'] else []) + ([
@@ -1039,6 +1079,39 @@ class BacktestService:
             return []
         return [{'t': idx.strftime('%Y-%m-%d'), 'v': round(float(v), 4)}
                 for idx, v in s.items() if pd.notna(v)]
+
+    @staticmethod
+    def _regime_segments(bench_close, dates):
+        """
+        Segments bull/bear du marché sur la plage de la courbe d'équité.
+        Définition alignée sur le live (get_market_regime) : BULL si le benchmark est
+        au-dessus de sa SMA200, BEAR sinon. Retourne une liste compacte de segments
+        contigus : [{'regime': 'bull'|'bear', 'start': 'YYYY-MM-DD', 'end': ...}].
+        """
+        if bench_close is None or len(bench_close) == 0 or len(dates) == 0:
+            return []
+        try:
+            sma200 = bench_close.rolling(200, min_periods=200).mean()
+            reg = pd.Series(np.where(bench_close > sma200, 'bull', 'bear'),
+                            index=bench_close.index)
+            reg = reg[sma200.notna()]                       # ignore le warmup SMA200
+            d0, d1 = dates.min(), dates.max()
+            reg = reg[(reg.index >= d0) & (reg.index <= d1)]
+            if reg.empty:
+                return []
+            # Compresser les jours consécutifs de même régime en segments
+            groups = (reg != reg.shift()).cumsum()
+            segments = []
+            for _, grp in reg.groupby(groups):
+                segments.append({
+                    'regime': str(grp.iloc[0]),
+                    'start': grp.index[0].strftime('%Y-%m-%d'),
+                    'end': grp.index[-1].strftime('%Y-%m-%d'),
+                })
+            return segments
+        except Exception as e:
+            logger.warning('_regime_segments : %s', e)
+            return []
 
     @staticmethod
     def _monthly_returns(port_ret):

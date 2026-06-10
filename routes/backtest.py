@@ -52,7 +52,7 @@ def backtest_defaults():
     return jsonify({
         'capital': DEFAULT_CAPITAL,
         'years': DEFAULT_YEARS,
-        'years_options': [1, 3, 5, 10],
+        'years_options': [1, 3, 5, 10, 20, 30],
         'nb_top': nb_top,
         'config': vs,
         'assumptions': {
