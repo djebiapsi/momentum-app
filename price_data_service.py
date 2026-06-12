@@ -384,6 +384,23 @@ class PriceDataService:
         tickers.update(BENCHMARKS)
         return sorted(tickers)
 
+    def former_member_tickers(self):
+        """
+        Tickers passés par un indice mais plus membres aujourd'hui. Collectés en
+        plus de target_tickers() pour donner au backtest point-in-time
+        l'historique des titres SORTIS de l'indice (réduction du biais de
+        survivance). Beaucoup sont délistés → yfinance ne renverra rien :
+        toléré, et exclu du calcul d'alerte d'échec.
+
+        « Membre actuel » est déduit d'IndexMembership même (intervalle ouvert,
+        end_date NULL) et non d'IndexConstituent : reste correct si la table des
+        constituants n'a pas encore été peuplée (1er lancement / dev).
+        """
+        from models import IndexMembership
+        rows = IndexMembership.query.all()
+        current = {r.ticker for r in rows if r.end_date is None}
+        return sorted({r.ticker for r in rows} - current)
+
     # =====================================================================
     # COLLECTE DES PRIX
     # =====================================================================
@@ -560,6 +577,33 @@ class PriceDataService:
         daily_stats = self._collect_interval(
             tickers, MarketPriceBar, '1d', full, 'daily')
 
+        # Anciens membres d'indices (backtest point-in-time) — collectés à part :
+        # leurs échecs (titres délistés, symboles disparus) ne déclenchent PAS
+        # l'alerte. En incrémental, on ne retente que ceux qui ont déjà des barres
+        # (les morts ne sont re-tentés qu'en collecte complète full=True).
+        former_summary = None
+        try:
+            former = self.former_member_tickers()
+            if former:
+                if full:
+                    former_m_list = former_d_list = former
+                else:
+                    former_m_list = sorted(self._last_dates(MonthlyPriceBar, former))
+                    former_d_list = sorted(self._last_dates(MarketPriceBar, former))
+                fm = self._collect_interval(
+                    former_m_list, MonthlyPriceBar, '1mo', full, 'monthly_former') \
+                    if former_m_list else None
+                fd = self._collect_interval(
+                    former_d_list, MarketPriceBar, '1d', full, 'daily_former') \
+                    if former_d_list else None
+                former_summary = {
+                    'candidates': len(former),
+                    'monthly': fm,
+                    'daily': fd,
+                }
+        except Exception as e:
+            logger.warning('Collecte anciens membres : %s', e)
+
         # Taux d'échec (sur la base mensuelle = source de vérité du momentum)
         n = len(tickers)
         fail_ratio_m = len(monthly_stats['failed']) / n if n else 0.0
@@ -572,6 +616,7 @@ class PriceDataService:
             'constituents_refreshed': refreshed,
             'monthly': monthly_stats,
             'daily': daily_stats,
+            'former_members': former_summary,
             'fail_ratio_monthly': round(fail_ratio_m, 3),
             'fail_ratio_daily': round(fail_ratio_d, 3),
             'alert_sent': False,
