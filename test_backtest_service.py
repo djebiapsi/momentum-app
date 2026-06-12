@@ -22,6 +22,22 @@ def svc():
     return BacktestService(momentum_service=None, screener_service=None)
 
 
+def test_listed_after_start_accepte_ipo_post_start(svc):
+    """Un titre coté APRÈS le début du backtest (IPO) doit être gardé depuis la DB."""
+    from datetime import date
+    df = _daily_frame('2012-05-18', 200, 0.001, 0.01, 10e6)  # META : IPO mai 2012
+    start = date(2006, 6, 1)
+    # 1ʳᵉ barre mensuelle ≈ 1ʳᵉ barre daily → historique complet, on garde
+    assert svc._listed_after_start(df, date(2012, 5, 1), start)
+    # Mensuel bien plus ancien → daily tronqué, il faut aller chercher plus profond
+    assert not svc._listed_after_start(df, date(1994, 7, 1), start)
+    # Pas d'info mensuelle → comportement historique (réseau)
+    assert not svc._listed_after_start(df, None, start)
+    # Historique couvrant déjà start → géré par _db_covers, pas ici
+    df_old = _daily_frame('2005-01-03', 200, 0.001, 0.01, 10e6)
+    assert not svc._listed_after_start(df_old, date(2005, 1, 1), start)
+
+
 def test_momentum_12_1(svc):
     # 14 mois croissants → momentum positif ; le dernier mois est exclu
     idx = pd.date_range('2020-01-31', periods=14, freq='ME')

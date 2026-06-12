@@ -235,6 +235,41 @@ class BacktestService:
             return False  # historique trop court pour la période demandée
         return bool(df['volume'].notna().any())
 
+    @staticmethod
+    def _listed_after_start(df, monthly_min, start_date):
+        """
+        Vrai si le daily DB couvre toute la vie cotée du titre alors que celle-ci
+        commence APRÈS le début du backtest (IPO/spin-off post-start : META 2012,
+        V 2008, ABBV 2013…). Sans ça, ces titres étaient intégralement exclus des
+        backtests longs (« skipped ») au lieu d'entrer point-in-time à leur listing
+        — un biais baissier massif sur 20 ans.
+
+        Critère : la 1ʳᵉ barre daily ≈ la 1ʳᵉ barre mensuelle (la collecte mensuelle
+        remonte 32 ans) → il n'existe rien de plus profond à récupérer au réseau.
+        """
+        if df is None or df.empty or monthly_min is None:
+            return False
+        first_daily = df.index.min().date()
+        if first_daily <= start_date:
+            return False  # couvert par _db_covers
+        if first_daily > monthly_min + timedelta(days=45):
+            return False  # daily tronqué (il existe du mensuel plus ancien)
+        return bool(df['volume'].notna().any())
+
+    def _monthly_min_dates(self, tickers):
+        """{ticker: première barre mensuelle en base} (1 requête groupée)."""
+        try:
+            from models import MonthlyPriceBar, db
+            from sqlalchemy import func
+            rows = (db.session.query(MonthlyPriceBar.ticker,
+                                     func.min(MonthlyPriceBar.bar_date))
+                    .filter(MonthlyPriceBar.ticker.in_([t.upper() for t in tickers]))
+                    .group_by(MonthlyPriceBar.ticker).all())
+            return {t: d for t, d in rows if d is not None}
+        except Exception as e:
+            logger.warning('_monthly_min_dates : %s', e)
+            return {}
+
     def _fetch_ticker(self, ticker, nb_jours):
         """
         Récupère + persiste l'historique d'un ticker (avec volume) :
@@ -301,10 +336,14 @@ class BacktestService:
                 if low_series.notna().any():
                     lows[t] = low_series
 
-        # Passe 1 : cache DB
+        # Passe 1 : cache DB. Un titre est couvert s'il a l'historique depuis
+        # start_date, OU si son historique complet commence après (IPO post-start
+        # → entrée point-in-time, rien de plus profond à récupérer).
+        monthly_min = self._monthly_min_dates(tickers)
         for t in tickers:
             df = self._load_db(t, start_date)
-            if self._db_covers(df, start_date):
+            if self._db_covers(df, start_date) or \
+               self._listed_after_start(df, monthly_min.get(t.upper()), start_date):
                 _add(t, df)
             else:
                 missing.append(t)
