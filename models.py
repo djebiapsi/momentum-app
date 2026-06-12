@@ -476,6 +476,39 @@ class IndexConstituent(db.Model):
         }
 
 
+class IndexMembership(db.Model):
+    """
+    Historique point-in-time d'appartenance aux indices (S&P 500 / Nasdaq-100).
+
+    Une ligne = un intervalle de présence [start_date, end_date) d'un ticker dans
+    un indice. start_date NULL = membre depuis avant le début de l'historique
+    Wikipédia ; end_date NULL = toujours membre aujourd'hui. Un ticker peut avoir
+    plusieurs intervalles (entrées/sorties multiples de l'indice).
+
+    Reconstruite (delete + insert, idempotent) par
+    PriceDataService.rebuild_membership_history() depuis la table « Selected
+    changes » de Wikipédia. Lue par le backtest pour filtrer l'univers
+    point-in-time et réduire le biais de survivance.
+    """
+    __tablename__ = 'index_memberships'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticker = db.Column(db.String(12), nullable=False, index=True)
+    index_name = db.Column(db.String(12), nullable=False)  # 'SP500' | 'NDX100'
+    start_date = db.Column(db.Date, nullable=True)   # NULL = avant l'historique connu
+    end_date = db.Column(db.Date, nullable=True)     # NULL = toujours membre
+    source = db.Column(db.String(20), default='wikipedia')  # 'wikipedia' | 'current'
+
+    def to_dict(self):
+        return {
+            'ticker': self.ticker,
+            'index_name': self.index_name,
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'end_date': self.end_date.isoformat() if self.end_date else None,
+            'source': self.source,
+        }
+
+
 class CashFlow(db.Model):
     """
     Flux de capitaux (dépôts / retraits) extraits du rapport Flex IBKR.

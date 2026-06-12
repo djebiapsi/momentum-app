@@ -358,6 +358,52 @@ class BacktestService:
             return pd.DataFrame()
 
     # ------------------------------------------------------------------
+    # Univers point-in-time (IndexMembership — réduction du biais de survivance)
+    # ------------------------------------------------------------------
+    def _load_membership(self, tickers):
+        """
+        Charge les intervalles d'appartenance aux indices (IndexMembership) pour
+        le filtre point-in-time : {ticker: [(start_ts|None, end_ts|None), ...]}.
+        Union sur les indices (membre du S&P 500 OU du Nasdaq-100 → éligible).
+        Renvoie None si la table est vide (pas encore reconstruite) → aucun
+        filtrage, comportement historique conservé.
+        """
+        try:
+            from models import IndexMembership
+            upper = [t.upper() for t in tickers]
+            rows = IndexMembership.query.filter(IndexMembership.ticker.in_(upper)).all()
+            if not rows:
+                if IndexMembership.query.count() == 0:
+                    logger.info('IndexMembership vide — filtre point-in-time désactivé')
+                    return None
+                # Table peuplée mais aucun ticker du pool dedans : on filtre quand
+                # même (les absents sont traités comme membres, cf. _member_at).
+            membership = {}
+            for r in rows:
+                s = pd.Timestamp(r.start_date) if r.start_date else None
+                e = pd.Timestamp(r.end_date) if r.end_date else None
+                membership.setdefault(r.ticker, []).append((s, e))
+            return membership
+        except Exception as e:
+            logger.warning('_load_membership échec : %s — filtre désactivé', e)
+            return None
+
+    @staticmethod
+    def _member_at(membership, ticker, as_of):
+        """
+        Vrai si `ticker` appartient à un indice à la date `as_of` (intervalle
+        [start, end)). Un ticker absent de la table n'est PAS exclu (benchmarks,
+        données manquantes) — le filtre ne doit jamais créer de faux négatifs.
+        """
+        ivs = membership.get(ticker)
+        if ivs is None:
+            return True
+        for s, e in ivs:
+            if (s is None or s <= as_of) and (e is None or as_of < e):
+                return True
+        return False
+
+    # ------------------------------------------------------------------
     # Optimisation des paramètres (grid search vol_target × max_exposure)
     # ------------------------------------------------------------------
     def optimize(self, years=10, nb_top=5, capital=10000.0, quick=False,
@@ -413,6 +459,7 @@ class BacktestService:
         nb_jours = int((end - start).days) + 13 * 31 + 200
 
         pool = self.build_candidate_pool()
+        membership = self._load_membership(pool)
         close_px, dvol, low_px, _ = self.fetch_history(
             pool, nb_jours, start.date(), max_fetch=0)
 
@@ -471,7 +518,8 @@ class BacktestService:
                     'portfolio_vol_threshold_pct': 20.0,
                 }
                 wdf, meta_w = self.build_weight_matrix(
-                    monthly_px, daily_ret, dvol, start, params_w, mom_cache=mom_cache)
+                    monthly_px, daily_ret, dvol, start, params_w, mom_cache=mom_cache,
+                    membership=membership)
                 if wdf.empty:
                     continue
                 sim = self._simulate(wdf, daily_ret, start, end,
@@ -561,7 +609,8 @@ class BacktestService:
         v = float(r.std(ddof=0)) * math.sqrt(TRADING_DAYS)
         return v if v > 1e-6 else self.VOL_DEFAULT
 
-    def compute_weights(self, as_of, universe, monthly_px, daily_ret, params, mom_cache=None):
+    def compute_weights(self, as_of, universe, monthly_px, daily_ret, params, mom_cache=None,
+                        membership=None):
         """
         Poids cibles à `as_of` pour `universe` (reproduit la config live) :
           1. momentum 12-1 > 0, garder top `nb_top` ;
@@ -573,12 +622,18 @@ class BacktestService:
         `mom_cache` (dict optionnel) : mémoïse le momentum par (ticker, as_of). Le
         momentum 12-1 ne dépend pas des paramètres de pondération → partager ce cache
         entre les combos d'optimize() évite de recalculer ~600 momentums × 50 combos.
+
+        `membership` (dict optionnel, cf. _load_membership) : filtre point-in-time —
+        seuls les titres membres d'un indice à `as_of` sont éligibles (réduction du
+        biais de survivance). None = pas de filtrage.
         """
         nb_top = params['nb_top']
         # 1) sélection momentum
         moms = []
         for t in universe:
             if t not in monthly_px.columns:
+                continue
+            if membership is not None and not self._member_at(membership, t, as_of):
                 continue
             if mom_cache is not None:
                 ckey = (t, as_of)
@@ -624,7 +679,8 @@ class BacktestService:
     # ------------------------------------------------------------------
     # 5) Construction de la matrice de poids (univers trimestriel + poids mensuels)
     # ------------------------------------------------------------------
-    def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params, mom_cache=None):
+    def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params, mom_cache=None,
+                            membership=None):
         """
         Pour chaque fin de mois ≥ start : calcule les poids cibles en classant le
         momentum sur TOUT l'univers disponible — **aucun screener, identique à
@@ -645,7 +701,8 @@ class BacktestService:
         n_riskoff = 0
 
         for d in month_ends:
-            w = self.compute_weights(d, universe, monthly_px, daily_ret, params, mom_cache=mom_cache)
+            w = self.compute_weights(d, universe, monthly_px, daily_ret, params,
+                                     mom_cache=mom_cache, membership=membership)
             # Risk-off (aucun momentum positif) → on passe réellement en cash
             # (ligne de poids nulle), au lieu de conserver le panier du mois précédent.
             if w.empty:
@@ -654,7 +711,8 @@ class BacktestService:
             weights[d] = w
 
         meta = {'n_rebalances': 0, 'n_universe_changes': 0,
-                'n_riskoff_months': n_riskoff}
+                'n_riskoff_months': n_riskoff,
+                'pit_universe': membership is not None}
         if not weights:
             return pd.DataFrame(), meta
         wdf = pd.DataFrame(weights).T.reindex(columns=monthly_px.columns).fillna(0.0)
@@ -954,6 +1012,9 @@ class BacktestService:
         nb_jours = int((end - start).days) + 13 * 31 + 200
 
         pool = self.build_candidate_pool(pool_size)
+        # Filtre point-in-time (IndexMembership) : réduit le biais de survivance
+        # en n'autorisant un titre qu'aux dates où il appartenait à un indice.
+        membership = self._load_membership(pool)
         close_px, dvol, low_px, fmeta = self.fetch_history(pool, nb_jours, start.date(), progress)
         if close_px.empty:
             raise RuntimeError(
@@ -997,7 +1058,8 @@ class BacktestService:
         else:
             monthly_px = monthly_px_daily
 
-        weights_df, meta = self.build_weight_matrix(monthly_px, daily_ret, dvol, start, params)
+        weights_df, meta = self.build_weight_matrix(monthly_px, daily_ret, dvol, start, params,
+                                                    membership=membership)
         if weights_df.empty:
             raise RuntimeError("Aucun signal sur la période (période trop courte ou données insuffisantes).")
 
@@ -1047,6 +1109,7 @@ class BacktestService:
                 'n_rebalances': meta['n_rebalances'],
                 'n_universe_changes': meta['n_universe_changes'],
                 'n_riskoff_months': meta.get('n_riskoff_months', 0),
+                'pit_universe': meta.get('pit_universe', False),
                 'warnings': ([
                     "Biais de survivance résiduel : l'univers candidat est constitué des "
                     "tickers existant aujourd'hui (les titres délistés sont absents).",

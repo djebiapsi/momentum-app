@@ -12,7 +12,9 @@
       "WebFetch(domain:interactivebrokers.github.io)",
       "Bash(python -c \":*)",
       "Bash(python *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(git -C \"C:/Users/POZIDEV2/Documents/momentum-app\" diff --stat price_data_service.py)",
+      "Bash(git -C \"C:/Users/POZIDEV2/Documents/momentum-app\" diff price_data_service.py)"
     ]
   }
 }

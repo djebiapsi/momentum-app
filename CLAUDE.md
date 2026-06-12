@@ -17,10 +17,17 @@ cp env-example.txt .env   # fill in API keys
 flask run                  # or: python app.py
 
 # Run tests
-python -m pytest test_options_service.py -v
+python -m pytest test_options_service.py test_backtest_service.py -v
 
 # Run a single test
 python -m pytest test_options_service.py::TestBlackScholes::test_put_price_atm -v
+
+# API smoke test (all routes, response times, report in logs/)
+python health_check.py                               # local :5000, token from .env
+python health_check.py https://95.216.198.241 --full # remote, incl. write tests
+
+# Backtest parameter grid search (vol_target × max_exposure)
+python optimize_backtest.py --quick
 
 # Production server (local)
 gunicorn app:app --workers 1
@@ -50,11 +57,13 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `auth.py` | `@require_admin` decorator (checks `X-Admin-Token` via `current_app.config`) |
 | `services.py` | Service singletons registry + accessors (`get_momentum_service()`, …) and the `ibkr_service` instance |
 | `core.py` | Business logic shared by routes **and** jobs (long calc, momentum CSV, market monitor lifecycle, briefing payload) |
-| `routes/` | One Flask Blueprint per domain: `pages`, `settings`, `panel`, `momentum`, `short`, `options`, `ibkr`, `market`, `backtest`, `prices` |
+| `routes/` | One Flask Blueprint per domain: `pages`, `settings`, `panel`, `momentum`, `short`, `options`, `ibkr`, `market`, `backtest`, `prices`, `push` |
 | `jobs.py` | Scheduled task bodies (`app` injected by the scheduler) |
-| `scheduler.py` | `create_scheduler(app)` — builds the APScheduler and registers the 4 crons |
+| `scheduler.py` | `create_scheduler(app)` — builds the APScheduler and registers the crons |
+| `cache_utils.py` | `TTLCache` in-memory cache (spares the ~50 req/h Tiingo quota) |
+| `_bt_worker.py` | Backtest worker run as a subprocess by `/api/backtest/run` (own interpreter → gunicorn stays responsive; IBKR disabled, DB cache + Tiingo only) |
 
-**Service classes (unchanged, already modular):**
+**Service classes:**
 
 | File | Role |
 |---|---|
@@ -65,20 +74,21 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `short_screener_service.py` | Legacy short screener (superseded by `finviz_screener_service`) |
 | `screener_service.py` | Long screener via Tiingo IEX bulk endpoint |
 | `options_service.py` | Black-Scholes Greeks, PUT/PUT SPREAD strategy engine |
-| `backtest_service.py` | Backtest momentum : univers re-screené /3 mois (ADV point-in-time), config live, moteur de rééquilibrage vectorisé, stats via `quantstats` |
+| `backtest_service.py` | Momentum backtest, same method as `calculate`: 12-1 ranked on the full SP500+NDX100 universe (no screener, no ADV filter), live config from `Settings`, realistic day-by-day engine (transaction costs, borrow interest, DCA/TWR vs MWR, margin calls, risk-off = cash), stats via `quantstats` |
 | `email_service.py` | HTML email via Resend API |
-| `news_service.py` | Fetch RSS feeds + LLM summary (OpenAI-compatible API) for the bi-daily digest |
+| `news_service.py` | Fetch RSS feeds + LLM summary (OpenAI-compatible API) for the digests |
 | `market_monitor_service.py` | Real-time market alert monitoring (price alerts, VIX, futures) |
 | `ibkr_service.py` | IBKR TWS API client (asyncio thread); port 4001 paper / 4003 live via socat |
-| `price_data_service.py` | yfinance background collector: SP500 + NDX100 daily & monthly history |
+| `price_data_service.py` | yfinance background collector: SP500 + NDX100 daily (~6 y → `MarketPriceBar`) & monthly (~20 y → `MonthlyPriceBar`); incremental, index composition re-checked monthly via Wikipedia. Treated as a fragile best-effort source |
 | `flex_service.py` | IBKR Flex Web Service: NAV, transactions, dividends via Flex Queries (2-step async) |
+| `push_service.py` | Web Push (VAPID) notifications for the PWA; keys auto-generated and stored in `Settings` |
 
 **Frontend (split out of the former monolithic `templates/index.html`):**
 
 | Path | Role |
 |---|---|
 | `templates/index.html` | HTML shell: `<head>`, `{% include %}` of page partials, `<link>`/`<script>` to assets |
-| `templates/partials/*.html` | One partial per page (`_dashboard`, `_short`, `_panel`, `_history`, `_settings`, `_options`, `_perf`, `_market`) + `_modals`, `_nav` |
+| `templates/partials/*.html` | One partial per page (`_dashboard`, `_short`, `_panel`, `_history`, `_settings`, `_options`, `_perf`, `_market`, `_backtest`) + `_modals`, `_nav` |
 | `static/css/app.css` | All styles |
 | `static/js/*.js` | Vanilla JS in load order: `core` → `dashboard` → `panel` → `short` → `options` → `perf` → `backtest` (classic scripts, shared global scope) |
 
@@ -90,19 +100,23 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 
 **Options**: `OptionRecommendation` (flat table with all Greeks and strategy details)
 
-**Config**: `Settings` (key-value store for `nb_top`, `date_calcul`)
+**Config**: `Settings` (key-value store: `nb_top`, `date_calcul`, VAPID keys, …)
 
-**Prices cache**: `MarketPriceBar` (IBKR daily bars per ticker, used by backtest prefill)
+**Prices**: `MarketPriceBar` (daily bars, IBKR + yfinance via `source` column — read by the backtest), `MonthlyPriceBar` (long monthly history for momentum), `IndexConstituent` (SP500/NDX100 membership)
+
+**Portfolio/IBKR**: `PortfolioSnapshot`, `Transaction`, `Dividend`, `CashFlow` (Flex imports), `MarketEvent` (monitor alerts), `PushSubscription` (Web Push subscribers)
 
 SQLite in development (`instance/` folder), PostgreSQL in production. `config.py` patches `postgres://` → `postgresql://` for SQLAlchemy compatibility.
 
 ### Strategy Logic
 
-**Long (12-1 Momentum)**: Momentum = `(Price[T-1m] - Price[T-12m]) / Price[T-12m] × 100`. Skips last month to avoid mean reversion. Recommends top N tickers.
+**Long (12-1 Momentum)**: Momentum = `(Price[T-1m] - Price[T-12m]) / Price[T-12m] × 100`. Skips last month to avoid mean reversion. Ranked on the **full SP500+NDX100 universe** (~600 tickers, DB-only bulk calculation); recommends top N tickers.
 
-**Short (63-5 Momentum)**: Momentum = `(Price[T-5] / Price[T-63]) - 1`. Targets stocks with Death Cross (Price < SMA50 < SMA200). Entry criteria: `perf_1m ≤ -8%`, `perf_3m ≤ -15%`.
+**Short (63-5 Momentum)**: Momentum = `(Price[T-5] / Price[T-63]) - 1`. Targets stocks with Death Cross (Price < SMA50 < SMA200) via Finviz. Entry criteria: `perf_1m ≤ -8%`, `perf_3m ≤ -15%`.
 
 **Options**: Black-Scholes PUT pricing targeting 30–60 DTE, delta −0.25 to −0.40. PUT SPREAD uses a short put at delta −0.10.
+
+Strategy rationale and methodology are documented in `docs/` (`METHODOLOGY.md`, `stratégie_short.md`).
 
 ### Authentication
 
@@ -110,22 +124,22 @@ SQLite in development (`instance/` folder), PostgreSQL in production. `config.py
 
 ### Frontend
 
-Vanilla JavaScript (no framework, no build step). The HTML shell `templates/index.html` includes page partials from `templates/partials/` and loads `static/css/app.css` + `static/js/*.js`. The JS files are **classic scripts** sharing one global scope (handlers are wired via inline `onclick=`), so **load order matters** — keep the order in `index.html` (`core` first). All API calls go to `/api/*`. PWA manifest and service worker in `static/` enable iOS home screen installation.
+Vanilla JavaScript (no framework, no build step). The HTML shell `templates/index.html` includes page partials from `templates/partials/` and loads `static/css/app.css` + `static/js/*.js`. The JS files are **classic scripts** sharing one global scope (handlers are wired via inline `onclick=`), so **load order matters** — keep the order in `index.html` (`core` first). All API calls go to `/api/*`. PWA manifest and service worker in `static/` enable iOS home screen installation and Web Push notifications.
 
 ### Deployment
 
 VPS Hetzner (`root@95.216.198.241`), Docker Compose. Gunicorn 1 worker. **SSH** : `ssh -i ~/.ssh/id_ed25519 root@95.216.198.241`. PostgreSQL dans un conteneur `db`. Variables d'environnement dans `/opt/momentum-app/.env`. IB Gateway dans un conteneur séparé (`ib-gateway`), exposé via socat port 4003 (live) / 4001 (paper).
 
-### Scheduled Jobs (8 crons)
+### Scheduled Jobs
 
 | Job | Schedule | Description |
 |---|---|---|
-| `job_market_monitor` | Every minute, mon–fri 9h30–16h ET | Real-time alerts during US session |
-| `job_market_monitor_offhours` | Every 15 min, 24/7 | VIX/futures off-hours (skips during US session) |
-| `job_briefing('open')` | 9h15 ET mon–fri | Pre-open briefing email |
-| `job_briefing('mid')` | 12h30 ET mon–fri | Mid-session briefing email |
-| `job_briefing('close')` | 16h05 ET mon–fri | Closing briefing email |
+| `job_market_monitor` | Every minute, mon–fri 9h–16h ET | Real-time alerts during US session |
+| `job_market_monitor_offhours` | Every 15 min, 24/7 | VIX/futures off-hours (skips during US session); also watches IBKR connectivity and can restart the IB Gateway container |
+| `job_briefing('open'/'mid'/'close')` | 9h15 / 12h30 / 16h05 ET mon–fri | Briefing emails |
 | `job_rebalance_reminder` | 1st of month 8h00 ET | Runs momentum calc + sends rebalance email |
-| `job_refresh_prices` | 22h00 ET mon–fri | Refreshes IBKR price cache + backtest pool prefill |
+| `job_refresh_prices` | 22h00 ET mon–fri | Refreshes price cache (benchmark + panel) |
 | `job_collect_prices` | 00h00 Europe/Paris | yfinance SP500/NDX100 incremental collection |
 | `job_digest_actualites` | 10h00 + 20h00 Europe/Paris | RSS news digest via LLM, sent to hard-coded recipients |
+| `job_digest_tech` | 10h05 Europe/Paris | Tech & AI digest (personal recipient) |
+| `job_screener_reminder` | Last day of Mar/Jun/Sep/Dec, 9h00 ET | Quarterly screener reminder |

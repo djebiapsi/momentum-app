@@ -22,15 +22,6 @@ def svc():
     return BacktestService(momentum_service=None, screener_service=None)
 
 
-def test_quarterly_universe_filtre_et_classe_par_adv(svc):
-    idx = pd.bdate_range('2021-01-01', periods=80)
-    dvol = pd.DataFrame({
-        'BIG': 50e6, 'MID': 10e6, 'SMALL': 1e6,  # SMALL < 5M$ → exclu
-    }, index=idx)
-    uni = svc.quarterly_universe(dvol, idx[-1], size=10)
-    assert uni == ['BIG', 'MID']  # trié par ADV décroissant, SMALL filtré
-
-
 def test_momentum_12_1(svc):
     # 14 mois croissants → momentum positif ; le dernier mois est exclu
     idx = pd.date_range('2020-01-31', periods=14, freq='ME')

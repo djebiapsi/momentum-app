@@ -27,6 +27,23 @@ def prices_collect():
                     'message': 'Collecte lancée en arrière-plan' + (' (complète)' if full else '')})
 
 
+@bp.route('/api/prices/membership/rebuild', methods=['POST'])
+@require_admin
+def membership_rebuild():
+    """
+    Reconstruit l'historique point-in-time des constituants (IndexMembership)
+    depuis la table « Selected changes » de Wikipédia. Utilisé par le backtest
+    pour réduire le biais de survivance. Sinon reconstruit automatiquement au
+    rafraîchissement mensuel de la composition.
+    """
+    svc = get_price_data_service()
+    try:
+        summary = svc.rebuild_membership_history()
+        return jsonify({'success': True, **summary})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @bp.route('/api/prices/status', methods=['GET'])
 def prices_status():
     """État de la collecte + couverture de la base (pour l'UI)."""

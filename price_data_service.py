@@ -46,7 +46,7 @@ BENCHMARKS = ['SPY', 'QQQ', '^GSPC', '^NDX']
 class PriceDataService:
     # --- Horizons de collecte -------------------------------------------------
     MONTHLY_YEARS = 32      # historique mensuel max
-    DAILY_YEARS = 32         # daily : 30 ans de backtest + ~13 mois de lookback momentum
+    DAILY_YEARS = 21         # daily : 20 ans de backtest + ~13 mois de lookback momentum
 
     # --- Rate limiting --------------------------------------------------------
     CHUNK_SIZE = 40         # tickers par lot yf.download (threads internes)
@@ -153,6 +153,14 @@ class PriceDataService:
         if not force and last:
             try:
                 if datetime.fromisoformat(last) > datetime.utcnow() - timedelta(days=self.CONSTITUENTS_TTL_DAYS):
+                    # Bootstrap : si l'historique point-in-time n'a jamais été
+                    # construit (table nouvelle), le faire même compo à jour.
+                    from models import IndexMembership
+                    if IndexMembership.query.count() == 0 and IndexConstituent.query.count() > 0:
+                        try:
+                            self.rebuild_membership_history()
+                        except Exception as e:
+                            logger.warning('rebuild_membership_history (bootstrap) échoué : %s', e)
                     return False, IndexConstituent.query.filter_by(is_active=True).count()
             except ValueError:
                 pass
@@ -197,7 +205,176 @@ class PriceDataService:
         Settings.set('constituents_refreshed_at', now.isoformat())
         active = IndexConstituent.query.filter_by(is_active=True).count()
         logger.info('Composition rafraîchie : %d actifs', active)
+        # Reconstruit l'historique point-in-time dans la foulée (non bloquant)
+        try:
+            self.rebuild_membership_history()
+        except Exception as e:
+            logger.warning('rebuild_membership_history échoué : %s', e)
         return True, active
+
+    # =====================================================================
+    # HISTORIQUE POINT-IN-TIME DES CONSTITUANTS (biais de survivance)
+    # =====================================================================
+    def _fetch_sp500_changes(self):
+        """
+        Scrape la table « Selected changes » de la page Wikipédia du S&P 500
+        (ajouts/retraits datés, remonte aux années 90). Renvoie une liste
+        d'événements [(date, ticker, 'add'|'remove')] triée par date.
+        """
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        r = requests.get(url, headers={'User-Agent': _UA}, timeout=25)
+        r.raise_for_status()
+        tables = pd.read_html(io.StringIO(r.text))
+        for t in tables:
+            events = self._parse_changes_table(t)
+            if events:
+                return events
+        raise ValueError('Table « Selected changes » introuvable sur la page S&P 500')
+
+    @classmethod
+    def _parse_changes_table(cls, df):
+        """
+        Parse un DataFrame candidat de la table « Selected changes » (colonnes
+        MultiIndex : Date / Added Ticker / Removed Ticker). Renvoie la liste
+        d'événements [(date, ticker, 'add'|'remove')] triée, ou [] si le
+        DataFrame n'a pas la structure attendue.
+        """
+        def _flat(c):
+            if isinstance(c, tuple):
+                parts = [str(x) for x in c if str(x).lower() != 'nan']
+                return ' '.join(parts).strip().lower()
+            return str(c).strip().lower()
+
+        cols = [_flat(c) for c in df.columns]
+
+        def _find(*words):
+            for i, c in enumerate(cols):
+                if all(w in c for w in words):
+                    return i
+            return None
+
+        i_date = _find('date')
+        i_add = _find('added', 'ticker')
+        i_rem = _find('removed', 'ticker')
+        if i_date is None or i_add is None or i_rem is None:
+            return []
+
+        events = []
+        for _, row in df.iterrows():
+            d = pd.to_datetime(row.iloc[i_date], errors='coerce')
+            if pd.isna(d):
+                continue
+            d = d.date()
+            for idx, action in ((i_add, 'add'), (i_rem, 'remove')):
+                sym = row.iloc[idx]
+                if pd.isna(sym):
+                    continue
+                sym = cls._norm_symbol(sym)
+                if sym and sym != 'NAN':
+                    events.append((d, sym, action))
+        events.sort(key=lambda e: e[0])
+        return events
+
+    @staticmethod
+    def build_membership_intervals(events, current_members):
+        """
+        Reconstruit les intervalles d'appartenance [start, end) par ticker.
+
+        events          : [(date, ticker, 'add'|'remove')] (tri quelconque)
+        current_members : set des tickers actuellement dans l'indice
+
+        Renvoie {ticker: [(start|None, end|None), ...]} —
+        start None = membre depuis avant l'historique ; end None = encore membre.
+        Réconcilie avec la composition actuelle : un membre actuel sans événement
+        est membre « depuis toujours » ; un membre actuel dont le dernier
+        intervalle est fermé est rouvert (ré-entrée non tracée) ; un non-membre
+        avec intervalle ouvert est fermé à aujourd'hui (sortie non encore tracée).
+        """
+        by_ticker = {}
+        for d, sym, action in sorted(events, key=lambda e: e[0]):
+            by_ticker.setdefault(sym, []).append((d, action))
+
+        intervals = {}
+        for sym, evs in by_ticker.items():
+            ivs, open_start, has_open = [], None, False
+            for d, action in evs:
+                if action == 'add':
+                    if has_open:
+                        continue  # double ajout (bruit) → on garde l'intervalle ouvert
+                    open_start, has_open = d, True
+                else:
+                    if has_open:
+                        ivs.append((open_start, d))
+                        has_open = False
+                    else:
+                        # retiré sans ajout connu → membre depuis avant l'historique
+                        ivs.append((None, d))
+            if has_open:
+                ivs.append((open_start, None))
+            intervals[sym] = ivs
+
+        for sym in current_members:
+            ivs = intervals.get(sym)
+            if not ivs:
+                intervals[sym] = [(None, None)]  # aucun événement → depuis toujours
+            elif ivs[-1][1] is not None:
+                # membre actuel mais dernier intervalle fermé → ré-entrée non
+                # tracée ; on rouvre prudemment à la date de la dernière sortie
+                ivs.append((ivs[-1][1], None))
+
+        today = date.today()
+        for sym, ivs in intervals.items():
+            if sym not in current_members and ivs and ivs[-1][1] is None:
+                ivs[-1] = (ivs[-1][0], today)
+        return intervals
+
+    def rebuild_membership_history(self):
+        """
+        Reconstruit la table IndexMembership (delete + insert, idempotent) :
+          - S&P 500 : intervalles point-in-time depuis « Selected changes » ;
+          - Nasdaq-100 : pas d'historique exploitable sur Wikipédia → membres
+            actuels en intervalle ouvert (limitation : le biais de survivance
+            n'est pas corrigé pour les titres NDX100 jamais passés par le S&P 500).
+        Renvoie un résumé {tickers, intervals, events, earliest_event}.
+        """
+        from models import db, IndexMembership, IndexConstituent
+
+        events = self._fetch_sp500_changes()
+        current_sp = {c.ticker for c in IndexConstituent.query
+                      .filter_by(index_name='SP500', is_active=True).all()}
+        current_ndx = {c.ticker for c in IndexConstituent.query
+                       .filter_by(index_name='NDX100', is_active=True).all()}
+        if not current_sp:
+            # Base vide (1er lancement / dev) : scrape direct de la compo actuelle.
+            # Sans elle, la réconciliation fermerait à tort les intervalles des
+            # membres actuels et ignorerait ceux sans événement (AAPL, NVDA…).
+            data = self.fetch_constituents()
+            current_sp = {sym for sym, _ in data.get('SP500', [])}
+            if not current_ndx:
+                current_ndx = {sym for sym, _ in data.get('NDX100', [])}
+        if not current_sp:
+            raise ValueError('Composition actuelle du S&P 500 indisponible — rebuild annulé')
+        intervals = self.build_membership_intervals(events, current_sp)
+
+        rows = [IndexMembership(ticker=sym, index_name='SP500',
+                                start_date=s, end_date=e, source='wikipedia')
+                for sym, ivs in intervals.items() for s, e in ivs]
+        for sym in current_ndx:
+            rows.append(IndexMembership(ticker=sym, index_name='NDX100',
+                                        start_date=None, end_date=None, source='current'))
+
+        IndexMembership.query.delete()
+        db.session.add_all(rows)
+        db.session.commit()
+
+        summary = {
+            'tickers': len({r.ticker for r in rows}),
+            'intervals': len(rows),
+            'events': len(events),
+            'earliest_event': events[0][0].isoformat() if events else None,
+        }
+        logger.info('Historique d\'appartenance reconstruit : %s', summary)
+        return summary
 
     def target_tickers(self):
         """Liste dédupliquée des tickers à collecter : constituants actifs + benchmarks."""
