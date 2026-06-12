@@ -503,13 +503,24 @@ def build_briefing_payload(session):
     if tickers_pos:
         try:
             import yfinance as yf
+            import pandas as pd
             hist_data = yf.download(
                 tickers_pos, period='5d', interval='1d',
                 group_by='ticker', auto_adjust=True, progress=False
             )
             for t in tickers_pos:
                 try:
-                    col = hist_data['Close'][t] if len(tickers_pos) > 1 else hist_data['Close']
+                    # group_by='ticker' → colonnes (ticker, champ) ; un seul ticker
+                    # peut renvoyer des colonnes plates. L'ancien accès
+                    # hist_data['Close'][t] supposait (champ, ticker) → KeyError
+                    # silencieux : aucune perf intraday dans les briefings.
+                    if isinstance(hist_data.columns, pd.MultiIndex):
+                        if t in hist_data.columns.get_level_values(0):
+                            col = hist_data[t]['Close']
+                        else:
+                            col = hist_data['Close'][t]
+                    else:
+                        col = hist_data['Close']
                     col = col.dropna()
                     if len(col) >= 2:
                         last = float(col.iloc[-1])
@@ -558,13 +569,17 @@ def build_briefing_payload(session):
         pass
 
     # ── 5. Calcul portfolio intraday pondéré ─────────────────────────────────
+    # Seules les positions AVEC donnée intraday comptent : sans aucune donnée,
+    # on renvoie None (l'email affiche « — ») plutôt qu'un faux 0.0.
     portfolio_intraday_pct = None
-    if positions:
-        total_mv = sum(abs(p.get('market_value') or 0) for p in positions)
+    pos_intra = [p for p in positions
+                 if isinstance(p.get('intraday_pct'), (int, float))]
+    if pos_intra:
+        total_mv = sum(abs(p.get('market_value') or 0) for p in pos_intra)
         if total_mv:
             weighted = sum(
-                (abs(p.get('market_value') or 0) / total_mv) * (p.get('intraday_pct') or 0)
-                for p in positions
+                (abs(p.get('market_value') or 0) / total_mv) * p['intraday_pct']
+                for p in pos_intra
             )
             portfolio_intraday_pct = round(weighted, 2)
 
