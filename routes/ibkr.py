@@ -680,6 +680,153 @@ def perf_positions_timeline():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@bp.route('/api/perf/positions-pnl', methods=['GET'])
+@require_admin
+def perf_positions_pnl():
+    """
+    Impact de chaque action sur le portefeuille : pour chaque ticker jamais
+    détenu, reconstruit (coût moyen, chronologique) le cycle de vie de la
+    position à partir des transactions + dividendes.
+
+    Champs renvoyés par position :
+    - statut (ouverte/soldée), dates d'ouverture/fermeture, durée de détention ;
+    - nb d'achats / ventes et nb de prises de bénéfice (ventes partielles) ;
+    - capital investi, encaissé, dividendes perçus ;
+    - P&L réalisé, latent (positions ouvertes), total et performance %.
+
+    Les positions ouvertes AVANT le début de l'historique Flex (ventes sans
+    achat correspondant, ex. AAPL/TSLA) sont marquées `unknown_cost` : le coût
+    d'acquisition est inconnu, la performance % n'est alors pas calculée.
+    """
+    from datetime import datetime as _dt
+    from models import Transaction, Dividend, MarketPriceBar
+
+    try:
+        txs = (Transaction.query
+               .filter(~Transaction.ticker.like('%.%'))
+               .order_by(Transaction.date.asc()).all())
+        if not txs:
+            return jsonify({'success': True, 'positions': [],
+                            'message': 'Aucune transaction. Synchronisez Flex.'})
+
+        tickers = sorted({t.ticker for t in txs})
+
+        # Dividendes cumulés par ticker
+        divs = {}
+        for d in Dividend.query.all():
+            divs[d.ticker] = divs.get(d.ticker, 0.0) + (d.amount or 0.0)
+
+        # Prix courant : IBKR live si connecté, sinon dernière barre connue
+        live_price = {}
+        try:
+            if ibkr_service.ensure_connected():
+                for p in ibkr_service.get_positions():
+                    if p.get('current_price'):
+                        live_price[p['ticker']] = p['current_price']
+        except Exception:
+            pass
+        last_bar = {}
+        for tk in tickers:
+            if tk in live_price:
+                continue
+            row = (MarketPriceBar.query
+                   .filter(MarketPriceBar.ticker == tk)
+                   .order_by(MarketPriceBar.bar_date.desc()).first())
+            if row:
+                last_bar[tk] = row.close if row.close else row.adj_close
+
+        out = []
+        for tk in tickers:
+            rows = [t for t in txs if t.ticker == tk]
+            q = cost = realized = invested = proceeds = 0.0
+            buys = sells = profit_takings = 0
+            open_date = close_date = None
+            unknown_cost = False
+
+            for t in rows:
+                amt = t.amount or 0.0
+                if t.type == 'BUY':
+                    buys += 1
+                    spend = abs(amt) if amt else (t.quantity or 0) * (t.price or 0)
+                    invested += spend
+                    if q <= 1e-9:
+                        open_date = t.date          # (ré)ouverture
+                        close_date = None
+                    q += (t.quantity or 0)
+                    cost += spend
+                else:  # SELL
+                    sells += 1
+                    recv = abs(amt) if amt else (t.quantity or 0) * (t.price or 0)
+                    proceeds += recv
+                    qty = t.quantity or 0
+                    if q > 1e-9:
+                        avg = cost / q
+                        sold = min(qty, q)
+                        # proceeds proportionnels à la part couverte par un coût connu
+                        realized += recv * (sold / qty if qty else 1) - avg * sold
+                        cost -= avg * sold
+                        q -= sold
+                        if qty - sold > 1e-9:       # vente au-delà du stock connu
+                            unknown_cost = True
+                            q = 0.0; cost = 0.0
+                    else:
+                        unknown_cost = True          # vente sans achat connu (pré-historique)
+                    if q <= 1e-9:
+                        close_date = t.date
+                        q = 0.0; cost = 0.0
+                    else:                            # vente partielle, position encore ouverte
+                        profit_takings += 1
+
+            is_open = q > 1e-9
+            price = live_price.get(tk) or last_bar.get(tk)
+            market_value = round(q * price, 2) if (is_open and price) else 0.0
+            unrealized = round(market_value - cost, 2) if (is_open and price) else 0.0
+            dividends = round(divs.get(tk, 0.0), 2)
+            total_pnl = round(realized + unrealized + dividends, 2)
+            perf_pct = round(total_pnl / invested * 100, 2) if (invested > 1e-6 and not unknown_cost) else None
+
+            o = open_date.date() if hasattr(open_date, 'date') else open_date
+            c = close_date.date() if hasattr(close_date, 'date') else close_date
+            end_ref = c if (not is_open and c) else _dt.now().date()
+            holding_days = (end_ref - o).days if o else None
+
+            out.append({
+                'ticker': tk,
+                'status': 'open' if is_open else 'closed',
+                'open_date': o.isoformat() if o else None,
+                'close_date': c.isoformat() if (not is_open and c) else None,
+                'holding_days': holding_days,
+                'buys': buys, 'sells': sells, 'profit_takings': profit_takings,
+                'invested': round(invested, 2),
+                'proceeds': round(proceeds, 2),
+                'dividends': dividends,
+                'remaining_qty': round(q, 4) if is_open else 0.0,
+                'current_price': round(price, 2) if (is_open and price) else None,
+                'market_value': market_value,
+                'realized_pnl': round(realized, 2),
+                'unrealized_pnl': unrealized,
+                'total_pnl': total_pnl,
+                'perf_pct': perf_pct,
+                'unknown_cost': unknown_cost,
+            })
+
+        # Tri : impact total décroissant
+        out.sort(key=lambda p: p['total_pnl'], reverse=True)
+
+        totals = {
+            'realized_pnl': round(sum(p['realized_pnl'] for p in out), 2),
+            'unrealized_pnl': round(sum(p['unrealized_pnl'] for p in out), 2),
+            'dividends': round(sum(p['dividends'] for p in out), 2),
+            'total_pnl': round(sum(p['total_pnl'] for p in out), 2),
+            'open_count': sum(1 for p in out if p['status'] == 'open'),
+            'closed_count': sum(1 for p in out if p['status'] == 'closed'),
+        }
+        return jsonify({'success': True, 'positions': out, 'totals': totals})
+    except Exception as e:
+        current_app.logger.exception('Erreur dans perf_positions_pnl')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @bp.route('/api/flex/preview', methods=['GET'])
 @require_admin
 def flex_preview():

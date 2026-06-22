@@ -238,6 +238,71 @@
 
             // ---- Évolution par position (aires empilées) ----
             _loadPositionsTimeline();
+
+            // ---- Impact par position (cycle de vie) ----
+            _loadPositionsPnl();
+        }
+
+        // --- Impact par position (cycle de vie complet) ------------------
+        async function _loadPositionsPnl() {
+            const body      = document.getElementById('perf-pnl-lifecycle-body');
+            const emptyEl   = document.getElementById('pnl-lifecycle-empty');
+            const summaryEl = document.getElementById('pnl-lifecycle-summary');
+            if (!body) return;
+
+            const data = await api('/perf/positions-pnl');
+            if (!data || !data.success || !(data.positions || []).length) {
+                body.innerHTML = '';
+                if (summaryEl) summaryEl.innerHTML = '';
+                if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = data?.message || 'Aucune position à afficher.'; }
+                return;
+            }
+            if (emptyEl) emptyEl.style.display = 'none';
+
+            const pnlCol = v => v == null ? '' : v >= 0 ? 'color:var(--accent-long)' : 'color:var(--accent-short)';
+            const dt = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(2, 4) : '—';
+            const dur = d => d == null ? '—' : d >= 365 ? (d / 365).toFixed(1) + ' an' + (d >= 730 ? 's' : '') : d + ' j';
+
+            // ── Bandeau de synthèse ──
+            const t = data.totals || {};
+            if (summaryEl) {
+                const chip = (lbl, val, col) =>
+                    `<span><span style="color:var(--text-muted);">${lbl} :</span> <b style="${col || 'color:var(--text-primary)'}">${val}</b></span>`;
+                summaryEl.innerHTML =
+                    chip('Positions', `${t.open_count || 0} ouvertes · ${t.closed_count || 0} soldées`)
+                    + chip('Réalisé', fmtUsd(t.realized_pnl), pnlCol(t.realized_pnl))
+                    + chip('Latent', fmtUsd(t.unrealized_pnl), pnlCol(t.unrealized_pnl))
+                    + chip('Dividendes', '$' + (t.dividends || 0).toLocaleString('en-US', {maximumFractionDigits:0}))
+                    + chip('P&L total', fmtUsd(t.total_pnl), pnlCol(t.total_pnl));
+            }
+
+            // ── Lignes ──
+            body.innerHTML = data.positions.map(p => {
+                const isOpen = p.status === 'open';
+                const badge = isOpen
+                    ? '<span style="background:rgba(29,158,117,.18);color:var(--accent-long);padding:2px 7px;border-radius:10px;font-size:10px;">● Ouverte</span>'
+                    : '<span style="background:rgba(150,150,150,.15);color:var(--text-muted);padding:2px 7px;border-radius:10px;font-size:10px;">Soldée</span>';
+                const periode = isOpen
+                    ? `${dt(p.open_date)} → <span style="color:var(--accent-long);">en cours</span>`
+                    : `${dt(p.open_date)} → ${dt(p.close_date)}`;
+                const mvts = `${p.buys}a / ${p.sells}v` + (p.profit_takings ? ` <span title="${p.profit_takings} prise(s) de bénéfice">🎯${p.profit_takings}</span>` : '');
+                const warn = p.unknown_cost ? ' <span title="Position ouverte avant le début de l\'historique : coût d\'acquisition inconnu">⚠</span>' : '';
+                const perf = p.perf_pct == null ? '—'
+                    : `<b>${fmtPct(p.perf_pct)}</b>`;
+                return `<tr style="border-top:1px solid var(--border);text-align:right;">
+                    <td style="text-align:left;padding:6px 10px;font-weight:600;color:var(--text-primary);">${p.ticker}${warn}</td>
+                    <td style="text-align:left;padding:6px 8px;">${badge}</td>
+                    <td style="text-align:left;padding:6px 8px;color:var(--text-muted);">${periode}</td>
+                    <td style="padding:6px 8px;color:var(--text-muted);">${dur(p.holding_days)}</td>
+                    <td style="padding:6px 8px;color:var(--text-muted);">${mvts}</td>
+                    <td style="padding:6px 8px;color:var(--text-primary);">$${(p.invested || 0).toLocaleString('en-US', {maximumFractionDigits:0})}</td>
+                    <td style="padding:6px 8px;${pnlCol(p.realized_pnl)}">${p.realized_pnl ? fmtUsd(p.realized_pnl) : '—'}</td>
+                    <td style="padding:6px 8px;${pnlCol(p.unrealized_pnl)}">${isOpen ? fmtUsd(p.unrealized_pnl) : '—'}</td>
+                    <td style="padding:6px 8px;color:var(--text-muted);">${p.dividends ? '$' + p.dividends.toFixed(0) : '—'}</td>
+                    <td style="padding:6px 8px;font-weight:600;${pnlCol(p.total_pnl)}">${fmtUsd(p.total_pnl)}</td>
+                    <td style="padding:6px 8px;${pnlCol(p.perf_pct)}">${perf}</td>
+                </tr>`;
+            }).join('');
         }
 
         // --- Évolution par position (aires empilées) ---------------------

@@ -210,6 +210,41 @@
                     </div>
                 </div>
 
+                <!-- Impact par position (cycle de vie complet) -->
+                <div class="perf-chart-card">
+                    <div class="perf-chart-title">Impact par position
+                        <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · cycle de vie complet (ouvertes + soldées), P&L réalisé + latent + dividendes</span>
+                    </div>
+                    <div id="pnl-lifecycle-summary" style="display:flex;flex-wrap:wrap;gap:16px;margin:6px 4px 12px;font-size:12px;color:var(--text-muted);"></div>
+                    <div id="pnl-lifecycle-empty" style="display:none;padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">
+                        Aucune transaction. Synchronisez Flex depuis les Paramètres.
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table id="perf-pnl-lifecycle-table" style="width:100%;border-collapse:collapse;font-size:12px;font-family:'IBM Plex Mono';white-space:nowrap;">
+                            <thead>
+                                <tr style="color:var(--text-muted);text-align:right;border-bottom:1px solid var(--border);">
+                                    <th style="text-align:left;padding:6px 10px;">Ticker</th>
+                                    <th style="text-align:left;padding:6px 8px;">Statut</th>
+                                    <th style="text-align:left;padding:6px 8px;">Période</th>
+                                    <th style="padding:6px 8px;">Durée</th>
+                                    <th style="padding:6px 8px;">Mvts</th>
+                                    <th style="padding:6px 8px;">Investi</th>
+                                    <th style="padding:6px 8px;">Réalisé</th>
+                                    <th style="padding:6px 8px;">Latent</th>
+                                    <th style="padding:6px 8px;">Div.</th>
+                                    <th style="padding:6px 8px;">P&L total</th>
+                                    <th style="padding:6px 8px;">Perf</th>
+                                </tr>
+                            </thead>
+                            <tbody id="perf-pnl-lifecycle-body"></tbody>
+                        </table>
+                    </div>
+                    <p style="font-size:10px;color:var(--text-muted);margin:8px 4px 0;">
+                        « Mvts » = nb d'achats / ventes · 🎯 = prises de bénéfice (ventes partielles).
+                        ⚠ = position ouverte avant le début de l'historique : coût d'acquisition inconnu, performance non calculée.
+                    </p>
+                </div>
+
                 <!-- Actualiser -->
                 <div style="text-align:center;margin-top:10px;">
                     <button class="btn btn-secondary btn-sm" onclick="loadPerfData()">
