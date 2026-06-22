@@ -100,6 +100,21 @@
                     </div>
                 </div>
 
+                <!-- Évolution par position (aires empilées) -->
+                <div class="perf-chart-row full">
+                    <div class="perf-chart-card">
+                        <div class="perf-chart-title">Évolution par position
+                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="positions-timeline-subtitle"> · valeur de marché reconstruite, entrées &amp; sorties incluses</span>
+                        </div>
+                        <div id="positions-timeline-empty" style="display:none;padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">
+                            Aucune position à afficher sur cette période.
+                        </div>
+                        <div class="perf-chart-container" id="positions-timeline-content" style="min-height:380px;">
+                            <canvas id="chart-positions-timeline"></canvas>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Perf relative + Drawdown -->
                 <div class="perf-chart-row split">
                     <div class="perf-chart-card">

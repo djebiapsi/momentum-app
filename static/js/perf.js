@@ -235,6 +235,76 @@
 
             // ---- Tableau positions ----
             _renderPositionsTable(positions);
+
+            // ---- Évolution par position (aires empilées) ----
+            _loadPositionsTimeline();
+        }
+
+        // --- Évolution par position (aires empilées) ---------------------
+        const _POS_PALETTE = ['#7C5CFF','#378ADD','#1D9E75','#E0A030','#D85A30',
+                              '#534AB7','#3BBFA3','#E87040','#9B59B6','#2ECC71',
+                              '#E74C3C','#F39C12','#1ABC9C'];
+
+        async function _loadPositionsTimeline() {
+            const emptyEl   = document.getElementById('positions-timeline-empty');
+            const contentEl = document.getElementById('positions-timeline-content');
+            const subtitle  = document.getElementById('positions-timeline-subtitle');
+
+            const data = await api(`/perf/positions-timeline?range=${perfRange}`);
+            if (!data || !data.success || data.empty || !(data.series || []).length) {
+                _destroyChart('postimeline');
+                if (emptyEl)   { emptyEl.style.display = ''; emptyEl.textContent = data?.message || 'Aucune position à afficher sur cette période.'; }
+                if (contentEl) contentEl.style.display = 'none';
+                return;
+            }
+            if (emptyEl)   emptyEl.style.display   = 'none';
+            if (contentEl) contentEl.style.display = '';
+            if (subtitle) {
+                const src = data.anchor === 'ibkr' ? 'ancré sur positions IBKR' : 'reconstruit (transactions)';
+                subtitle.textContent = ` · valeur de marché ${src}, entrées & sorties incluses`;
+            }
+
+            const datasets = data.series.map((s, i) => {
+                const col = _POS_PALETTE[i % _POS_PALETTE.length];
+                const isOthers = s.ticker.startsWith('Autres');
+                const c = isOthers ? '150,150,150' : null;
+                return {
+                    label: s.ticker + (s.held_now ? '' : ' (soldée)'),
+                    data: s.values.map((v, j) => ({ x: data.dates[j], y: v })),
+                    borderColor: isOthers ? 'rgba(150,150,150,0.9)' : col,
+                    backgroundColor: isOthers ? 'rgba(150,150,150,0.35)' : col + '55',
+                    borderWidth: 1, tension: 0.25, pointRadius: 0, fill: true,
+                };
+            });
+
+            const unit = _timeUnit(perfRange);
+            _destroyChart('postimeline');
+            _perfCharts.postimeline = new Chart(document.getElementById('chart-positions-timeline'), {
+                type: 'line',
+                data: { datasets },
+                options: { responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#aaa', boxWidth: 12, font: { family: 'IBM Plex Mono', size: 11 } } },
+                        tooltip: {
+                            itemSort: (a, b) => b.parsed.y - a.parsed.y,
+                            filter: it => it.parsed.y > 0.5,
+                            callbacks: {
+                                label: c => ` ${c.dataset.label}: $${c.parsed.y.toLocaleString('en-US', {maximumFractionDigits:0})}`,
+                                footer: items => ' Total: $' + items.reduce((s, it) => s + it.parsed.y, 0)
+                                    .toLocaleString('en-US', {maximumFractionDigits:0}),
+                            },
+                        },
+                    },
+                    scales: {
+                        x: { type: 'time', time: { unit }, stacked: true,
+                             grid: { color: PERF_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
+                        y: { stacked: true, grid: { color: PERF_GRID },
+                             ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                             title: { display: true, text: 'Valeur de marché', color: '#555', font: { size: 9 } } },
+                    },
+                },
+            });
         }
 
         // --- Donut composition -------------------------------------------

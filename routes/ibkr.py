@@ -531,6 +531,155 @@ def perf_dashboard():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@bp.route('/api/perf/positions-timeline', methods=['GET'])
+@require_admin
+def perf_positions_timeline():
+    """
+    Évolution chronologique de la valeur de marché de chaque position
+    (graphe en aires empilées). Reconstruit les quantités détenues jour
+    par jour à partir de l'historique des transactions, puis les valorise
+    avec les prix journaliers (MarketPriceBar).
+
+    Entrées/sorties visibles : une position apparaît quand elle est achetée
+    et retombe à zéro quand elle est soldée (ex. TSLA il y a quelques mois).
+
+    Ancrage des quantités :
+    - IBKR connecté → H(t) = qté_actuelle - Σtx_postérieures (le plus fiable,
+      gère les positions ouvertes avant le début de l'historique Flex) ;
+    - sinon heuristique : H0 = max(0, -min(cumul des tx)) pour rester ≥ 0.
+
+    Paramètre ?range=1W|1M|3M|6M|1Y|3Y|5Y|YTD|ALL.
+    """
+    import pandas as pd
+    from datetime import date as _date
+    from models import Transaction, MarketPriceBar
+    range_key = (request.args.get('range') or '1Y').upper()
+
+    try:
+        if range_key == 'YTD':
+            nb_jours = (_date.today() - _date(_date.today().year, 1, 1)).days + 1
+        else:
+            nb_jours = RANGE_TO_DAYS.get(range_key, 365)
+
+        today  = pd.Timestamp(datetime.now()).normalize()
+        cutoff = today - pd.Timedelta(days=nb_jours)
+
+        # ── Transactions (hors forex type EUR.USD) ──────────────────────────
+        txs = (Transaction.query
+               .filter(~Transaction.ticker.like('%.%'))
+               .order_by(Transaction.date.asc()).all())
+        if not txs:
+            return jsonify({'success': True, 'empty': True,
+                            'message': 'Aucune transaction. Synchronisez Flex depuis les Paramètres.'})
+
+        tickers = sorted({t.ticker for t in txs})
+
+        # Quantité signée cumulée par ticker (BUY +, SELL −)
+        signed = {}
+        for tk in tickers:
+            ev = {}
+            for t in txs:
+                if t.ticker != tk:
+                    continue
+                q = (t.quantity or 0.0) * (1.0 if t.type == 'BUY' else -1.0)
+                ts = pd.Timestamp(t.date).normalize()
+                ev[ts] = ev.get(ts, 0.0) + q
+            signed[tk] = pd.Series(ev, dtype=float).sort_index().cumsum()
+
+        # ── Ancrage sur les quantités actuelles IBKR si disponible ──────────
+        current_qty = {}
+        anchor = 'heuristic'
+        try:
+            if ibkr_service.ensure_connected():
+                for p in ibkr_service.get_positions():
+                    current_qty[p['ticker']] = p.get('qty') or 0.0
+                anchor = 'ibkr'
+        except Exception as e:
+            current_app.logger.warning('positions-timeline: IBKR indisponible: %s', e)
+
+        first_tx = min(s.index[0] for s in signed.values())
+        start = first_tx if range_key == 'ALL' else max(cutoff, first_tx)
+
+        # ── Prix journaliers (close brut, repli adj_close) ──────────────────
+        price_rows = (MarketPriceBar.query
+                      .filter(MarketPriceBar.ticker.in_(tickers),
+                              MarketPriceBar.bar_date >= start.date())
+                      .with_entities(MarketPriceBar.ticker, MarketPriceBar.bar_date,
+                                     MarketPriceBar.close, MarketPriceBar.adj_close)
+                      .all())
+        px = {}
+        for tk, bd, close, adj in price_rows:
+            px.setdefault(tk, {})[pd.Timestamp(bd)] = close if close else adj
+        px = {tk: pd.Series(d, dtype=float).sort_index() for tk, d in px.items()}
+
+        # Axe temporel : jours de bourse
+        idx = pd.bdate_range(start, today)
+        if len(idx) == 0:
+            return jsonify({'success': True, 'empty': True,
+                            'message': 'Plage trop courte.'})
+
+        val = pd.DataFrame(index=idx)
+        for tk in tickers:
+            cum = signed[tk]
+            cum_now = float(cum.iloc[-1])
+            if anchor == 'ibkr':
+                h0 = current_qty.get(tk, 0.0) - cum_now
+            else:
+                h0 = max(0.0, -float(cum.min()))
+            holding = (h0 + cum.reindex(idx.union(cum.index)).ffill()
+                                .reindex(idx).fillna(0.0)).clip(lower=0.0)
+            price = (px.get(tk, pd.Series(dtype=float))
+                       .reindex(idx.union(px.get(tk, pd.Series(dtype=float)).index))
+                       .ffill().reindex(idx))
+            v = (holding * price).fillna(0.0)
+            if v.abs().sum() > 0:
+                val[tk] = v
+
+        if val.empty or val.shape[1] == 0:
+            return jsonify({'success': True, 'empty': True,
+                            'message': 'Aucune position valorisable sur la période.'})
+
+        # Échantillonnage hebdomadaire pour les longues plages
+        if nb_jours > 200:
+            val = val.resample('W-FRI').last().dropna(how='all').fillna(0.0)
+
+        # ── Top tickers par valeur de pointe, reste regroupé en « Autres » ──
+        peak = val.max().sort_values(ascending=False)
+        TOP = 12
+        keep = list(peak.index[:TOP])
+        rest = [c for c in val.columns if c not in keep]
+        # Inutile de créer un groupe « Autres » pour un unique ticker restant
+        if len(rest) == 1:
+            keep += rest
+            rest = []
+
+        # Ordre d'empilage : par valeur actuelle décroissante
+        last_row = val.iloc[-1]
+        keep.sort(key=lambda c: last_row.get(c, 0.0), reverse=True)
+
+        dates = [d.strftime('%Y-%m-%d') for d in val.index]
+        series = [{'ticker': tk,
+                   'values': [round(float(x), 2) for x in val[tk].tolist()],
+                   'held_now': bool(last_row.get(tk, 0.0) > 1e-6)}
+                  for tk in keep]
+        if rest:
+            others = val[rest].sum(axis=1)
+            series.append({'ticker': f'Autres ({len(rest)})',
+                           'values': [round(float(x), 2) for x in others.tolist()],
+                           'held_now': bool(others.iloc[-1] > 1e-6)})
+
+        return jsonify({
+            'success': True,
+            'range': range_key,
+            'anchor': anchor,
+            'dates': dates,
+            'series': series,
+        })
+    except Exception as e:
+        current_app.logger.exception('Erreur dans perf_positions_timeline')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @bp.route('/api/flex/preview', methods=['GET'])
 @require_admin
 def flex_preview():

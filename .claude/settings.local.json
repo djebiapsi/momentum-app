@@ -14,7 +14,8 @@
       "Bash(python *)",
       "Bash(pip install *)",
       "Bash(git -C \"C:/Users/POZIDEV2/Documents/momentum-app\" diff --stat price_data_service.py)",
-      "Bash(git -C \"C:/Users/POZIDEV2/Documents/momentum-app\" diff price_data_service.py)"
+      "Bash(git -C \"C:/Users/POZIDEV2/Documents/momentum-app\" diff price_data_service.py)",
+      "Bash(ssh *)"
     ]
   }
 }
