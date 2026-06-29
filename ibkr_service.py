@@ -435,7 +435,9 @@ class IBKRService:
         if dry_run:
             return {'status': 'preview'}
         try:
-            qualified = await self._ib.qualifyContractsAsync(contract)
+            qualified = await asyncio.wait_for(
+                self._ib.qualifyContractsAsync(contract), timeout=12.0
+            )
             if not qualified:
                 return {'status': 'failed', 'error': 'Contrat non qualifiable'}
             trade = self._ib.placeOrder(contract, order)
@@ -507,9 +509,11 @@ class IBKRService:
         stats = self.get_portfolio_stats()
 
         if not dry_run:
+            was_readonly = self._readonly
             self._ensure_trading()
-            # Laisser le gateway se stabiliser après bascule (reconnexion readonly→trading)
-            time.sleep(10)
+            if was_readonly:
+                # Laisser le gateway se stabiliser après bascule (reconnexion readonly→trading)
+                time.sleep(10)
         total_value    = stats['total_value']
         current        = {p['ticker']: p for p in stats['positions']}
         target_tickers = {t['ticker'].upper() for t in targets}
