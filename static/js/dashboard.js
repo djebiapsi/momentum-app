@@ -334,12 +334,15 @@
             }
             if (!lastRebalanceTotalValue || lastRebalanceTotalValue <= 0) return;
 
-            // Toutes les positions avec une cible > 0 (on exclut les liquidations totales)
-            const CASH_BUFFER_PCT = 1.0; // 1% de marge par ticker gardé en cash
+            // Positions cibles > 0 ET positions actuelles à ramener à 0 (liquidations)
+            // const CASH_BUFFER_PCT = 1.0; // 1% de marge par ticker gardé en cash
+            const CASH_BUFFER_PCT = 0.0;
             const lines = [];
             for (const a of lastRebalanceActions) {
-                if (a.target <= 0) continue;
-                const pct = Math.max(0, a.target / lastRebalanceTotalValue * 100 - CASH_BUFFER_PCT);
+                if (a.target <= 0 && a.current <= 0) continue;
+                const pct = a.target <= 0
+                    ? 0
+                    : Math.max(0, a.target / lastRebalanceTotalValue * 100 - CASH_BUFFER_PCT);
                 lines.push(`DES,${a.ticker},STK,SMART/AMEX,,,,,,${pct.toFixed(6)}`);
             }
 

@@ -17,7 +17,7 @@ cp env-example.txt .env   # fill in API keys
 flask run                  # or: python app.py
 
 # Run tests
-python -m pytest test_options_service.py test_backtest_service.py -v
+python -m pytest test_options_service.py test_backtest_service.py test_membership.py -v
 
 # Run a single test
 python -m pytest test_options_service.py::TestBlackScholes::test_put_price_atm -v
