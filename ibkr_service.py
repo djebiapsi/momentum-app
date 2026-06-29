@@ -542,8 +542,11 @@ class IBKRService:
                 action = 'BUY' if diff_usd > 0 else 'SELL'
                 contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', currency)
 
-                # Récupérer le prix pour calculer la quantité en actions
-                price = await self._get_market_price(ticker, currency) if not dry_run else None
+                # Récupérer le prix pour calculer la quantité en actions.
+                # Hors séance (OPG) : IBKR ne répond pas aux demandes de prix, on saute.
+                price = None
+                if not dry_run and market_open:
+                    price = await self._get_market_price(ticker, currency)
                 if price is None:
                     # En dry_run ou si prix indisponible : estimer depuis market_value/qty
                     cur_price = current.get(ticker, {}).get('market_price')
