@@ -302,7 +302,7 @@
         // Export TWS depuis les recommandations directement (sans portfolio)
         let lastRecoData = null;
 
-        function exportTWSFromReco() {
+        async function exportTWSFromReco() {
             if (!lastRecoData || !lastRecoData.recommendations) {
                 alert('Aucune recommandation disponible.');
                 return;
@@ -313,10 +313,33 @@
                 return;
             }
             const CASH_BUFFER_PCT = 1.0; // 1% de marge par ticker gardé en cash
+            const investTickers = new Set(invest.map(r => r.ticker));
             const lines = invest.map(r => {
                 const pct = Math.max(0, r.allocation - CASH_BUFFER_PCT);
                 return `DES,${r.ticker},STK,SMART/AMEX,,,,,,${pct.toFixed(6)}`;
             });
+
+            // Récupérer le portefeuille IBKR pour inclure les liquidations (positions à 0%)
+            try {
+                const data = await api('/ibkr/positions');
+                if (data && data.success && data.positions && data.positions.length > 0) {
+                    let liquidations = 0;
+                    for (const p of data.positions) {
+                        const ticker = (p.ticker || '').toUpperCase().trim();
+                        if (ticker && !investTickers.has(ticker)) {
+                            lines.push(`DES,${ticker},STK,SMART/AMEX,,,,,,0.000000`);
+                            liquidations++;
+                        }
+                    }
+                    if (liquidations > 0)
+                        showToast(`${invest.length} position(s) cible + ${liquidations} liquidation(s) incluse(s)`);
+                } else {
+                    showToast('IBKR non connecté — liquidations non incluses', 'warning');
+                }
+            } catch (e) {
+                showToast('IBKR non connecté — liquidations non incluses', 'warning');
+            }
+
             const csv  = lines.join('\n') + '\n';
             const blob = new Blob([csv], { type: 'text/csv' });
             const url  = URL.createObjectURL(blob);
