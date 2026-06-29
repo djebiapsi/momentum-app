@@ -498,7 +498,21 @@ class IBKRService:
         elif not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
 
-        stats          = self.get_portfolio_stats()
+        # Après une bascule en trading mode le gateway a besoin de quelques secondes
+        # pour re-souscrire aux données. On retente get_portfolio_stats 3× avec backoff.
+        last_exc = None
+        for attempt in range(3):
+            try:
+                stats = self.get_portfolio_stats()
+                break
+            except Exception as e:
+                last_exc = e
+                logger.warning('place_rebalance_orders: get_portfolio_stats tentative %d/3 — %s',
+                               attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(3 + attempt * 2)
+        else:
+            raise RuntimeError(f'Impossible de récupérer le portefeuille après 3 tentatives : {last_exc}')
         total_value    = stats['total_value']
         current        = {p['ticker']: p for p in stats['positions']}
         target_tickers = {t['ticker'].upper() for t in targets}
