@@ -95,13 +95,6 @@ class IBKRService:
                 return {'success': True}
 
             async def _connect():
-                # Fermer l'ancienne connexion si présente
-                if self._ib is not None:
-                    try:
-                        self._ib.disconnect()
-                    except Exception:
-                        pass
-                    self._ib = None
                 # IB() créé DANS le loop permanent → apiStart lié au bon loop
                 ib = IB()
                 cid = self._next_cid()
@@ -121,6 +114,14 @@ class IBKRService:
                 await asyncio.sleep(1.5)  # laisser arriver les données initiales
                 if not ib.isConnected():
                     raise RuntimeError('Connexion non établie')
+                # Déconnecter l'ancienne instance APRÈS que la nouvelle est prête.
+                # Ne jamais mettre self._ib = None avant : d'autres coroutines sur le
+                # même loop l'utilisent et obtiendraient NoneType AttributeError.
+                if self._ib is not None:
+                    try:
+                        self._ib.disconnect()
+                    except Exception:
+                        pass
                 self._ib = ib
                 self._readonly = readonly
                 return cid
