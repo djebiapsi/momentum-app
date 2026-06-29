@@ -437,15 +437,14 @@ class IBKRService:
             )
 
     async def _qualify_and_place(self, contract, order, dry_run: bool) -> dict:
-        """Qualifie le contrat et place l'ordre. Retourne {'status', 'order_id'?, 'error'?}."""
+        """Place l'ordre. Retourne {'status', 'order_id'?, 'error'?}.
+        On ne qualifie pas ici : qualifyContractsAsync ne se cancelle pas proprement sur
+        ce gateway et fait bloquer fn(). Les contrats Stock(ticker,'SMART','USD') sont
+        routés sans qualification par IBKR ; les rejets sont détectés via order_status.
+        """
         if dry_run:
             return {'status': 'preview'}
         try:
-            qualified = await asyncio.wait_for(
-                self._ib.qualifyContractsAsync(contract), timeout=12.0
-            )
-            if not qualified:
-                return {'status': 'failed', 'error': 'Contrat non qualifiable'}
             trade = self._ib.placeOrder(contract, order)
             await asyncio.sleep(2.0)
             order_id     = getattr(trade.order, 'orderId', None)
