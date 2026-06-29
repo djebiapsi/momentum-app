@@ -6,11 +6,24 @@ import logging
 import random
 import threading
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from cryptography.fernet import Fernet
 from ib_async import IB, Stock, Index, Order
 
 logger = logging.getLogger(__name__)
+
+_ET = ZoneInfo('America/New_York')
+
+
+def _us_market_open() -> bool:
+    """True si le marché US est actuellement ouvert (lun-ven 9h30-16h00 ET)."""
+    now = datetime.now(_ET)
+    if now.weekday() >= 5:          # samedi=5, dimanche=6
+        return False
+    t = now.hour * 60 + now.minute
+    return 9 * 60 + 30 <= t < 16 * 60
 
 
 class IBKRService:
@@ -426,12 +439,27 @@ class IBKRService:
             if not qualified:
                 return {'status': 'failed', 'error': 'Contrat non qualifiable'}
             trade = self._ib.placeOrder(contract, order)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(2.0)
             order_id     = getattr(trade.order, 'orderId', None)
             order_status = getattr(trade.orderStatus, 'status', 'Submitted')
-            if order_status in ('ValidationError', 'Inactive', 'ApiCancelled', 'Cancelled'):
+
+            # ValidationError après placement peut être transitoire (hors séance) :
+            # IBKR reclassifie parfois l'ordre en PreSubmitted/Submitted après quelques
+            # secondes. On attend 3s supplémentaires avant de conclure à un vrai échec.
+            if order_status == 'ValidationError':
+                await asyncio.sleep(3.0)
+                order_status = getattr(trade.orderStatus, 'status', order_status)
+
+            # Statuts définitivement terminaux (pas de queuing possible)
+            if order_status in ('Inactive', 'ApiCancelled', 'Cancelled'):
                 return {'status': 'failed', 'order_id': order_id, 'order_status': order_status,
-                        'error': f'Ordre rejeté par IBKR ({order_status}) — marché fermé ?'}
+                        'error': f'Ordre annulé par IBKR ({order_status})'}
+
+            # ValidationError persistante après le retry = rejet définitif
+            if order_status == 'ValidationError':
+                return {'status': 'failed', 'order_id': order_id, 'order_status': order_status,
+                        'error': f'Ordre rejeté par IBKR (ValidationError) — marché fermé ou contrat invalide'}
+
             return {'status': 'placed', 'order_id': order_id, 'order_status': order_status}
         except Exception as e:
             return {'status': 'failed', 'error': str(e)[:200]}
@@ -476,6 +504,14 @@ class IBKRService:
         target_tickers = {t['ticker'].upper() for t in targets}
         total_target_pct = sum(float(t.get('target_pct', 0)) for t in targets)
 
+        # Choisir le TIF selon l'état du marché :
+        # - séance ouverte  → GTC  (exécution immédiate au marché)
+        # - hors séance     → OPG  (Market On Open, queuing jusqu'à l'ouverture)
+        market_open = _us_market_open()
+        tif = 'GTC' if market_open else 'OPG'
+        logger.info('place_rebalance_orders: marché %s → tif=%s',
+                    'OUVERT' if market_open else 'FERMÉ', tif)
+
         async def fn():
             orders = []
             # Contrats réels du portfolio (pour ventes exactes)
@@ -518,11 +554,11 @@ class IBKRService:
                     'ticker': ticker, 'action': action, 'qty': qty,
                     'est_price': round(price, 2), 'est_value': round(qty * price, 2),
                     'current_value': round(cur_value, 2), 'target_value': round(target_value, 2),
-                    'liquidation': False, 'status': 'preview',
+                    'liquidation': False, 'status': 'preview', 'tif': tif,
                 }
                 orders.append(entry)
                 order = Order(action=action, orderType='MKT', totalQuantity=qty,
-                              tif='GTC', outsideRth=False)
+                              tif=tif, outsideRth=False)
                 result = await self._qualify_and_place(contract, order, dry_run)
                 entry.update(result)
 
@@ -540,12 +576,12 @@ class IBKRService:
                     'est_price': round(abs(mv / qty), 2) if qty else 0,
                     'est_value': round(abs(mv), 2),
                     'current_value': round(mv, 2), 'target_value': 0.0,
-                    'liquidation': True, 'status': 'preview',
+                    'liquidation': True, 'status': 'preview', 'tif': tif,
                 }
                 orders.append(entry)
                 contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', p.get('currency', 'USD'))
                 order = Order(action=action, orderType='MKT', totalQuantity=abs(qty),
-                              tif='GTC', outsideRth=False)
+                              tif=tif, outsideRth=False)
                 result = await self._qualify_and_place(contract, order, dry_run)
                 entry.update(result)
 
