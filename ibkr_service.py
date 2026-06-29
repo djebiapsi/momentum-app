@@ -90,9 +90,14 @@ class IBKRService:
 
     def connect(self, force: bool = True, readonly: bool = True) -> dict:
         with self._lock:
-            # Si déjà connecté dans le bon mode et pas de force → rien à faire
-            if not force and self._is_connected() and self._readonly == readonly:
-                return {'success': True}
+            if not force and self._is_connected():
+                # Mode identique : rien à faire
+                if self._readonly == readonly:
+                    return {'success': True}
+                # Trading mode (readonly=False) satisfait aussi les requêtes readonly :
+                # ne pas reconnecter et casser une session de trading en cours.
+                if readonly and not self._readonly:
+                    return {'success': True}
 
             async def _connect():
                 # IB() créé DANS le loop permanent → apiStart lié au bon loop
