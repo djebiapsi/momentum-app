@@ -494,8 +494,13 @@ class IBKRService:
         Utilise totalQuantity (actions calculées depuis le prix live) — plus fiable
         que cashQty qui n'est pas supporté sur tous les comptes/instruments IBKR.
         """
+        # Auto-reconnexion si la connexion s'est interrompue (jobs background peuvent
+        # provoquer des timeouts qui déconnectent le client ib_async).
         if not self._is_connected():
-            raise ConnectionError('Non connecté à IB Gateway')
+            res = self.connect(force=True, readonly=True)
+            if not res.get('success'):
+                raise ConnectionError(f"Non connecté à IB Gateway : {res.get('error','')}")
+            time.sleep(3)  # laisser la connexion se stabiliser
 
         # Récupérer le portfolio AVANT de basculer en trading mode : la connexion est
         # encore stable (readonly), ce qui évite les timeouts post-reconnexion.
