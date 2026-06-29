@@ -494,26 +494,17 @@ class IBKRService:
         Utilise totalQuantity (actions calculées depuis le prix live) — plus fiable
         que cashQty qui n'est pas supporté sur tous les comptes/instruments IBKR.
         """
-        if not dry_run:
-            self._ensure_trading()
-        elif not self._is_connected():
+        if not self._is_connected():
             raise ConnectionError('Non connecté à IB Gateway')
 
-        # Après une bascule en trading mode le gateway a besoin de quelques secondes
-        # pour re-souscrire aux données. On retente get_portfolio_stats 3× avec backoff.
-        last_exc = None
-        for attempt in range(3):
-            try:
-                stats = self.get_portfolio_stats()
-                break
-            except Exception as e:
-                last_exc = e
-                logger.warning('place_rebalance_orders: get_portfolio_stats tentative %d/3 — %s',
-                               attempt + 1, e)
-                if attempt < 2:
-                    time.sleep(3 + attempt * 2)
-        else:
-            raise RuntimeError(f'Impossible de récupérer le portefeuille après 3 tentatives : {last_exc}')
+        # Récupérer le portfolio AVANT de basculer en trading mode : la connexion est
+        # encore stable (readonly), ce qui évite les timeouts post-reconnexion.
+        stats = self.get_portfolio_stats()
+
+        if not dry_run:
+            self._ensure_trading()
+            # Laisser le gateway se stabiliser après bascule (reconnexion readonly→trading)
+            time.sleep(10)
         total_value    = stats['total_value']
         current        = {p['ticker']: p for p in stats['positions']}
         target_tickers = {t['ticker'].upper() for t in targets}
@@ -529,8 +520,6 @@ class IBKRService:
 
         async def fn():
             orders = []
-            # Laisser le gateway se stabiliser après bascule en trading mode
-            await asyncio.sleep(3)
             # Contrats réels du portfolio (pour ventes exactes)
             real_contracts = {}
             for item in self._ib.portfolio():
