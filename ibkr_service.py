@@ -464,13 +464,14 @@ class IBKRService:
         except Exception as e:
             return {'status': 'failed', 'error': str(e)[:200]}
 
-    async def _get_market_price(self, ticker: str, currency: str = 'USD') -> float | None:
+    async def _get_market_price(self, ticker: str, currency: str = 'USD',
+                               timeout: float = 12.0) -> float | None:
         """Prix marché en temps réel (ou différé) pour calculer la quantité en actions."""
         try:
             contract = Stock(ticker, 'SMART', currency)
-            await self._ib.qualifyContractsAsync(contract)
+            await asyncio.wait_for(self._ib.qualifyContractsAsync(contract), timeout=timeout)
             self._ib.reqMarketDataType(3)   # données différées si pas d'abonnement
-            tickers = await self._ib.reqTickersAsync(contract)
+            tickers = await asyncio.wait_for(self._ib.reqTickersAsync(contract), timeout=timeout)
             if not tickers:
                 return None
             t = tickers[0]
@@ -528,6 +529,8 @@ class IBKRService:
 
         async def fn():
             orders = []
+            # Laisser le gateway se stabiliser après bascule en trading mode
+            await asyncio.sleep(3)
             # Contrats réels du portfolio (pour ventes exactes)
             real_contracts = {}
             for item in self._ib.portfolio():
