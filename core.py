@@ -4,9 +4,11 @@ import json
 from datetime import datetime, timedelta
 from flask import current_app
 from models import (db, Settings, PanelAction, RecommendationHistory,
-                    RecommendationDetail, MarketEvent, IndexConstituent)
+                    RecommendationDetail, MarketEvent, IndexConstituent,
+                    ShortRecommendationHistory, ShortRecommendationDetail)
 from services import (ibkr_service, get_momentum_service, get_email_service,
-                      get_market_monitor, get_news_service, get_cached_positions)
+                      get_market_monitor, get_news_service, get_cached_positions,
+                      get_short_signal_service, get_fundamental_screen_service)
 
 
 def get_long_universe():
@@ -195,6 +197,102 @@ def compute_and_save_momentum():
     db.session.commit()
     print(f"✅ Recommandations sauvegardées (ID: {history.id})")
     return recommandations, history
+
+
+# Nb de candidats short persistés par calcul (le top actionnable + un peu de contexte).
+SHORT_PERSIST_LIMIT = 15
+
+
+def compute_and_save_short_signals(version='C', min_score=3, top_n=None):
+    """
+    Calcule le signal short multi-facteurs (via ShortSignalService), persiste un
+    ShortRecommendationHistory + ses détails, et retourne (signaux_dict, history) —
+    ou (None, None) en cas d'échec/absence de candidat.
+
+    Réutilisé par le cron mensuel ET les déclenchements manuels.
+    ⚠️ Seuils à calibrer (stratégie non encore validée par backtest).
+    """
+    top_n = top_n or SHORT_PERSIST_LIMIT
+    svc = get_short_signal_service()
+    result = svc.compute_signals(version=version, min_score=min_score, top_n=top_n)
+    if not result.get('success'):
+        print(f"❌ Signal short: {result.get('error')}")
+        return None, None
+
+    candidates = result.get('candidates', [])
+    if not candidates:
+        print(f"ℹ️ Signal short: aucun candidat ≥ score {min_score} "
+              f"(univers {result.get('universe')}, régime {result.get('regime')})")
+        return result, None
+
+    history = ShortRecommendationHistory(
+        calculation_date=datetime.strptime(result['date'], '%Y-%m-%d'),
+        nb_top=len(candidates),
+    )
+    db.session.add(history)
+    db.session.flush()
+
+    for c in candidates:
+        db.session.add(ShortRecommendationDetail(
+            history_id=history.id,
+            ticker=c['ticker'],
+            momentum=float(c['score']),        # score composite (0-7)
+            signal=c.get('instrument') or 'Shorter',
+            allocation=float(c.get('size_factor') or 0.0),
+            rank=int(c['rank']),
+        ))
+
+    db.session.commit()
+    print(f"✅ Signal short sauvegardé (ID: {history.id}, {len(candidates)} candidats)")
+    return result, history
+
+
+# =============================================================================
+# STRATÉGIE LONG QUALITY-VALUE (fondamentale) — US / Europe (PEA) / transversal
+# =============================================================================
+QV_DEFAULTS = {'quality_weight': 0.5, 'top_n': 20, 'max_per_sector': 3}
+
+
+def get_qv_market():
+    """Marché sélectionné pour la stratégie QV ('us' | 'eu' | 'all')."""
+    m = (Settings.get('qv_market', 'us') or 'us').lower()
+    return m if m in ('us', 'eu', 'all') else 'us'
+
+
+def compute_and_save_qv(market=None):
+    """
+    Calcule le portefeuille Quality-Value pour le marché demandé (ou Settings
+    'qv_market'), le persiste (dernier portefeuille en Settings JSON) et le
+    retourne. Réutilisé par le cron de rééquilibrage ET les déclenchements manuels.
+    """
+    market = (market or get_qv_market()).lower()
+    svc = get_fundamental_screen_service()
+    result = svc.build_portfolio(
+        top_n=int(Settings.get('qv_top_n', QV_DEFAULTS['top_n'])),
+        quality_weight=float(Settings.get('qv_quality_weight', QV_DEFAULTS['quality_weight'])),
+        max_per_sector=int(Settings.get('qv_max_per_sector', QV_DEFAULTS['max_per_sector'])),
+        weighting='equal', market=market)
+    if not result.get('success'):
+        print(f"❌ QV ({market}): {result.get('error')}")
+        return None
+
+    # Persistance légère : dernier portefeuille en Settings (JSON compact)
+    payload = {
+        'date': datetime.utcnow().strftime('%Y-%m-%d'),
+        'market': market,
+        'eligible': result.get('eligible'),
+        'sector_breakdown': result.get('sector_breakdown'),
+        'holdings': [{
+            'rank': h['rank'], 'ticker': h['ticker'], 'composite': h['composite'],
+            'quality': h['quality'], 'value': h['value'],
+            'allocation': h['allocation'], 'sector': h.get('sector'),
+        } for h in result.get('holdings', [])],
+    }
+    Settings.set(f'qv_latest_portfolio_{market}', json.dumps(payload))
+    Settings.set('qv_latest_portfolio', json.dumps(payload))
+    print(f"✅ Portefeuille QV ({market}) : {len(payload['holdings'])} titres "
+          f"(univers éligible {result.get('eligible')})")
+    return result
 
 
 def _more_extreme(value, current, event_type):

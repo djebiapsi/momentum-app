@@ -6,7 +6,9 @@ from apscheduler.triggers.cron import CronTrigger
 import jobs
 from jobs import (job_market_monitor, job_market_monitor_offhours, job_briefing,
                   job_rebalance_reminder, job_refresh_prices, job_collect_prices,
-                  job_digest_actualites, job_digest_tech, job_screener_reminder)
+                  job_digest_actualites, job_digest_tech, job_screener_reminder,
+                  job_collect_fundamentals, job_collect_finra, job_short_signal_monthly,
+                  job_collect_edgar, job_qv_rebalance)
 
 
 def create_scheduler(app):
@@ -53,6 +55,14 @@ def create_scheduler(app):
         job_rebalance_reminder,
         CronTrigger(day=1, hour=8, minute=0, timezone=ET),
         id='rebalance_reminder', name='Rappel mensuel de rééquilibrage', replace_existing=True,
+    )
+
+    # 3b) Signal short mensuel : 1er du mois à 9h00 ET (après le rappel long)
+    scheduler.add_job(
+        job_short_signal_monthly,
+        CronTrigger(day=1, hour=9, minute=0, timezone=ET),
+        id='short_signal_monthly', name='Signal short mensuel (multi-facteurs)',
+        replace_existing=True,
     )
 
     # 4) Rafraîchissement du cache de prix : chaque soir 22h00 ET (lun-ven)
@@ -102,8 +112,43 @@ def create_scheduler(app):
         id='screener_reminder', name='Rappel screener trimestriel', replace_existing=True,
     )
 
+    # 9) Collecte fondamentaux yfinance (stratégie short) : chaque nuit 01h00 Paris
+    # (décalé de la collecte de prix pour ne pas saturer Yahoo simultanément).
+    scheduler.add_job(
+        job_collect_fundamentals,
+        CronTrigger(hour=1, minute=0, timezone=PARIS),
+        id='collect_fundamentals', name='Collecte fondamentaux yfinance (short)',
+        replace_existing=True,
+    )
+
+    # 10) Collecte short interest FINRA : bi-mensuel (le 5 et le 20 à 12h00 Paris,
+    # après la dissémination FINRA ~8 jours post-règlement). collect_recent tolère
+    # les dates absentes → aucun risque si le calendrier FINRA décale.
+    scheduler.add_job(
+        job_collect_finra,
+        CronTrigger(day='5,20', hour=12, minute=0, timezone=PARIS),
+        id='collect_finra', name='Collecte short interest FINRA (bi-mensuel)',
+        replace_existing=True,
+    )
+
+    # 11) Collecte fondamentaux longs SEC EDGAR : mensuel (8 du mois, 02h00 Paris)
+    scheduler.add_job(
+        job_collect_edgar,
+        CronTrigger(day=8, hour=2, minute=0, timezone=PARIS),
+        id='collect_edgar', name='Collecte fondamentaux SEC EDGAR (mensuel)',
+        replace_existing=True,
+    )
+
+    # 12) Rééquilibrage Quality-Value : semestriel (15 janvier & 15 juillet, 8h ET)
+    scheduler.add_job(
+        job_qv_rebalance,
+        CronTrigger(month='1,7', day=15, hour=8, minute=0, timezone=ET),
+        id='qv_rebalance', name='Rééquilibrage Quality-Value (semestriel)',
+        replace_existing=True,
+    )
+
     scheduler.start()
-    print("[scheduler] demarre - 8 crons actifs :")
+    print("[scheduler] demarre - 14 crons actifs :")
     print("  - Surveillance marche (1min)   : 9h30-16h00 ET, lun-ven (séance US)")
     print("  - Surveillance marche (15-min) : 24h/24, 7j/7 hors séance (VIX nocturne)")
     print("  - Briefings : 9h35 / 12h30 / 16h05 ET (lun-ven)")
@@ -113,4 +158,9 @@ def create_scheduler(app):
     print("  - Digest actualites : 10h00 + 20h00 Europe/Paris (quotidien)")
     print("  - Digest Tech & IA  : 10h05 Europe/Paris (quotidien, perso)")
     print("  - Screener trimestriel : dernier jour de Q1/Q2/Q3/Q4 à 9h00 ET")
+    print("  - Signal short mensuel : 1er du mois 9h00 ET")
+    print("  - Collecte fondamentaux (short) : 01h00 Europe/Paris (quotidien)")
+    print("  - Collecte short interest FINRA : 5 & 20 du mois, 12h00 Europe/Paris")
+    print("  - Collecte fondamentaux SEC EDGAR : 8 du mois, 02h00 Europe/Paris")
+    print("  - Rééquilibrage Quality-Value : 15 jan & 15 juil, 8h00 ET")
     return scheduler

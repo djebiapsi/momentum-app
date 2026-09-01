@@ -590,6 +590,256 @@ class MarketEvent(db.Model):
         }
 
 
+class FundamentalSnapshot(db.Model):
+    """
+    États financiers trimestriels et annuels par ticker (source : yfinance).
+
+    Une ligne = une période de reporting (Q ou A) pour un ticker.
+    Fréquence de collecte : nocturne incrémentale — une nouvelle ligne est insérée
+    uniquement quand yfinance expose une période absente en base (détection par
+    comparaison des dates de colonnes des DataFrames quarterly_*).
+
+    Les champs typés couvrent les grandeurs nécessaires à la stratégie short
+    (accruals, free cash flow, dette, marges). Les champs raw_* conservent
+    l'intégralité des lignes des DataFrames yfinance sérialisées en JSON, pour
+    tout usage futur sans re-collecte.
+    """
+    __tablename__ = 'fundamental_snapshots'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    ticker       = db.Column(db.String(12), nullable=False, index=True)
+    period_date  = db.Column(db.Date, nullable=False)        # fin de période (ex: 2024-09-30)
+    period_type  = db.Column(db.String(1), nullable=False)   # 'Q' trimestriel | 'A' annuel
+    report_date  = db.Column(db.Date)                        # date de dépôt SEC (filed) — anti-look-ahead exact (EDGAR)
+    collected_at = db.Column(db.DateTime, default=datetime.utcnow)
+    source       = db.Column(db.String(20), default='yfinance')  # 'yfinance' | 'edgar'
+
+    # ── Compte de résultat (Income Statement) ──────────────────────────────
+    total_revenue     = db.Column(db.Float)
+    gross_profit      = db.Column(db.Float)
+    operating_income  = db.Column(db.Float)
+    ebitda            = db.Column(db.Float)
+    net_income        = db.Column(db.Float)
+    eps_diluted       = db.Column(db.Float)
+
+    # ── Bilan (Balance Sheet) ───────────────────────────────────────────────
+    total_assets        = db.Column(db.Float)
+    total_liabilities   = db.Column(db.Float)
+    total_equity        = db.Column(db.Float)
+    cash_and_equivalents = db.Column(db.Float)
+    total_debt          = db.Column(db.Float)
+    current_assets      = db.Column(db.Float)
+    current_liabilities = db.Column(db.Float)
+    inventory           = db.Column(db.Float)
+    accounts_receivable = db.Column(db.Float)
+
+    # ── Flux de trésorerie (Cash Flow Statement) ────────────────────────────
+    operating_cash_flow  = db.Column(db.Float)
+    investing_cash_flow  = db.Column(db.Float)
+    financing_cash_flow  = db.Column(db.Float)
+    capital_expenditure  = db.Column(db.Float)
+    free_cash_flow       = db.Column(db.Float)
+
+    # ── Ratios dérivés (calculés à la collecte, pour éviter le recalcul) ───
+    accruals_ratio = db.Column(db.Float)   # (net_income - operating_cash_flow) / total_assets
+    current_ratio  = db.Column(db.Float)   # current_assets / current_liabilities
+    debt_to_equity = db.Column(db.Float)   # total_debt / total_equity
+    fcf_margin     = db.Column(db.Float)   # free_cash_flow / total_revenue
+
+    # ── Données brutes complètes (JSON) ────────────────────────────────────
+    raw_income_stmt   = db.Column(db.Text)   # ligne du DataFrame quarterly_income_stmt
+    raw_balance_sheet = db.Column(db.Text)   # ligne du DataFrame quarterly_balance_sheet
+    raw_cashflow      = db.Column(db.Text)   # ligne du DataFrame quarterly_cashflow
+
+    __table_args__ = (
+        db.UniqueConstraint('ticker', 'period_date', 'period_type',
+                            name='uq_fundamental_ticker_period'),
+        db.Index('ix_fundamental_ticker_period', 'ticker', 'period_date'),
+    )
+
+    def to_dict(self):
+        return {
+            'ticker':              self.ticker,
+            'period_date':         self.period_date.isoformat() if self.period_date else None,
+            'period_type':         self.period_type,
+            'collected_at':        self.collected_at.isoformat() if self.collected_at else None,
+            'total_revenue':       self.total_revenue,
+            'gross_profit':        self.gross_profit,
+            'operating_income':    self.operating_income,
+            'ebitda':              self.ebitda,
+            'net_income':          self.net_income,
+            'eps_diluted':         self.eps_diluted,
+            'total_assets':        self.total_assets,
+            'total_liabilities':   self.total_liabilities,
+            'total_equity':        self.total_equity,
+            'cash_and_equivalents': self.cash_and_equivalents,
+            'total_debt':          self.total_debt,
+            'current_assets':      self.current_assets,
+            'current_liabilities': self.current_liabilities,
+            'operating_cash_flow': self.operating_cash_flow,
+            'free_cash_flow':      self.free_cash_flow,
+            'accruals_ratio':      self.accruals_ratio,
+            'current_ratio':       self.current_ratio,
+            'debt_to_equity':      self.debt_to_equity,
+            'fcf_margin':          self.fcf_margin,
+        }
+
+
+class TickerInfoSnapshot(db.Model):
+    """
+    Ratios de marché et données descriptives par ticker (source : yfinance .info).
+
+    Contrairement aux états financiers (FundamentalSnapshot, mis à jour aux
+    earnings), ces données reflètent des valeurs courantes (market cap, PE trailing,
+    short ratio, etc.) et sont rafraîchies mensuellement par le job nocturne.
+    Une ligne par (ticker, date de collecte) — l'historique est conservé.
+
+    Le champ raw_info stocke le dict complet retourné par yf.Ticker(t).info en
+    JSON, garantissant qu'aucune donnée n'est perdue même si de nouveaux champs
+    apparaissent dans une future version de yfinance.
+    """
+    __tablename__ = 'ticker_info_snapshots'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    ticker       = db.Column(db.String(12), nullable=False, index=True)
+    collected_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    source       = db.Column(db.String(20), default='yfinance')
+
+    # ── Valorisation ────────────────────────────────────────────────────────
+    market_cap        = db.Column(db.Float)
+    enterprise_value  = db.Column(db.Float)
+    trailing_pe       = db.Column(db.Float)
+    forward_pe        = db.Column(db.Float)
+    price_to_book     = db.Column(db.Float)
+    price_to_sales    = db.Column(db.Float)
+    ev_to_ebitda      = db.Column(db.Float)
+
+    # ── Marges ──────────────────────────────────────────────────────────────
+    gross_margins     = db.Column(db.Float)
+    operating_margins = db.Column(db.Float)
+    profit_margins    = db.Column(db.Float)
+
+    # ── Croissance ──────────────────────────────────────────────────────────
+    revenue_growth    = db.Column(db.Float)
+    earnings_growth   = db.Column(db.Float)
+
+    # ── Qualité financière ──────────────────────────────────────────────────
+    return_on_equity  = db.Column(db.Float)
+    return_on_assets  = db.Column(db.Float)
+    debt_to_equity    = db.Column(db.Float)
+    current_ratio     = db.Column(db.Float)
+    quick_ratio       = db.Column(db.Float)
+
+    # ── Short Interest (disponible dans .info, complément à FINRA) ──────────
+    short_ratio           = db.Column(db.Float)   # jours pour couvrir (yfinance)
+    short_percent_float   = db.Column(db.Float)   # % du float vendu à découvert
+
+    # ── Dividendes ──────────────────────────────────────────────────────────
+    dividend_yield   = db.Column(db.Float)
+    payout_ratio     = db.Column(db.Float)
+
+    # ── Risque ──────────────────────────────────────────────────────────────
+    beta = db.Column(db.Float)
+
+    # ── Identité ────────────────────────────────────────────────────────────
+    sector              = db.Column(db.String(50))
+    industry            = db.Column(db.String(100))
+    full_time_employees = db.Column(db.Integer)
+    country             = db.Column(db.String(50))
+
+    # ── Données brutes complètes ─────────────────────────────────────────────
+    raw_info = db.Column(db.Text)   # JSON complet de yf.Ticker(t).info
+
+    __table_args__ = (
+        db.Index('ix_ticker_info_ticker_date', 'ticker', 'collected_at'),
+    )
+
+    def to_dict(self):
+        return {
+            'ticker':               self.ticker,
+            'collected_at':         self.collected_at.isoformat() if self.collected_at else None,
+            'market_cap':           self.market_cap,
+            'trailing_pe':          self.trailing_pe,
+            'forward_pe':           self.forward_pe,
+            'price_to_book':        self.price_to_book,
+            'gross_margins':        self.gross_margins,
+            'operating_margins':    self.operating_margins,
+            'profit_margins':       self.profit_margins,
+            'revenue_growth':       self.revenue_growth,
+            'earnings_growth':      self.earnings_growth,
+            'return_on_equity':     self.return_on_equity,
+            'return_on_assets':     self.return_on_assets,
+            'debt_to_equity':       self.debt_to_equity,
+            'current_ratio':        self.current_ratio,
+            'short_ratio':          self.short_ratio,
+            'short_percent_float':  self.short_percent_float,
+            'beta':                 self.beta,
+            'sector':               self.sector,
+            'industry':             self.industry,
+        }
+
+
+class ShortInterestSnapshot(db.Model):
+    """
+    Données de short interest par ticker issues de FINRA (source primaire testée).
+
+    FINRA publie deux fois par mois (autour du 15 et de la fin du mois) un fichier
+    CSV exhaustif couvrant tous les titres cotés sur les marchés US. Ce fichier est
+    téléchargeable gratuitement sans API ni abonnement.
+
+    Une ligne = un ticker pour une date de publication. L'historique est conservé
+    intégralement pour permettre l'analyse de tendance (SIR croissant vs décroissant)
+    et le backtesting du signal short interest.
+
+    Le champ raw_data conserve la ligne CSV brute sérialisée en JSON au cas où des
+    champs supplémentaires seraient exploités ultérieurement.
+    """
+    __tablename__ = 'short_interest_snapshots'
+
+    id              = db.Column(db.Integer, primary_key=True)
+    ticker          = db.Column(db.String(12), nullable=False, index=True)
+    settlement_date = db.Column(db.Date, nullable=False)   # date de règlement FINRA
+    report_date     = db.Column(db.Date)                   # date de publication du rapport
+    collected_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    source          = db.Column(db.String(20), default='FINRA')
+
+    # ── Champs FINRA bruts ──────────────────────────────────────────────────
+    short_interest          = db.Column(db.Float)   # nb d'actions vendues à découvert
+    avg_daily_volume        = db.Column(db.Float)   # volume moyen journalier FINRA
+    days_to_cover           = db.Column(db.Float)   # short_interest / avg_daily_volume (SIR)
+    previous_short_interest = db.Column(db.Float)   # valeur de la publication précédente
+    change_from_previous    = db.Column(db.Float)   # variation absolue vs publication précédente
+    change_pct              = db.Column(db.Float)   # variation en % vs publication précédente
+
+    # ── Signaux dérivés (calculés à la collecte) ────────────────────────────
+    sir_trend    = db.Column(db.String(10))    # 'up' | 'down' | 'stable'
+    squeeze_risk = db.Column(db.Boolean)       # True si days_to_cover > 20
+
+    # ── Ligne brute complète (CSV FINRA → JSON) ─────────────────────────────
+    raw_data = db.Column(db.Text)
+
+    __table_args__ = (
+        db.UniqueConstraint('ticker', 'settlement_date',
+                            name='uq_short_interest_ticker_date'),
+        db.Index('ix_short_interest_ticker_date', 'ticker', 'settlement_date'),
+    )
+
+    def to_dict(self):
+        return {
+            'ticker':                   self.ticker,
+            'settlement_date':          self.settlement_date.isoformat() if self.settlement_date else None,
+            'report_date':              self.report_date.isoformat() if self.report_date else None,
+            'short_interest':           self.short_interest,
+            'avg_daily_volume':         self.avg_daily_volume,
+            'days_to_cover':            self.days_to_cover,
+            'previous_short_interest':  self.previous_short_interest,
+            'change_pct':               self.change_pct,
+            'sir_trend':                self.sir_trend,
+            'squeeze_risk':             self.squeeze_risk,
+            'source':                   self.source,
+        }
+
+
 class PushSubscription(db.Model):
     """Abonnement Web Push d'un appareil (PWA iOS / Chrome / Firefox)."""
     __tablename__ = 'push_subscriptions'
@@ -638,6 +888,10 @@ def init_db(app, default_panel):
         _migrate_add_columns(app, 'portfolio_snapshots', {
             'cash':             'FLOAT',
             'invested_capital': 'FLOAT',
+        })
+        # Migration: date de dépôt SEC (filed) pour les fondamentaux EDGAR
+        _migrate_add_columns(app, 'fundamental_snapshots', {
+            'report_date': 'DATE',
         })
         
         # Initialiser le panel Long par défaut si vide

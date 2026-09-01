@@ -16,6 +16,11 @@ from news_service import NewsService
 from market_monitor_service import MarketMonitorService
 from backtest_service import BacktestService
 from price_data_service import PriceDataService
+from fundamentals_collector import FundamentalsCollector
+from finra_collector import FinraCollector
+from edgar_collector import EdgarCollector
+from short_signal_service import ShortSignalService
+from fundamental_screen_service import FundamentalScreenService
 
 
 # Services (singletons initialisés à la demande)
@@ -33,6 +38,11 @@ market_monitor_service = None
 news_service = None
 backtest_service = None
 price_data_service = None
+fundamentals_collector = None
+finra_collector = None
+edgar_collector = None
+short_signal_service = None
+fundamental_screen_service = None
 
 # Service IBKR — démarre une boucle asyncio dans un thread dédié.
 # Config lue depuis la classe Config (import-time, sans contexte d'app).
@@ -163,5 +173,45 @@ def get_price_data_service():
     if price_data_service is None:
         price_data_service = PriceDataService(email_service=get_email_service())
     return price_data_service
+
+
+def get_fundamentals_collector():
+    """Récupère ou crée le collecteur de fondamentaux yfinance (stratégie short)."""
+    global fundamentals_collector
+    if fundamentals_collector is None:
+        fundamentals_collector = FundamentalsCollector(email_service=get_email_service())
+    return fundamentals_collector
+
+
+def get_finra_collector():
+    """Récupère ou crée le collecteur de short interest FINRA (stratégie short)."""
+    global finra_collector
+    if finra_collector is None:
+        finra_collector = FinraCollector()
+    return finra_collector
+
+
+def get_edgar_collector():
+    """Récupère ou crée le collecteur de fondamentaux longs SEC EDGAR."""
+    global edgar_collector
+    if edgar_collector is None:
+        edgar_collector = EdgarCollector(email_service=get_email_service())
+    return edgar_collector
+
+
+def get_short_signal_service():
+    """Récupère ou crée le service de signal short live (scoring multi-facteurs)."""
+    global short_signal_service
+    if short_signal_service is None:
+        short_signal_service = ShortSignalService()
+    return short_signal_service
+
+
+def get_fundamental_screen_service():
+    """Récupère ou crée le service de screen fondamental Quality-Value (long)."""
+    global fundamental_screen_service
+    if fundamental_screen_service is None:
+        fundamental_screen_service = FundamentalScreenService()
+    return fundamental_screen_service
 
 

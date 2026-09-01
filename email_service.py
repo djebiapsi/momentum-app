@@ -791,6 +791,154 @@ Stratégie Momentum 12-1
         return self._send(f"🔄 C'est le moment de rééquilibrer ! — {date_calcul}", html, text)
 
     # =====================================================================
+    # SIGNAL SHORT (stratégie multi-facteurs)
+    # =====================================================================
+    def envoyer_short_signal(self, signal_data: dict) -> dict:
+        """
+        Email des candidats short du mois (score composite, instrument suggéré).
+        signal_data = sortie de ShortSignalService.compute_signals().
+        """
+        date_calcul = signal_data.get('date', datetime.now().strftime('%Y-%m-%d'))
+        regime = signal_data.get('regime') or '—'
+        candidates = signal_data.get('candidates', [])
+        actionable = [c for c in candidates if c.get('size_factor', 0) > 0]
+
+        regime_color = '#ef4444' if regime == 'bear' else '#22c55e'
+        kpis = (f'<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><tr>'
+                + self._kpi_card('Candidats', str(len(candidates)))
+                + self._kpi_card('Actionnables', str(len(actionable)))
+                + self._kpi_card('Régime', regime.upper(), color=regime_color)
+                + '</tr></table>')
+
+        def _row(c):
+            score = c.get('score', 0)
+            perf = c.get('perf_63_5')
+            perf_str = f"{perf * 100:+.1f}%" if perf is not None else '—'
+            instr = c.get('instrument') or '—'
+            size = c.get('size_factor', 0)
+            flags = []
+            if c.get('death_cross'):
+                flags.append('Death Cross')
+            if c.get('squeeze_risk'):
+                flags.append('⚠️ Squeeze')
+            flag_str = (' · '.join(flags)) if flags else ''
+            size_str = f"{int(size * 100)}%" if size > 0 else '—'
+            return f"""<tr>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;font-family:monospace;font-weight:700;">{c.get('ticker','')}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;font-weight:700;color:#7c3aed;">{score:g}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:right;color:#ef4444;">{perf_str}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;font-size:12px;">{instr}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;">{size_str}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;font-size:11px;color:#a1a1aa;">{flag_str}</td>
+            </tr>"""
+
+        if candidates:
+            table = (
+                '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
+                '<tr style="color:#a1a1aa;font-size:11px;text-transform:uppercase;">'
+                '<td style="padding:6px;">Ticker</td><td style="padding:6px;text-align:center;">Score</td>'
+                '<td style="padding:6px;text-align:right;">Perf 63-5</td>'
+                '<td style="padding:6px;text-align:center;">Instrument</td>'
+                '<td style="padding:6px;text-align:center;">Taille</td>'
+                '<td style="padding:6px;">Signaux</td></tr>'
+                + ''.join(_row(c) for c in candidates) + '</table>')
+        else:
+            table = ('<p style="color:#a1a1aa;text-align:center;">'
+                     'Aucun candidat short ce mois-ci (score insuffisant).</p>')
+
+        disclaimer = ('<p style="color:#a1a1aa;font-size:12px;text-align:center;margin-top:16px;">'
+                      '⚠️ Stratégie en cours de validation (backtest non finalisé). '
+                      'Signal indicatif, pas un conseil d\'investissement.</p>')
+
+        body = f"""
+    <div style="background:#18181b;border:1px solid #27272a;padding:20px;border-radius:10px;
+                text-align:center;margin-bottom:8px;">
+      <p style="margin:0;font-size:17px;font-weight:600;">🩳 Signal short mensuel</p>
+      <p style="margin:8px 0 0;color:#a1a1aa;font-size:14px;">
+        Score multi-facteurs au {date_calcul} · régime marché : {regime.upper()}</p>
+    </div>
+    {kpis}
+    {table}
+    {self._cta_button("📊 Ouvrir l'app", '/')}
+    {disclaimer}"""
+
+        html = self._html_shell("Signal short mensuel", f"Momentum baissier · {date_calcul}",
+                                body, accent='#dc2626,#7c3aed', emoji='🩳')
+        text = (f"Signal short mensuel ({date_calcul}) — régime {regime}\n" +
+                "\n".join(f"{c.get('ticker'):8} score={c.get('score'):g} "
+                          f"perf={c.get('perf_63_5', 0) * 100:+.1f}% {c.get('instrument') or ''}"
+                          for c in candidates))
+        return self._send(f"🩳 Signal short mensuel — {date_calcul}", html, text)
+
+    # =====================================================================
+    # PORTEFEUILLE QUALITY-VALUE (long fondamental)
+    # =====================================================================
+    def envoyer_qv_portfolio(self, portfolio: dict) -> dict:
+        """
+        Email du portefeuille Quality-Value (rééquilibrage). `portfolio` = sortie
+        de FundamentalScreenService.build_portfolio().
+        """
+        market = portfolio.get('market', 'all')
+        market_label = {'us': 'US (S&P 500)', 'eu': 'Europe (PEA)',
+                        'all': 'Transversal US+Europe'}.get(market, market)
+        date_calcul = datetime.now().strftime('%Y-%m-%d')
+        holdings = portfolio.get('holdings', [])
+        breakdown = portfolio.get('sector_breakdown', {}) or {}
+
+        kpis = (f'<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><tr>'
+                + self._kpi_card('Titres', str(len(holdings)))
+                + self._kpi_card('Marché', market_label.split(' ')[0])
+                + self._kpi_card('Univers', str(portfolio.get('eligible', '—')))
+                + '</tr></table>')
+
+        def _row(h):
+            return f"""<tr>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;font-family:monospace;font-weight:700;">{h.get('ticker','')}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;font-weight:700;color:#22c55e;">{h.get('composite')}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;color:#a1a1aa;">{h.get('quality')}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;color:#a1a1aa;">{h.get('value')}</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;text-align:center;">{h.get('allocation')}%</td>
+              <td style="padding:8px 6px;border-bottom:1px solid #27272a;font-size:11px;color:#a1a1aa;">{h.get('sector') or '—'}</td>
+            </tr>"""
+
+        if holdings:
+            table = (
+                '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
+                '<tr style="color:#a1a1aa;font-size:11px;text-transform:uppercase;">'
+                '<td style="padding:6px;">Ticker</td><td style="padding:6px;text-align:center;">Score</td>'
+                '<td style="padding:6px;text-align:center;">Qual</td>'
+                '<td style="padding:6px;text-align:center;">Val</td>'
+                '<td style="padding:6px;text-align:center;">Alloc</td>'
+                '<td style="padding:6px;">Secteur</td></tr>'
+                + ''.join(_row(h) for h in holdings) + '</table>')
+        else:
+            table = '<p style="color:#a1a1aa;text-align:center;">Aucun titre.</p>'
+
+        sectors = ' · '.join(f'{k} {v}%' for k, v in list(breakdown.items())[:6])
+        body = f"""
+    <div style="background:#18181b;border:1px solid #27272a;padding:20px;border-radius:10px;
+                text-align:center;margin-bottom:8px;">
+      <p style="margin:0;font-size:17px;font-weight:600;">💎 Portefeuille Quality-Value</p>
+      <p style="margin:8px 0 0;color:#a1a1aa;font-size:14px;">
+        « Bonnes entreprises à prix correct » · {market_label} · {date_calcul}</p>
+    </div>
+    {kpis}
+    {table}
+    <p style="color:#a1a1aa;font-size:12px;margin-top:12px;">Répartition sectorielle : {sectors}</p>
+    {self._cta_button("📊 Ouvrir l'app", '/')}
+    <p style="color:#a1a1aa;font-size:12px;text-align:center;">
+      Rebalance conseillé : annuel/semestriel · poche complémentaire du momentum.
+      ⚠️ Pas un conseil d'investissement.</p>"""
+
+        html = self._html_shell("Portefeuille Quality-Value", f"{market_label} · {date_calcul}",
+                                body, accent='#0891b2,#22c55e', emoji='💎')
+        text = (f"Portefeuille Quality-Value — {market_label} ({date_calcul})\n" +
+                "\n".join(f"{h.get('ticker'):10} score={h.get('composite')} alloc={h.get('allocation')}% "
+                          f"{h.get('sector') or ''}" for h in holdings))
+        return self._send(f"💎 Portefeuille Quality-Value ({market_label}) — {date_calcul}",
+                          html, text)
+
+    # =====================================================================
     # ÉCHEC DE COLLECTE DE PRIX (yfinance)
     # =====================================================================
     def envoyer_echec_collecte(self, summary: dict) -> dict:
