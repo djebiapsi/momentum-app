@@ -627,6 +627,7 @@
             }
             if (pageName === 'perf') loadPerfData();
             if (pageName === 'backtest') loadBacktestDefaults();
+            if (pageName === 'qv') loadQV();
             if (pageName === 'market') loadMarketPage();
         }
         

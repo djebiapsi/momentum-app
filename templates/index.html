@@ -91,6 +91,7 @@
     <main class="main-content">
         {% include 'partials/_dashboard.html' %}
         {% include 'partials/_short.html' %}
+        {% include 'partials/_quality_value.html' %}
         {% include 'partials/_panel.html' %}
         {% include 'partials/_history.html' %}
         {% include 'partials/_settings.html' %}
@@ -109,6 +110,7 @@
     <script src="{{ url_for('static', filename='js/options.js') }}"></script>
     <script src="{{ url_for('static', filename='js/perf.js') }}"></script>
     <script src="{{ url_for('static', filename='js/backtest.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/quality_value.js') }}"></script>
 
     <script>
     // ── Service Worker + Push Notifications ──────────────────────────────────
