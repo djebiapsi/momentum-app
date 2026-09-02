@@ -1794,3 +1794,7 @@
 .qv-market-btn { flex: 1; min-width: 90px; opacity: 0.6; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--bg-subtle, #21262d); }
 .qv-market-btn.active { opacity: 1; border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e inset; }
 .card-subtitle { color: var(--text-muted, #8b949e); font-size: 12px; margin-left: auto; }
+
+/* --- badge score qualité (momentum) --- */
+.qv-q-badge { font-size: 10px; font-weight: 700; margin-left: 6px; padding: 1px 5px; border-radius: 6px; background: var(--bg-subtle, rgba(255,255,255,0.06)); vertical-align: middle; }
+.qv-q-badge:empty { display: none; }

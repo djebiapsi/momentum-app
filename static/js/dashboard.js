@@ -38,6 +38,24 @@
             }
         }
         
+        // Score qualité (indicatif) à côté de chaque action momentum — non bloquant
+        async function _fillMomentumQuality(tickers) {
+            if (!tickers || !tickers.length) return;
+            try {
+                const d = await api('/qv/quality-scores?market=us&tickers=' + encodeURIComponent(tickers.join(',')));
+                if (!d || !d.scores) return;
+                Object.keys(d.scores).forEach(t => {
+                    const el = document.getElementById('qvq-' + t);
+                    if (!el) return;
+                    const q = d.scores[t];
+                    if (q == null) { el.textContent = ''; return; }
+                    const color = q >= 66 ? '#22c55e' : (q >= 33 ? '#f59e0b' : '#ef4444');
+                    el.textContent = 'Q' + Math.round(q);
+                    el.style.color = color;
+                });
+            } catch (e) { /* indicatif : silencieux */ }
+        }
+
         function displayRecommendations(data) {
             const investList = document.getElementById('invest-list');
             const sellList = document.getElementById('sell-list');
@@ -192,6 +210,7 @@
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                                <span class="qv-q-badge" id="qvq-${r.ticker}" title="Score qualité (indicatif · Quality-Value)"></span>
                             </div>
                             <div class="stock-signal ${isCash ? 'cash' : 'buy'}">${isCash ? 'Cash (momentum <0)' : 'Acheter'}</div>
                             ${!isCash ? `<div class="alloc-bar" title="Part du portefeuille : ${r.allocation}%"><span style="width:${barPct}%"></span></div>` : ''}
@@ -206,6 +225,7 @@
                         </div>
                     </div>`;
                 }).join('');
+                _fillMomentumQuality(investAndCash.filter(r => r.signal !== 'Cash').map(r => r.ticker));
             } else {
                 investList.innerHTML = '<div class="empty-state"><p>Aucune action sélectionnée</p></div>';
             }
