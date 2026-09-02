@@ -55,6 +55,23 @@ class FundamentalScreenService:
         self.min_market_cap = min_market_cap
         self.min_quality_metrics = min_quality_metrics
         self.min_value_metrics = min_value_metrics
+        # Cache TTL des chargements DB lourds (info/fondamentaux) — réutilisé par
+        # screen / evaluate / quality_scores (ex: dashboard momentum).
+        self._cache = {}
+        self._cache_ttl = 600  # secondes
+
+    def _cached(self, key, fn):
+        import time as _t
+        hit = self._cache.get(key)
+        if hit and (_t.time() - hit[0] < self._cache_ttl):
+            return hit[1]
+        val = fn()
+        self._cache[key] = (_t.time(), val)
+        return val
+
+    def invalidate_cache(self):
+        """Vide le cache (à appeler après une collecte de fondamentaux)."""
+        self._cache.clear()
 
     # =====================================================================
     # CHARGEMENT DES DONNÉES (dernier instantané par ticker)
@@ -315,3 +332,157 @@ class FundamentalScreenService:
             'sector_breakdown': dict(sorted(breakdown.items(),
                                             key=lambda x: -x[1])),
         }
+
+    # =====================================================================
+    # UNIVERS ÉLIGIBLE RÉUTILISABLE (screen / éval ticker / scores qualité)
+    # =====================================================================
+    def _eligible_raw(self, market='all'):
+        """{ticker: {metrics, market_cap, sector}} de l'univers éligible + les maps info/fund."""
+        info_map = self._cached('info', self._latest_info)
+        fund_map = self._cached('fund', self._ttm_fundamentals)
+        tickers = set(info_map) | set(fund_map)
+        if market in ('us', 'eu'):
+            from eu_universe import universe_for_market
+            region = universe_for_market(market)
+            if region:
+                tickers = tickers & region
+        raw = {}
+        for t in tickers:
+            info = info_map.get(t)
+            fund = fund_map.get(t, {})
+            mc = info.market_cap if info else None
+            if mc is None or mc < self.min_market_cap:
+                continue
+            metrics = self._raw_metrics(info, fund)
+            nq = sum(1 for k, _ in QUALITY_METRICS if metrics.get(k) is not None)
+            nv = sum(1 for k, _ in VALUE_METRICS if metrics.get(k) is not None)
+            if nq < self.min_quality_metrics or nv < self.min_value_metrics:
+                continue
+            raw[t] = {'metrics': metrics, 'market_cap': mc,
+                      'sector': (info.sector if info else None)}
+        return raw, info_map, fund_map
+
+    @staticmethod
+    def _pct_of(value, population, orientation):
+        """Percentile 0-100 d'une valeur dans une population (100 = meilleur selon orientation)."""
+        vals = [v for v in population if v is not None]
+        if value is None or len(vals) < 5:
+            return None
+        below = sum(1 for v in vals if v <= value)
+        p = 100.0 * below / len(vals)
+        return p if orientation == 'high' else (100.0 - p)
+
+    def _universe_composites(self, raw, quality_weight=0.5):
+        """{ticker: (quality, value, composite)} pour l'univers éligible."""
+        pct = {}
+        for key, orient in QUALITY_METRICS + VALUE_METRICS:
+            pct[key] = self._percentile_ranks({t: raw[t]['metrics'].get(key) for t in raw}, orient)
+        out = {}
+        for t in raw:
+            qs = [pct[k].get(t) for k, _ in QUALITY_METRICS if pct[k].get(t) is not None]
+            vs = [pct[k].get(t) for k, _ in VALUE_METRICS if pct[k].get(t) is not None]
+            if not qs or not vs:
+                continue
+            q = sum(qs) / len(qs)
+            v = sum(vs) / len(vs)
+            out[t] = (q, v, quality_weight * q + (1 - quality_weight) * v)
+        return out
+
+    # =====================================================================
+    # ÉVALUATION D'UN TICKER (en base, sinon récupéré en direct)
+    # =====================================================================
+    def evaluate_ticker(self, ticker, market='all', quality_weight=0.5):
+        """
+        Score Quality-Value d'un ticker, classé vs l'univers. Si absent de la base,
+        récupère ses données via yfinance (fondamentaux + info), les stocke, puis score.
+        """
+        ticker = (ticker or '').upper().strip()
+        if not ticker:
+            return {'success': False, 'error': 'Ticker vide'}
+
+        raw, info_map, fund_map = self._eligible_raw(market)
+        fetched = False
+        info = info_map.get(ticker)
+        fund = fund_map.get(ticker, {})
+
+        # Absent de la base → récupération live yfinance + stockage
+        if info is None and not fund:
+            try:
+                from services import get_fundamentals_collector
+                fc = get_fundamentals_collector()
+                fc.collect_statements([ticker], full=False)
+                fc.collect_info([ticker])
+                self.invalidate_cache()  # nouvelles données → recharger frais
+                info = self._latest_info().get(ticker)
+                fund = self._ttm_fundamentals().get(ticker, {})
+                fetched = True
+            except Exception as e:
+                return {'success': False, 'error': f'Récupération yfinance échouée : {e}'}
+
+        if info is None and not fund:
+            return {'success': False, 'error': f'Aucune donnée disponible pour {ticker}.'}
+
+        metrics = self._raw_metrics(info, fund)
+        detail, q_pcts, v_pcts = {}, [], []
+        for key, orient in QUALITY_METRICS:
+            pop = [raw[t]['metrics'].get(key) for t in raw]
+            p = self._pct_of(metrics.get(key), pop, orient)
+            detail[key] = {'value': metrics.get(key), 'pct': (round(p, 1) if p is not None else None),
+                           'group': 'quality'}
+            if p is not None:
+                q_pcts.append(p)
+        for key, orient in VALUE_METRICS:
+            pop = [raw[t]['metrics'].get(key) for t in raw]
+            p = self._pct_of(metrics.get(key), pop, orient)
+            detail[key] = {'value': metrics.get(key), 'pct': (round(p, 1) if p is not None else None),
+                           'group': 'value'}
+            if p is not None:
+                v_pcts.append(p)
+
+        if not q_pcts or not v_pcts:
+            return {'success': False,
+                    'error': f'Métriques insuffisantes pour {ticker} (données incomplètes).'}
+
+        quality = sum(q_pcts) / len(q_pcts)
+        value = sum(v_pcts) / len(v_pcts)
+        composite = quality_weight * quality + (1 - quality_weight) * value
+
+        # Percentile du composite vs univers
+        comps = self._universe_composites(raw, quality_weight)
+        comp_vals = [c for _, _, c in comps.values()]
+        comp_pct = self._pct_of(composite, comp_vals, 'high') if comp_vals else None
+
+        return {
+            'success': True,
+            'ticker': ticker,
+            'market': market,
+            'fetched_live': fetched,
+            'in_universe': ticker in raw,
+            'sector': info.sector if info else None,
+            'market_cap': info.market_cap if info else None,
+            'quality': round(quality, 1),
+            'value': round(value, 1),
+            'composite': round(composite, 1),
+            'composite_percentile': (round(comp_pct, 1) if comp_pct is not None else None),
+            'universe_size': len(raw),
+            'metrics': detail,
+        }
+
+    # =====================================================================
+    # SCORES QUALITÉ (indicatif — pour le dashboard momentum)
+    # =====================================================================
+    def quality_scores(self, tickers, market='all'):
+        """{ticker: score_qualité 0-100} pour les tickers demandés (None si non éligible)."""
+        raw, _, _ = self._eligible_raw(market)
+        pct = {}
+        for key, orient in QUALITY_METRICS:
+            pct[key] = self._percentile_ranks({t: raw[t]['metrics'].get(key) for t in raw}, orient)
+        out = {}
+        for t in tickers:
+            tk = (t or '').upper().strip()
+            if tk not in raw:
+                out[tk] = None
+                continue
+            qs = [pct[k].get(tk) for k, _ in QUALITY_METRICS if pct[k].get(tk) is not None]
+            out[tk] = round(sum(qs) / len(qs), 1) if qs else None
+        return out

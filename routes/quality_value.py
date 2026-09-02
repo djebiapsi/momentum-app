@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 """Routes de la stratégie long Quality-Value (fondamentale, US/EU/transversal)."""
 import json
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import uuid
 from flask import Blueprint, jsonify, request
 from models import Settings
 from auth import require_admin
@@ -10,6 +17,12 @@ from services import get_fundamental_screen_service
 bp = Blueprint('quality_value', __name__)
 
 VALID_MARKETS = ('us', 'eu', 'all')
+
+# Jobs backtest QV (subprocess isolé, comme le backtest momentum)
+_qv_jobs: dict = {}
+_qv_jobs_lock = threading.Lock()
+_QV_JOB_TTL = 1800
+_QV_WORKER = os.path.join(os.path.dirname(os.path.dirname(__file__)), '_qv_bt_worker.py')
 
 
 @bp.route('/api/qv/config', methods=['GET'])
@@ -95,3 +108,117 @@ def qv_screen():
         max_per_sector=int(Settings.get('qv_max_per_sector', QV_DEFAULTS['max_per_sector'])))
     status = 200 if res.get('success') else 400
     return jsonify(res), status
+
+
+@bp.route('/api/qv/evaluate', methods=['GET'])
+def qv_evaluate():
+    """
+    Score Quality-Value d'un ticker. ?ticker=XXX&market=us|eu|all.
+    Si absent de la base, récupère ses données via yfinance puis score.
+    """
+    ticker = (request.args.get('ticker') or '').upper().strip()
+    if not ticker:
+        return jsonify({'success': False, 'error': 'Paramètre ticker manquant'}), 400
+    market = (request.args.get('market') or get_qv_market()).lower()
+    if market not in VALID_MARKETS:
+        market = 'all'
+    res = get_fundamental_screen_service().evaluate_ticker(ticker, market=market)
+    return jsonify(res), (200 if res.get('success') else 404)
+
+
+@bp.route('/api/qv/quality-scores', methods=['GET'])
+def qv_quality_scores():
+    """Scores qualité (indicatif) pour une liste de tickers. ?tickers=A,B,C&market=."""
+    raw = request.args.get('tickers', '')
+    tickers = [t.strip().upper() for t in raw.split(',') if t.strip()]
+    if not tickers:
+        return jsonify({'success': True, 'scores': {}})
+    market = (request.args.get('market') or 'all').lower()
+    scores = get_fundamental_screen_service().quality_scores(tickers, market=market)
+    return jsonify({'success': True, 'scores': scores})
+
+
+@bp.route('/api/qv/backtest/run', methods=['POST'])
+@require_admin
+def qv_backtest_run():
+    """Lance le backtest portefeuille QV en subprocess (asynchrone). Renvoie un job_id."""
+    data = request.get_json(silent=True) or {}
+    market = (data.get('market') or get_qv_market()).lower()
+    if market not in VALID_MARKETS:
+        return jsonify({'error': f'market invalide ({market})'}), 400
+    params = {
+        'market': market,
+        'wq': float(data.get('wq', 0.5)),
+        'wv': float(data.get('wv', 0.5)),
+        'wm': float(data.get('wm', 0.0)),
+        'top_n': int(data.get('top_n', QV_DEFAULTS['top_n'])),
+    }
+    job_id = str(uuid.uuid4())
+    now = time.time()
+    with _qv_jobs_lock:
+        for k in [k for k, v in _qv_jobs.items() if now - v.get('created_at', 0) > _QV_JOB_TTL]:
+            p = _qv_jobs[k].get('proc')
+            if p and p.poll() is None:
+                p.terminate()
+            del _qv_jobs[k]
+
+    params_file = tempfile.mktemp(prefix=f'qvbt_p_{job_id}_', suffix='.json')
+    result_file = tempfile.mktemp(prefix=f'qvbt_r_{job_id}_', suffix='.json')
+    error_file = tempfile.mktemp(prefix=f'qvbt_e_{job_id}_', suffix='.txt')
+    with open(params_file, 'w') as f:
+        json.dump(params, f)
+    ef = open(error_file, 'w')
+    proc = subprocess.Popen([sys.executable, _QV_WORKER, params_file, result_file],
+                            stdout=subprocess.DEVNULL, stderr=ef)
+    ef.close()
+    with _qv_jobs_lock:
+        _qv_jobs[job_id] = {'status': 'running', 'proc': proc, 'result_file': result_file,
+                            'error_file': error_file, 'created_at': now}
+    return jsonify({'job_id': job_id, 'status': 'running'})
+
+
+@bp.route('/api/qv/backtest/status/<job_id>', methods=['GET'])
+@require_admin
+def qv_backtest_status(job_id):
+    """Poll le statut d'un backtest QV."""
+    with _qv_jobs_lock:
+        job = _qv_jobs.get(job_id)
+    if job is None:
+        return jsonify({'status': 'error', 'error': 'Job introuvable (serveur redémarré ?).'})
+    if job['status'] == 'running':
+        proc = job.get('proc')
+        if proc and proc.poll() is not None:
+            rf, ef = job.get('result_file', ''), job.get('error_file', '')
+            if proc.returncode == 0 and os.path.exists(rf):
+                try:
+                    with open(rf) as f:
+                        result = json.load(f)
+                    with _qv_jobs_lock:
+                        job['status'] = 'done'
+                        job['result'] = result
+                    for fp in (rf, ef):
+                        try:
+                            if fp and os.path.exists(fp):
+                                os.remove(fp)
+                        except OSError:
+                            pass
+                except Exception as e:
+                    with _qv_jobs_lock:
+                        job['status'] = 'error'
+                        job['error'] = f'Lecture résultat impossible : {e}'
+            else:
+                err = ''
+                if ef and os.path.exists(ef):
+                    try:
+                        with open(ef) as f:
+                            err = f.read()[-400:]
+                    except OSError:
+                        pass
+                with _qv_jobs_lock:
+                    job['status'] = 'error'
+                    job['error'] = err or f'Subprocess code {proc.returncode}'
+    if job['status'] == 'running':
+        return jsonify({'status': 'running'})
+    if job['status'] == 'error':
+        return jsonify({'status': 'error', 'error': job.get('error', 'Erreur inconnue')})
+    return jsonify({'status': 'done', 'result': job['result']})
