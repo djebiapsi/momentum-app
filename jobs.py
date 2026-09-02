@@ -3,8 +3,12 @@
 from datetime import datetime
 from models import db, PanelAction
 from services import (ibkr_service, get_momentum_service, get_email_service,
-                     get_backtest_service, get_price_data_service, get_news_service)
-from core import compute_and_save_momentum, run_market_monitor, build_briefing_payload
+                     get_backtest_service, get_price_data_service, get_news_service,
+                     get_fundamentals_collector, get_finra_collector,
+                     get_edgar_collector)
+from core import (compute_and_save_momentum, compute_and_save_short_signals,
+                  compute_and_save_qv, get_qv_market,
+                  run_market_monitor, build_briefing_payload)
 
 
 app = None  # injecté par scheduler.create_scheduler()
@@ -43,6 +47,47 @@ def job_rebalance_reminder():
         if email_svc.is_configured():
             result = email_svc.envoyer_rebalance_reminder(recommandations, history.id)
             print(f"{'✅' if result['success'] else '❌'} Email rééquilibrage: {result['message']}")
+        else:
+            print("⚠️ Service email non configuré")
+
+
+def job_short_signal_monthly():
+    """
+    Cron mensuel (1er du mois). Calcule le signal short multi-facteurs, le
+    sauvegarde, envoie l'email de signal ET une notification push.
+    ⚠️ Stratégie en cours de validation — signal indicatif.
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 🩳 Signal short mensuel…")
+        signal_data, history = compute_and_save_short_signals()
+        if not signal_data or not signal_data.get('success'):
+            return
+
+        candidates = signal_data.get('candidates', [])
+        actionable = [c for c in candidates if c.get('size_factor', 0) > 0]
+
+        # Push notification
+        try:
+            import push_service
+            if candidates:
+                body = (f"{len(candidates)} candidats short détectés "
+                        f"({len(actionable)} actionnables) — régime "
+                        f"{(signal_data.get('regime') or '—').upper()}.")
+            else:
+                body = "Aucun candidat short ce mois-ci (score insuffisant)."
+            push_service.send_push_all(
+                title='🩳 Signal short mensuel',
+                body=body,
+                url='/',
+                tag='short_signal',
+            )
+        except Exception as e:
+            print(f"⚠️ Push signal short: {e}")
+
+        email_svc = get_email_service()
+        if email_svc.is_configured():
+            result = email_svc.envoyer_short_signal(signal_data)
+            print(f"{'✅' if result['success'] else '❌'} Email signal short: {result['message']}")
         else:
             print("⚠️ Service email non configuré")
 
@@ -238,6 +283,88 @@ def job_collect_prices():
                 print("⚠️ Collecte déjà en cours — cron ignoré")
         except Exception as e:
             print(f"❌ job_collect_prices: {e}")
+
+
+def job_collect_fundamentals():
+    """
+    Cron nuit : collecte des données fondamentales yfinance (états financiers +
+    info marché) pour la stratégie short. Incrémental (n'insère que les nouvelles
+    périodes comptables). Tourne en arrière-plan.
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 📊 Collecte fondamentaux yfinance (short)…")
+        try:
+            svc = get_fundamentals_collector()
+            started = svc.run_background(app, full=False, with_info=True)
+            if not started:
+                print("⚠️ Collecte fondamentaux déjà en cours — cron ignoré")
+        except Exception as e:
+            print(f"❌ job_collect_fundamentals: {e}")
+
+
+def job_collect_finra():
+    """
+    Cron bi-mensuel : collecte du short interest FINRA (fichiers consolidés
+    gratuits). Récupère les publications récentes manquantes. Tourne en
+    arrière-plan.
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 🩳 Collecte short interest FINRA…")
+        try:
+            svc = get_finra_collector()
+            started = svc.run_background(app, months_back=2)
+            if not started:
+                print("⚠️ Collecte FINRA déjà en cours — cron ignoré")
+        except Exception as e:
+            print(f"❌ job_collect_finra: {e}")
+
+
+def job_qv_rebalance():
+    """
+    Cron semestriel (15 jan / 15 juil). Calcule le portefeuille Quality-Value pour
+    le marché sélectionné (Settings 'qv_market' : us/eu/all), le sauvegarde, envoie
+    l'email de portefeuille ET une notification push.
+    """
+    with app.app_context():
+        market = get_qv_market()
+        print(f"[{datetime.now()}] 💎 Rééquilibrage Quality-Value ({market})…")
+        result = compute_and_save_qv(market)
+        if not result or not result.get('success'):
+            return
+
+        holdings = result.get('holdings', [])
+        try:
+            import push_service
+            push_service.send_push_all(
+                title='💎 Rééquilibrage Quality-Value',
+                body=f"Portefeuille {market.upper()} mis à jour — {len(holdings)} titres.",
+                url='/', tag='qv_rebalance',
+            )
+        except Exception as e:
+            print(f"⚠️ Push QV: {e}")
+
+        email_svc = get_email_service()
+        if email_svc.is_configured():
+            res = email_svc.envoyer_qv_portfolio(result)
+            print(f"{'✅' if res['success'] else '❌'} Email QV: {res['message']}")
+        else:
+            print("⚠️ Service email non configuré")
+
+
+def job_collect_edgar():
+    """
+    Cron mensuel : rafraîchit les fondamentaux longs SEC EDGAR (nouveaux 10-K).
+    Historique complet + date de dépôt réelle (anti-look-ahead). Arrière-plan.
+    """
+    with app.app_context():
+        print(f"[{datetime.now()}] 🏛️ Collecte fondamentaux SEC EDGAR…")
+        try:
+            svc = get_edgar_collector()
+            started = svc.run_background(app)
+            if not started:
+                print("⚠️ Collecte EDGAR déjà en cours — cron ignoré")
+        except Exception as e:
+            print(f"❌ job_collect_edgar: {e}")
 
 
 DIGEST_RECIPIENTS = [

@@ -1,0 +1,53 @@
+        <!-- PAGE: Quality-Value (long fondamental) -->
+        <div id="page-qv" class="page">
+            <div class="header">
+                <div class="header-label">Stratégie Long</div>
+                <h1>Quality-Value</h1>
+                <p id="qv-last-update">Bonnes entreprises à prix correct</p>
+            </div>
+
+            <!-- Sélecteur de marché : US / Europe (PEA) / Transversal -->
+            <div class="card" style="margin-bottom:16px;">
+                <div class="card-header"><span class="card-title">Marché</span></div>
+                <div class="qv-market-tabs">
+                    <button class="btn qv-market-btn" data-market="us"  onclick="setQVMarket('us', this)">🇺🇸 US</button>
+                    <button class="btn qv-market-btn" data-market="eu"  onclick="setQVMarket('eu', this)">🇪🇺 Europe (PEA)</button>
+                    <button class="btn qv-market-btn" data-market="all" onclick="setQVMarket('all', this)">🌍 Transversal</button>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="qv-stat-count">—</div>
+                    <div class="stat-label">Titres</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="qv-stat-universe">—</div>
+                    <div class="stat-label">Univers éligible</div>
+                </div>
+            </div>
+
+            <button class="btn btn-block admin-only" id="btn-qv-run" onclick="runQV()">
+                Générer le portefeuille
+            </button>
+
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <span class="card-title">Portefeuille Quality-Value</span>
+                    <span class="card-subtitle" id="qv-market-label"></span>
+                </div>
+                <div id="qv-list">
+                    <div class="empty-state">Sélectionnez un marché puis générez le portefeuille</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><span class="card-title">Répartition sectorielle</span></div>
+                <div id="qv-sectors"><div class="empty-state">—</div></div>
+            </div>
+
+            <p style="color:var(--text-muted,#8b949e);font-size:12px;text-align:center;margin-top:8px;">
+                Rebalance conseillé : annuel / semestriel · poche complémentaire du momentum.<br>
+                Validé sur 18 ans (+3.8 %/an, spread Q5-Q1). ⚠️ Pas un conseil d'investissement.
+            </p>
+        </div>

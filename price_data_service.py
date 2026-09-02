@@ -40,7 +40,26 @@ _UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
        '(KHTML, like Gecko) Chrome/124.0 Safari/537.36')
 
 # Indices/ETF de référence collectés en plus des constituants (benchmarks backtest)
-BENCHMARKS = ['SPY', 'QQQ', '^GSPC', '^NDX']
+# + ETF sectoriels GICS (SPDR Select Sector) : servent au calcul de l'alpha relatif
+# sectoriel de la stratégie short (Couche 1 momentum relatif vs secteur).
+SECTOR_ETFS = ['XLK', 'XLF', 'XLE', 'XLV', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU', 'XLRE', 'XLC']
+BENCHMARKS = ['SPY', 'QQQ', '^GSPC', '^NDX'] + SECTOR_ETFS
+
+# Mapping secteur (taxonomie Yahoo Finance, champ .info['sector']) → ETF sectoriel.
+# Utilisé pour l'alpha relatif sectoriel de la stratégie short.
+SECTOR_TO_ETF = {
+    'Technology':             'XLK',
+    'Financial Services':     'XLF',
+    'Energy':                 'XLE',
+    'Healthcare':             'XLV',
+    'Consumer Cyclical':      'XLY',
+    'Consumer Defensive':     'XLP',
+    'Industrials':            'XLI',
+    'Basic Materials':        'XLB',
+    'Utilities':              'XLU',
+    'Real Estate':            'XLRE',
+    'Communication Services': 'XLC',
+}
 
 
 class PriceDataService:
