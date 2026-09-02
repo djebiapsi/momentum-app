@@ -49,9 +49,9 @@
                     if (!el) return;
                     const q = d.scores[t];
                     if (q == null) { el.textContent = ''; return; }
-                    const color = q >= 66 ? '#22c55e' : (q >= 33 ? '#f59e0b' : '#ef4444');
+                    el.className = 'qv-q-badge ' + (q >= 66 ? 'good' : (q >= 33 ? 'mid' : 'low'));
+                    el.title = 'Score qualité ' + Math.round(q) + '/100 (indicatif · Quality-Value)';
                     el.textContent = 'Q' + Math.round(q);
-                    el.style.color = color;
                 });
             } catch (e) { /* indicatif : silencieux */ }
         }

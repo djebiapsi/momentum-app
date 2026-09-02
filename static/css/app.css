@@ -1789,12 +1789,78 @@
             opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0);
         }
 
-/* --- Quality-Value : sélecteur de marché --- */
-.qv-market-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-.qv-market-btn { flex: 1; min-width: 90px; opacity: 0.6; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--bg-subtle, #21262d); }
-.qv-market-btn.active { opacity: 1; border-color: #22c55e; box-shadow: 0 0 0 1px #22c55e inset; }
-.card-subtitle { color: var(--text-muted, #8b949e); font-size: 12px; margin-left: auto; }
+/* ===================================================================
+   QUALITY-VALUE (stratégie long fondamentale)
+   =================================================================== */
+.card-subtitle { color: var(--text-muted); font-size: 11px; font-weight: 500; }
 
-/* --- badge score qualité (momentum) --- */
-.qv-q-badge { font-size: 10px; font-weight: 700; margin-left: 6px; padding: 1px 5px; border-radius: 6px; background: var(--bg-subtle, rgba(255,255,255,0.06)); vertical-align: middle; }
+/* Sélecteur de marché — segmented control */
+.qv-market-tabs { display: flex; gap: 8px; }
+.qv-market-btn {
+    flex: 1; padding: 10px 8px; font-size: 13px; font-weight: 600;
+    background: var(--bg-secondary); color: var(--text-secondary);
+    border: 1px solid var(--border-color); border-radius: var(--radius-md);
+    cursor: pointer; transition: all 0.15s ease; font-family: inherit;
+}
+.qv-market-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.qv-market-btn.active {
+    background: var(--accent-long-dim); color: var(--accent-long);
+    border-color: var(--accent-long);
+}
+
+/* Portefeuille — ligne (réutilise .stock-item) + mini-barres Q/V */
+.qv-score-pill {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 16px;
+    color: var(--accent-long); line-height: 1;
+}
+.qv-mini-bars { display: flex; gap: 12px; margin-top: 6px; }
+.qv-mini { display: flex; align-items: center; gap: 5px; font-size: 10px;
+    color: var(--text-muted); font-weight: 600; letter-spacing: 0.03em; }
+.qv-mini-track { width: 44px; height: 5px; background: var(--bg-hover);
+    border-radius: 99px; overflow: hidden; }
+.qv-mini-track span { display: block; height: 100%; border-radius: 99px; }
+.qv-mini-track.q span { background: var(--accent-blue); }
+.qv-mini-track.v span { background: #a855f7; }
+.qv-row-right { text-align: right; flex-shrink: 0; display: flex;
+    flex-direction: column; align-items: flex-end; gap: 5px; }
+
+/* Répartition sectorielle */
+.qv-sector-row { display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 0; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+.qv-sector-row:last-child { border-bottom: none; }
+.qv-sector-row .pct { font-family: 'IBM Plex Mono', monospace;
+    color: var(--text-secondary); font-weight: 600; }
+
+/* Évaluation d'un ticker */
+.qv-eval-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.qv-eval-form .form-input { flex: 1; text-transform: uppercase; }
+.qv-eval-tiles { display: flex; gap: 10px; margin-bottom: 14px; }
+.qv-eval-tile { flex: 1; text-align: center; padding: 14px 8px;
+    background: var(--bg-secondary); border-radius: var(--radius-md); }
+.qv-eval-tile .v { font-size: 24px; font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace; line-height: 1; }
+.qv-eval-tile .l { font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+.qv-eval-meta { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px; }
+.qv-eval-tag { font-size: 11px; font-weight: 600; padding: 1px 7px;
+    border-radius: var(--radius-sm); margin-left: 4px; }
+.qv-eval-tag.live { background: rgba(245,158,11,0.14); color: #d97706; }
+.qv-metric-row { display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
+.qv-metric-row:last-child { border-bottom: none; }
+.qv-metric-name { color: var(--text-secondary); }
+.qv-metric-pct { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+.qv-metric-pct.q { color: var(--accent-blue); }
+.qv-metric-pct.v { color: #a855f7; }
+
+/* Badge score qualité (indicatif — dashboard momentum) */
+.qv-q-badge {
+    display: inline-block; font-size: 9px; font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace; margin-left: 7px;
+    padding: 1px 6px; border-radius: var(--radius-sm); vertical-align: middle;
+    letter-spacing: 0.02em;
+}
 .qv-q-badge:empty { display: none; }
+.qv-q-badge.good { background: var(--accent-long-dim); color: var(--accent-long); }
+.qv-q-badge.mid  { background: rgba(245,158,11,0.14); color: #d97706; }
+.qv-q-badge.low  { background: var(--accent-short-dim); color: var(--accent-short); }
