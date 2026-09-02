@@ -1846,12 +1846,22 @@
     border-radius: var(--radius-sm); margin-left: 4px; }
 .qv-eval-tag.live { background: rgba(245,158,11,0.14); color: #d97706; }
 .qv-metric-row { display: flex; justify-content: space-between; align-items: center;
-    padding: 6px 0; border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
+    padding: 7px 0; border-bottom: 1px solid var(--border-subtle); font-size: 12px; gap: 10px; }
 .qv-metric-row:last-child { border-bottom: none; }
-.qv-metric-name { color: var(--text-secondary); }
-.qv-metric-pct { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
-.qv-metric-pct.q { color: var(--accent-blue); }
-.qv-metric-pct.v { color: #a855f7; }
+.qv-metric-name { color: var(--text-secondary); display: inline-flex; align-items: center; }
+.qv-info { font-size: 10px; color: var(--text-muted); margin-left: 4px; cursor: help; opacity: 0.7; }
+.qv-metric-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.qv-metric-val { font-family: 'IBM Plex Mono', monospace; font-weight: 600;
+    color: var(--text-primary); min-width: 54px; text-align: right; }
+.qv-ind { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px;
+    min-width: 48px; text-align: center; letter-spacing: 0.02em; }
+.qv-ind.good { background: var(--accent-long-dim); color: var(--accent-long); }
+.qv-ind.mid  { background: rgba(245,158,11,0.14); color: #d97706; }
+.qv-ind.low  { background: var(--accent-short-dim); color: var(--accent-short); }
+.qv-ind.na   { background: var(--bg-hover); color: var(--text-muted); }
+.qv-metric-legend { font-size: 11px; color: var(--text-muted); margin: 4px 0 2px;
+    line-height: 1.7; }
+.qv-metric-legend .qv-ind { display: inline-block; min-width: auto; padding: 1px 6px; margin: 0 1px; }
 
 /* Badge score qualité (indicatif — dashboard momentum) */
 .qv-q-badge {

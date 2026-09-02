@@ -106,10 +106,46 @@ function renderQV(data) {
 const QV_METRIC_LABELS = {
     gp_to_assets: 'GP / actifs', return_on_equity: 'ROE', return_on_assets: 'ROA',
     gross_margins: 'Marge brute', operating_margins: 'Marge opé', fcf_margin: 'FCF margin',
-    accruals_ratio: 'Accruals (bas=mieux)', debt_to_equity: 'Dette/FP (bas=mieux)',
+    accruals_ratio: 'Accruals', debt_to_equity: 'Dette / FP',
     current_ratio: 'Current ratio', fcf_yield: 'FCF yield', earnings_yield: 'Earnings yield',
-    book_yield: 'Book yield', sales_yield: 'Sales yield', ebitda_ev: 'EBITDA/EV'
+    book_yield: 'Book yield', sales_yield: 'Sales yield', ebitda_ev: 'EBITDA / EV'
 };
+// Description + sens (pour l'infobulle d'interprétation)
+const QV_METRIC_INFO = {
+    gp_to_assets:      ['Bénéfice brut / actifs — rentabilité de base (Novy-Marx)', 'haut'],
+    return_on_equity:  ['Rentabilité des fonds propres', 'haut'],
+    return_on_assets:  ['Rentabilité des actifs', 'haut'],
+    gross_margins:     ['Marge brute — pouvoir de fixation des prix', 'haut'],
+    operating_margins: ['Marge opérationnelle — efficacité', 'haut'],
+    fcf_margin:        ['Free cash-flow / ventes — conversion en cash', 'haut'],
+    accruals_ratio:    ['Écart bénéfice-cash (Sloan) — élevé = bénéfices douteux', 'bas'],
+    debt_to_equity:    ['Dette / fonds propres — endettement', 'bas'],
+    current_ratio:     ['Actifs / passifs courants — liquidité', 'haut'],
+    fcf_yield:         ['FCF / capitalisation — rendement cash', 'haut'],
+    earnings_yield:    ['1 / PER — rendement bénéficiaire', 'haut'],
+    book_yield:        ['Actif net / cours — décote sur actif', 'haut'],
+    sales_yield:       ['Ventes / cours — décote sur CA', 'haut'],
+    ebitda_ev:         ['EBITDA / valeur d’entreprise — rendement opérationnel', 'haut'],
+};
+// Métriques dont la valeur brute est un pourcentage (fraction → %)
+const QV_PCT_METRICS = new Set([
+    'gp_to_assets', 'return_on_equity', 'return_on_assets', 'gross_margins',
+    'operating_margins', 'fcf_margin', 'accruals_ratio', 'fcf_yield',
+    'earnings_yield', 'book_yield', 'sales_yield', 'ebitda_ev'
+]);
+
+function _qvFmtVal(key, v) {
+    if (v == null || isNaN(v)) return '—';
+    if (QV_PCT_METRICS.has(key)) return (v * 100).toFixed(1) + '%';
+    return (+v).toFixed(2);   // debt_to_equity, current_ratio
+}
+
+function _qvLevel(pct) {
+    if (pct == null) return { cls: 'na', label: '—' };
+    if (pct >= 66) return { cls: 'good', label: 'Fort' };
+    if (pct >= 33) return { cls: 'mid', label: 'Moyen' };
+    return { cls: 'low', label: 'Faible' };
+}
 
 async function evaluateQVTicker() {
     const inp = document.getElementById('qv-eval-ticker');
@@ -127,11 +163,18 @@ async function evaluateQVTicker() {
     }
     const tile = (label, v, color) =>
         `<div class="qv-eval-tile"><div class="v" style="color:${color}">${v}</div><div class="l">${label}</div></div>`;
-    const metricsRows = Object.keys(d.metrics || {}).map(k => {
+    const groupRows = (grp) => Object.keys(d.metrics || {}).filter(k => d.metrics[k].group === grp).map(k => {
         const m = d.metrics[k];
-        const cls = m.group === 'quality' ? 'q' : 'v';
-        return `<div class="qv-metric-row"><span class="qv-metric-name">${QV_METRIC_LABELS[k] || k}</span>` +
-               `<span class="qv-metric-pct ${cls}">${m.pct != null ? m.pct : '—'}</span></div>`;
+        const info = QV_METRIC_INFO[k] || ['', 'haut'];
+        const lvl = _qvLevel(m.pct);
+        const dir = info[1] === 'bas' ? 'plus bas = mieux' : 'plus haut = mieux';
+        const tip = (info[0] + ' · ' + dir).replace(/"/g, '&quot;');
+        return `<div class="qv-metric-row">
+            <span class="qv-metric-name" title="${tip}">${QV_METRIC_LABELS[k] || k}<span class="qv-info">ⓘ</span></span>
+            <span class="qv-metric-right">
+                <span class="qv-metric-val">${_qvFmtVal(k, m.value)}</span>
+                <span class="qv-ind ${lvl.cls}" title="Percentile ${m.pct != null ? m.pct : '—'}/100 vs univers">${lvl.label}</span>
+            </span></div>`;
     }).join('');
     const tag = d.fetched_live ? '<span class="qv-eval-tag live">récupéré en direct</span>'
               : (d.in_universe ? '' : '<span class="qv-eval-tag" style="background:var(--bg-hover);color:var(--text-muted);">hors univers</span>');
@@ -141,8 +184,11 @@ async function evaluateQVTicker() {
         tile('Qualité', d.quality, 'var(--accent-blue)') +
         tile('Value', d.value, '#a855f7') + '</div>' +
         `<p class="qv-eval-meta"><strong style="font-family:'IBM Plex Mono',monospace;">${d.ticker}</strong> · ${d.sector || '—'}` +
-        ` · percentile : <strong>${d.composite_percentile != null ? d.composite_percentile + '%' : '—'}</strong>${tag}</p>` +
-        '<div class="card-title" style="margin-bottom:6px;">Percentiles par métrique</div>' + metricsRows;
+        ` · percentile composite : <strong>${d.composite_percentile != null ? d.composite_percentile + '%' : '—'}</strong>${tag}</p>` +
+        '<div class="qv-metric-legend">Valeur · niveau vs univers (<span class="qv-ind good">Fort</span> ≥66 · ' +
+        '<span class="qv-ind mid">Moyen</span> · <span class="qv-ind low">Faible</span> &lt;33). Survolez ⓘ pour le sens.</div>' +
+        '<div class="card-title" style="margin:10px 0 4px;color:var(--accent-blue);">Qualité</div>' + groupRows('quality') +
+        '<div class="card-title" style="margin:12px 0 4px;color:#a855f7;">Valorisation</div>' + groupRows('value');
 }
 
 // ── Backtest de la stratégie ─────────────────────────────────────────────────
