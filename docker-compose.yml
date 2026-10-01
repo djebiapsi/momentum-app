@@ -52,6 +52,10 @@ services:
       TWS_SETTINGS_PATH: /home/ibgateway/Jts
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-changeme}
       TWS_ACCEPT_INCOMING: accept
+      # CAUSE RACINE des ordres qui échouaient : si la case « Read-Only API » du
+      # gateway est cochée, TOUT ordre est rejeté serveur, quel que soit le
+      # readonly=False du client. On force explicitement l'autorisation des ordres.
+      READ_ONLY_API: ${IB_READ_ONLY_API:-no}
       # Restart quotidien programmé (soft restart IBC : garde la session, PAS de 2FA)
       # Doit tourner AVANT la maintenance forcée IBKR (~minuit ET) pour éviter le crash
       AUTO_RESTART_TIME: "11:30 PM"

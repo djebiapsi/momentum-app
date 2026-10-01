@@ -62,12 +62,6 @@ async function runQV() {
     }
 }
 
-function _qvBar(pct, color) {
-    const p = Math.max(0, Math.min(100, pct || 0));
-    return '<div style="background:var(--bg-subtle,#21262d);border-radius:4px;height:6px;overflow:hidden;">' +
-           '<div style="width:' + p + '%;height:100%;background:' + color + ';"></div></div>';
-}
-
 function renderQV(data) {
     const holdings = data.holdings || [];
     document.getElementById('qv-stat-count').textContent = holdings.length || '—';
@@ -82,48 +76,76 @@ function renderQV(data) {
         return;
     }
 
-    let rows = '';
-    holdings.forEach(h => {
-        rows +=
-            '<tr>' +
-            '<td style="padding:8px 6px;color:var(--text-muted,#8b949e);">' + h.rank + '</td>' +
-            '<td style="padding:8px 6px;font-family:\'IBM Plex Mono\',monospace;font-weight:600;">' + h.ticker + '</td>' +
-            '<td style="padding:8px 6px;text-align:right;font-weight:700;color:#22c55e;">' + h.composite + '</td>' +
-            '<td style="padding:8px 6px;width:70px;">' + _qvBar(h.quality, '#0891b2') + '</td>' +
-            '<td style="padding:8px 6px;width:70px;">' + _qvBar(h.value, '#7c3aed') + '</td>' +
-            '<td style="padding:8px 6px;text-align:right;">' + (h.allocation != null ? h.allocation + '%' : '—') + '</td>' +
-            '<td style="padding:8px 6px;font-size:11px;color:var(--text-muted,#8b949e);">' + (h.sector || '—') + '</td>' +
-            '</tr>';
-    });
-    document.getElementById('qv-list').innerHTML =
-        '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">' +
-        '<thead><tr style="color:var(--text-muted,#8b949e);font-size:11px;text-transform:uppercase;text-align:left;">' +
-        '<th style="padding:6px;">#</th><th style="padding:6px;">Ticker</th>' +
-        '<th style="padding:6px;text-align:right;">Score</th>' +
-        '<th style="padding:6px;">Qualité</th><th style="padding:6px;">Value</th>' +
-        '<th style="padding:6px;text-align:right;">Alloc</th><th style="padding:6px;">Secteur</th></tr></thead>' +
-        '<tbody>' + rows + '</tbody></table></div>';
+    document.getElementById('qv-list').innerHTML = holdings.map(h => `
+        <div class="stock-item">
+            <div class="stock-rank top">${h.rank}</div>
+            <div class="stock-info">
+                <div class="stock-ticker">${h.ticker}</div>
+                <div class="qv-mini-bars">
+                    <span class="qv-mini">Q<span class="qv-mini-track q"><span style="width:${Math.max(0, Math.min(100, h.quality || 0))}%"></span></span></span>
+                    <span class="qv-mini">V<span class="qv-mini-track v"><span style="width:${Math.max(0, Math.min(100, h.value || 0))}%"></span></span></span>
+                </div>
+                <div class="stock-signal sell">${h.sector || '—'}</div>
+            </div>
+            <div class="qv-row-right">
+                <div class="qv-score-pill">${h.composite}</div>
+                ${h.allocation != null ? `<div class="allocation-badge">${h.allocation}%</div>` : ''}
+            </div>
+        </div>`).join('');
+    if (typeof animIn === 'function') animIn(document.getElementById('qv-list'));
 
     // Répartition sectorielle
     const sb = data.sector_breakdown || {};
     const keys = Object.keys(sb);
-    if (keys.length) {
-        document.getElementById('qv-sectors').innerHTML = keys.map(k =>
-            '<div style="display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid var(--border,rgba(255,255,255,0.06));">' +
-            '<span>' + k + '</span><span style="color:var(--text-muted,#8b949e);">' + sb[k] + '%</span></div>').join('');
-    } else {
-        document.getElementById('qv-sectors').innerHTML = '<div class="empty-state">—</div>';
-    }
+    document.getElementById('qv-sectors').innerHTML = keys.length
+        ? keys.map(k => `<div class="qv-sector-row"><span>${k}</span><span class="pct">${sb[k]}%</span></div>`).join('')
+        : '<div class="empty-state">—</div>';
 }
 
 // ── Évaluation d'un ticker ───────────────────────────────────────────────────
 const QV_METRIC_LABELS = {
     gp_to_assets: 'GP / actifs', return_on_equity: 'ROE', return_on_assets: 'ROA',
     gross_margins: 'Marge brute', operating_margins: 'Marge opé', fcf_margin: 'FCF margin',
-    accruals_ratio: 'Accruals (bas=mieux)', debt_to_equity: 'Dette/FP (bas=mieux)',
+    accruals_ratio: 'Accruals', debt_to_equity: 'Dette / FP',
     current_ratio: 'Current ratio', fcf_yield: 'FCF yield', earnings_yield: 'Earnings yield',
-    book_yield: 'Book yield', sales_yield: 'Sales yield', ebitda_ev: 'EBITDA/EV'
+    book_yield: 'Book yield', sales_yield: 'Sales yield', ebitda_ev: 'EBITDA / EV'
 };
+// Description + sens (pour l'infobulle d'interprétation)
+const QV_METRIC_INFO = {
+    gp_to_assets:      ['Bénéfice brut / actifs — rentabilité de base (Novy-Marx)', 'haut'],
+    return_on_equity:  ['Rentabilité des fonds propres', 'haut'],
+    return_on_assets:  ['Rentabilité des actifs', 'haut'],
+    gross_margins:     ['Marge brute — pouvoir de fixation des prix', 'haut'],
+    operating_margins: ['Marge opérationnelle — efficacité', 'haut'],
+    fcf_margin:        ['Free cash-flow / ventes — conversion en cash', 'haut'],
+    accruals_ratio:    ['Écart bénéfice-cash (Sloan) — élevé = bénéfices douteux', 'bas'],
+    debt_to_equity:    ['Dette / fonds propres — endettement', 'bas'],
+    current_ratio:     ['Actifs / passifs courants — liquidité', 'haut'],
+    fcf_yield:         ['FCF / capitalisation — rendement cash', 'haut'],
+    earnings_yield:    ['1 / PER — rendement bénéficiaire', 'haut'],
+    book_yield:        ['Actif net / cours — décote sur actif', 'haut'],
+    sales_yield:       ['Ventes / cours — décote sur CA', 'haut'],
+    ebitda_ev:         ['EBITDA / valeur d’entreprise — rendement opérationnel', 'haut'],
+};
+// Métriques dont la valeur brute est un pourcentage (fraction → %)
+const QV_PCT_METRICS = new Set([
+    'gp_to_assets', 'return_on_equity', 'return_on_assets', 'gross_margins',
+    'operating_margins', 'fcf_margin', 'accruals_ratio', 'fcf_yield',
+    'earnings_yield', 'book_yield', 'sales_yield', 'ebitda_ev'
+]);
+
+function _qvFmtVal(key, v) {
+    if (v == null || isNaN(v)) return '—';
+    if (QV_PCT_METRICS.has(key)) return (v * 100).toFixed(1) + '%';
+    return (+v).toFixed(2);   // debt_to_equity, current_ratio
+}
+
+function _qvLevel(pct) {
+    if (pct == null) return { cls: 'na', label: '—' };
+    if (pct >= 66) return { cls: 'good', label: 'Fort' };
+    if (pct >= 33) return { cls: 'mid', label: 'Moyen' };
+    return { cls: 'low', label: 'Faible' };
+}
 
 async function evaluateQVTicker() {
     const inp = document.getElementById('qv-eval-ticker');
@@ -139,31 +161,34 @@ async function evaluateQVTicker() {
         res.innerHTML = '<div class="empty-state">' + ((d && d.error) || 'Erreur') + '</div>';
         return;
     }
-    const badge = (label, v, color) =>
-        '<div style="flex:1;text-align:center;padding:10px;background:var(--bg-subtle,#21262d);border-radius:8px;">' +
-        '<div style="font-size:22px;font-weight:700;color:' + color + ';">' + v + '</div>' +
-        '<div style="font-size:11px;color:var(--text-muted,#8b949e);text-transform:uppercase;">' + label + '</div></div>';
-    let metricsRows = '';
-    Object.keys(d.metrics || {}).forEach(k => {
+    const tile = (label, v, color) =>
+        `<div class="qv-eval-tile"><div class="v" style="color:${color}">${v}</div><div class="l">${label}</div></div>`;
+    const groupRows = (grp) => Object.keys(d.metrics || {}).filter(k => d.metrics[k].group === grp).map(k => {
         const m = d.metrics[k];
-        const pct = m.pct != null ? m.pct : '—';
-        const col = m.group === 'quality' ? '#0891b2' : '#7c3aed';
-        metricsRows += '<div style="display:flex;justify-content:space-between;padding:4px 2px;font-size:12px;border-bottom:1px solid var(--border,rgba(255,255,255,0.05));">' +
-            '<span style="color:var(--text-muted,#8b949e);">' + (QV_METRIC_LABELS[k] || k) + '</span>' +
-            '<span style="color:' + col + ';font-weight:600;">' + pct + '</span></div>';
-    });
+        const info = QV_METRIC_INFO[k] || ['', 'haut'];
+        const lvl = _qvLevel(m.pct);
+        const dir = info[1] === 'bas' ? 'plus bas = mieux' : 'plus haut = mieux';
+        const tip = (info[0] + ' · ' + dir).replace(/"/g, '&quot;');
+        return `<div class="qv-metric-row">
+            <span class="qv-metric-name" title="${tip}">${QV_METRIC_LABELS[k] || k}<span class="qv-info">ⓘ</span></span>
+            <span class="qv-metric-right">
+                <span class="qv-metric-val">${_qvFmtVal(k, m.value)}</span>
+                <span class="qv-ind ${lvl.cls}" title="Percentile ${m.pct != null ? m.pct : '—'}/100 vs univers">${lvl.label}</span>
+            </span></div>`;
+    }).join('');
+    const tag = d.fetched_live ? '<span class="qv-eval-tag live">récupéré en direct</span>'
+              : (d.in_universe ? '' : '<span class="qv-eval-tag" style="background:var(--bg-hover);color:var(--text-muted);">hors univers</span>');
     res.innerHTML =
-        '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
-        badge('Composite', d.composite, '#22c55e') +
-        badge('Qualité', d.quality, '#0891b2') +
-        badge('Value', d.value, '#7c3aed') + '</div>' +
-        '<p style="font-size:13px;margin:0 0 8px;">' +
-        '<strong>' + d.ticker + '</strong> · ' + (d.sector || '—') +
-        ' · percentile composite : <strong>' + (d.composite_percentile != null ? d.composite_percentile + '%' : '—') + '</strong>' +
-        (d.fetched_live ? ' <span style="color:#f59e0b;">(récupéré en direct)</span>' :
-         (d.in_universe ? '' : ' <span style="color:var(--text-muted,#8b949e);">(hors univers)</span>')) + '</p>' +
-        '<div style="font-size:11px;color:var(--text-muted,#8b949e);text-transform:uppercase;margin-bottom:4px;">Percentiles par métrique</div>' +
-        metricsRows;
+        '<div class="qv-eval-tiles">' +
+        tile('Composite', d.composite, 'var(--accent-long)') +
+        tile('Qualité', d.quality, 'var(--accent-blue)') +
+        tile('Value', d.value, '#a855f7') + '</div>' +
+        `<p class="qv-eval-meta"><strong style="font-family:'IBM Plex Mono',monospace;">${d.ticker}</strong> · ${d.sector || '—'}` +
+        ` · percentile composite : <strong>${d.composite_percentile != null ? d.composite_percentile + '%' : '—'}</strong>${tag}</p>` +
+        '<div class="qv-metric-legend">Valeur · niveau vs univers (<span class="qv-ind good">Fort</span> ≥66 · ' +
+        '<span class="qv-ind mid">Moyen</span> · <span class="qv-ind low">Faible</span> &lt;33). Survolez ⓘ pour le sens.</div>' +
+        '<div class="card-title" style="margin:10px 0 4px;color:var(--accent-blue);">Qualité</div>' + groupRows('quality') +
+        '<div class="card-title" style="margin:12px 0 4px;color:#a855f7;">Valorisation</div>' + groupRows('value');
 }
 
 // ── Backtest de la stratégie ─────────────────────────────────────────────────
@@ -219,6 +244,10 @@ function renderQVBacktest(r) {
         card('Max DD', _qvPct(s.max_drawdown), 'vs ' + _qvPct(b.max_drawdown)) +
         card('Volatilité', _qvPct(s.volatility), '');
 
+    const cs = getComputedStyle(document.documentElement);
+    const green = (cs.getPropertyValue('--accent-long') || '#10b981').trim();
+    const muted = (cs.getPropertyValue('--text-muted') || '#8b949e').trim();
+    const grid = (cs.getPropertyValue('--border-subtle') || 'rgba(128,128,128,0.15)').trim();
     const labels = (r.equity || []).map(p => p.t);
     const strat = (r.equity || []).map(p => p.v);
     const bench = (r.benchmark_equity || []).map(p => p.v);
@@ -228,18 +257,20 @@ function renderQVBacktest(r) {
         data: {
             labels: labels,
             datasets: [
-                { label: 'Quality-Value', data: strat, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.1 },
-                { label: 'Univers (équipondéré)', data: bench, borderColor: '#8b949e', borderWidth: 1.5, pointRadius: 0, borderDash: [5, 4], fill: false, tension: 0.1 },
+                { label: 'Quality-Value', data: strat, borderColor: green, backgroundColor: green + '22', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.15 },
+                { label: 'Univers (équipondéré)', data: bench, borderColor: muted, borderWidth: 1.5, pointRadius: 0, borderDash: [5, 4], fill: false, tension: 0.15 },
             ]
         },
         options: {
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             scales: {
-                x: { type: 'time', time: { unit: 'year' }, ticks: { maxTicksLimit: 12 } },
-                y: { type: 'logarithmic', title: { display: true, text: 'Équité (base 1)' } }
+                x: { type: 'time', time: { unit: 'year' }, grid: { color: grid },
+                     ticks: { maxTicksLimit: 10, color: muted, font: { size: 10 } } },
+                y: { type: 'logarithmic', grid: { color: grid },
+                     ticks: { color: muted, font: { size: 10 } } }
             },
-            plugins: { legend: { position: 'top' } }
+            plugins: { legend: { position: 'top', labels: { color: muted, boxWidth: 12, font: { size: 11 } } } }
         }
     });
 }

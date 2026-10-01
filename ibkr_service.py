@@ -436,6 +436,26 @@ class IBKRService:
                 f"Impossible de passer en mode trading après 2 tentatives : {res.get('error')}"
             )
 
+    def _await_ready(self, timeout: float = 20.0) -> bool:
+        """
+        Attend que la session IB réponde RÉELLEMENT (reqCurrentTime aboutit), plutôt
+        qu'un sleep arbitraire. Une session fraîchement (re)connectée mais pas encore
+        prête laisse reqCurrentTime timeout : on sonde jusqu'à succès ou timeout.
+        """
+        async def _probe():
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    await asyncio.wait_for(self._ib.reqCurrentTimeAsync(), timeout=4.0)
+                    return True
+                except Exception:
+                    await asyncio.sleep(1.0)
+            return False
+        try:
+            return bool(self._submit(_probe(), timeout=timeout + 6))
+        except Exception:
+            return False
+
     async def _qualify_and_place(self, contract, order, dry_run: bool) -> dict:
         """Place l'ordre. Retourne {'status', 'order_id'?, 'error'?}.
         On ne qualifie pas ici : qualifyContractsAsync ne se cancelle pas proprement sur
@@ -446,28 +466,38 @@ class IBKRService:
             return {'status': 'preview'}
         try:
             trade = self._ib.placeOrder(contract, order)
-            await asyncio.sleep(2.0)
-            order_id     = getattr(trade.order, 'orderId', None)
-            order_status = getattr(trade.orderStatus, 'status', 'Submitted')
+            order_id = getattr(trade.order, 'orderId', None)
 
-            # ValidationError après placement peut être transitoire (hors séance) :
-            # IBKR reclassifie parfois l'ordre en PreSubmitted/Submitted après quelques
-            # secondes. On attend 3s supplémentaires avant de conclure à un vrai échec.
-            if order_status == 'ValidationError':
-                await asyncio.sleep(3.0)
-                order_status = getattr(trade.orderStatus, 'status', order_status)
+            # Attendre le VRAI statut via les événements du loop (ib_async met à jour
+            # le Trade au fil des messages). On sonde jusqu'à un état significatif —
+            # bien plus fiable qu'un sleep fixe qui lit un statut vide/périmé.
+            ACCEPTED = ('PreSubmitted', 'Submitted', 'Filled')
+            TERMINAL_BAD = ('Cancelled', 'ApiCancelled', 'Inactive')
+            status = ''
+            for _ in range(25):                 # ~10s max (25 × 0.4s)
+                await asyncio.sleep(0.4)
+                status = getattr(trade.orderStatus, 'status', '') or ''
+                if status in ACCEPTED or status in TERMINAL_BAD:
+                    break
 
-            # Statuts définitivement terminaux (pas de queuing possible)
-            if order_status in ('Inactive', 'ApiCancelled', 'Cancelled'):
-                return {'status': 'failed', 'order_id': order_id, 'order_status': order_status,
-                        'error': f'Ordre annulé par IBKR ({order_status})'}
+            # Raison de rejet éventuelle depuis le journal du trade
+            reason = ''
+            try:
+                msgs = [e.message for e in getattr(trade, 'log', []) if getattr(e, 'message', '')]
+                reason = ' | '.join(msgs[-2:])
+            except Exception:
+                pass
 
-            # ValidationError persistante après le retry = rejet définitif
-            if order_status == 'ValidationError':
-                return {'status': 'failed', 'order_id': order_id, 'order_status': order_status,
-                        'error': f'Ordre rejeté par IBKR (ValidationError) — marché fermé ou contrat invalide'}
+            if status in TERMINAL_BAD:
+                return {'status': 'failed', 'order_id': order_id, 'order_status': status,
+                        'error': f'Ordre rejeté/annulé par IBKR ({status}) {("· " + reason) if reason else ""}'.strip()}
+            if status == '':
+                return {'status': 'failed', 'order_id': order_id, 'order_status': 'unknown',
+                        'error': f'Aucun statut reçu (session non prête ?) {("· " + reason) if reason else ""}'.strip()}
 
-            return {'status': 'placed', 'order_id': order_id, 'order_status': order_status}
+            filled = getattr(trade.orderStatus, 'filled', 0)
+            return {'status': 'placed', 'order_id': order_id, 'order_status': status,
+                    'filled': filled, 'note': reason or None}
         except Exception as e:
             return {'status': 'failed', 'error': str(e)[:200]}
 
@@ -513,22 +543,30 @@ class IBKRService:
         # encore stable (readonly), ce qui évite les timeouts post-reconnexion.
         stats = self.get_portfolio_stats()
 
+        # Ordres au marché fiables uniquement en séance US. Hors séance, on refuse
+        # proprement l'exécution réelle (les MKT/OPG hors séance étaient rejetés en
+        # ValidationError). Le dry_run reste possible pour prévisualiser à tout moment.
+        market_open = _us_market_open()
+        if not dry_run and not market_open:
+            return {'orders': [], 'blocked': True,
+                    'error': "Marché US fermé — relance le rééquilibrage en séance "
+                             "(15h30–22h00 Paris) pour des ordres au marché fiables.",
+                    'total_target_pct': round(sum(float(t.get('target_pct', 0)) for t in targets), 1)}
+
         if not dry_run:
             was_readonly = self._readonly
             self._ensure_trading()
             if was_readonly:
-                # Laisser le gateway se stabiliser après bascule (reconnexion readonly→trading)
-                time.sleep(10)
+                # Attendre que la session trading réponde vraiment (au lieu d'un
+                # sleep(10) arbitraire) : la connexion est stable dès que reqCurrentTime OK.
+                self._await_ready(timeout=20)
         total_value    = stats['total_value']
         current        = {p['ticker']: p for p in stats['positions']}
         target_tickers = {t['ticker'].upper() for t in targets}
         total_target_pct = sum(float(t.get('target_pct', 0)) for t in targets)
 
-        # Choisir le TIF selon l'état du marché :
-        # - séance ouverte  → GTC  (exécution immédiate au marché)
-        # - hors séance     → OPG  (Market On Open, queuing jusqu'à l'ouverture)
-        market_open = _us_market_open()
-        tif = 'GTC' if market_open else 'OPG'
+        # En séance : ordre au marché valable la journée (exécution immédiate).
+        tif = 'DAY'
         logger.info('place_rebalance_orders: marché %s → tif=%s',
                     'OUVERT' if market_open else 'FERMÉ', tif)
 

@@ -1,18 +1,18 @@
         <!-- PAGE: Quality-Value (long fondamental) -->
         <div id="page-qv" class="page">
-            <div class="header">
-                <div class="header-label">Stratégie Long</div>
+            <div class="header long">
+                <div class="header-label long">Stratégie Long · Fondamentale</div>
                 <h1>Quality-Value</h1>
                 <p id="qv-last-update">Bonnes entreprises à prix correct</p>
             </div>
 
             <!-- Sélecteur de marché : US / Europe (PEA) / Transversal -->
-            <div class="card" style="margin-bottom:16px;">
+            <div class="card">
                 <div class="card-header"><span class="card-title">Marché</span></div>
                 <div class="qv-market-tabs">
-                    <button class="btn qv-market-btn" data-market="us"  onclick="setQVMarket('us', this)">🇺🇸 US</button>
-                    <button class="btn qv-market-btn" data-market="eu"  onclick="setQVMarket('eu', this)">🇪🇺 Europe (PEA)</button>
-                    <button class="btn qv-market-btn" data-market="all" onclick="setQVMarket('all', this)">🌍 Transversal</button>
+                    <button class="qv-market-btn" data-market="us"  onclick="setQVMarket('us', this)">🇺🇸 US</button>
+                    <button class="qv-market-btn" data-market="eu"  onclick="setQVMarket('eu', this)">🇪🇺 Europe · PEA</button>
+                    <button class="qv-market-btn" data-market="all" onclick="setQVMarket('all', this)">🌍 Transversal</button>
                 </div>
             </div>
 
@@ -27,13 +27,13 @@
                 </div>
             </div>
 
-            <button class="btn btn-block admin-only" id="btn-qv-run" onclick="runQV()">
+            <button class="btn btn-primary btn-block admin-only" id="btn-qv-run" onclick="runQV()">
                 Générer le portefeuille
             </button>
 
-            <div class="card" style="margin-top:20px;">
+            <div class="card" style="margin-top:12px;">
                 <div class="card-header">
-                    <span class="card-title">Portefeuille Quality-Value</span>
+                    <span class="card-title">Portefeuille</span>
                     <span class="card-subtitle" id="qv-market-label"></span>
                 </div>
                 <div id="qv-list">
@@ -49,16 +49,13 @@
             <!-- Évaluer un ticker -->
             <div class="card">
                 <div class="card-header"><span class="card-title">Évaluer un ticker</span></div>
-                <div style="display:flex;gap:8px;margin-bottom:8px;">
-                    <input type="text" id="qv-eval-ticker" placeholder="Ex : AAPL, MC.PA…"
-                           style="flex:1;text-transform:uppercase;"
+                <div class="qv-eval-form">
+                    <input type="text" id="qv-eval-ticker" class="form-input" placeholder="Ex : AAPL, MC.PA…"
                            onkeydown="if(event.key==='Enter')evaluateQVTicker()">
-                    <button class="btn" id="btn-qv-eval" onclick="evaluateQVTicker()">Évaluer</button>
+                    <button class="btn btn-secondary" id="btn-qv-eval" onclick="evaluateQVTicker()">Évaluer</button>
                 </div>
-                <p style="color:var(--text-muted,#8b949e);font-size:12px;margin:0 0 8px;">
-                    Si le ticker est en base, son score s'affiche instantanément ; sinon ses données
-                    sont récupérées en direct (yfinance) puis calculées.
-                </p>
+                <p class="form-hint">Score instantané si le ticker est en base ; sinon ses données sont
+                    récupérées en direct (yfinance) puis calculées.</p>
                 <div id="qv-eval-result"></div>
             </div>
 
@@ -68,18 +65,18 @@
                     <span class="card-title">Backtest de la stratégie</span>
                     <span class="card-subtitle">Top-N · rebalance annuel</span>
                 </div>
-                <button class="btn btn-block admin-only" id="btn-qv-bt" onclick="runQVBacktest()">
+                <button class="btn btn-secondary btn-block admin-only" id="btn-qv-bt" onclick="runQVBacktest()">
                     Lancer le backtest
                 </button>
-                <p id="qv-bt-status" style="display:none;color:var(--text-muted,#8b949e);font-size:13px;text-align:center;margin-top:8px;"></p>
-                <div id="qv-bt-results" style="display:none;margin-top:12px;">
-                    <div class="stats-grid" id="qv-bt-stats"></div>
-                    <div style="height:280px;margin-top:12px;"><canvas id="qv-bt-chart"></canvas></div>
+                <p id="qv-bt-status" class="form-hint" style="display:none;text-align:center;margin-top:10px;"></p>
+                <div id="qv-bt-results" style="display:none;margin-top:14px;">
+                    <div class="stats-grid qv-bt-stats-grid" id="qv-bt-stats"></div>
+                    <div style="height:280px;margin-top:14px;"><canvas id="qv-bt-chart"></canvas></div>
                 </div>
             </div>
 
-            <p style="color:var(--text-muted,#8b949e);font-size:12px;text-align:center;margin-top:8px;">
-                Rebalance conseillé : annuel / semestriel · poche complémentaire du momentum.<br>
-                Validé sur 18 ans (+3.8 %/an, spread Q5-Q1). ⚠️ Pas un conseil d'investissement.
+            <p class="form-hint" style="text-align:center;margin-top:4px;">
+                Validé sur 18 ans (+3.8 %/an, spread Q5-Q1). Poche complémentaire du momentum ·
+                rebalance annuel. ⚠️ Pas un conseil d'investissement.
             </p>
         </div>
