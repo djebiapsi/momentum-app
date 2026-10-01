@@ -53,6 +53,10 @@ class Config:
     # Correction pour SQLAlchemy (certains providers exposent postgres:// au lieu de postgresql://)
     if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    # Driver explicite : SQLAlchemy 2.1 a fait de psycopg (v3) le driver par défaut
+    # de `postgresql://`, alors que l'image n'installe que psycopg2-binary.
+    if DATABASE_URL and DATABASE_URL.startswith('postgresql://'):
+        DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg2://', 1)
     
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
     SQLALCHEMY_TRACK_MODIFICATIONS = False

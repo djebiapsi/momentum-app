@@ -9,7 +9,7 @@ Flask-CORS
 Flask-SQLAlchemy
 
 # Base de données
-SQLAlchemy
+SQLAlchemy>=2.0,<2.1  # 2.1 change le driver PostgreSQL par défaut (psycopg v3)
 psycopg2-binary # PostgreSQL pour Render
 
 # Requêtes HTTP (API Tiingo)
