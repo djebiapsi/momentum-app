@@ -70,8 +70,31 @@ def create_app():
 
 app = create_app()
 
+
+def _should_start_scheduler():
+    """
+    Le scheduler ne doit tourner QUE dans le processus serveur. Les scripts et
+    workers qui font `import app` (_bt_worker, _qv_bt_worker, collectes,
+    optimize_backtest…) démarraient sinon un second APScheduler en parallèle :
+    alertes, briefings et redémarrages du gateway IB en double pendant leur
+    exécution. Surcharge possible via MOMENTUM_SCHEDULER=1/0.
+    """
+    import sys
+    forced = os.environ.get('MOMENTUM_SCHEDULER', '').strip().lower()
+    if forced in ('1', 'true', 'yes', 'on'):
+        return True
+    if forced in ('0', 'false', 'no', 'off'):
+        return False
+    if __name__ == '__main__':          # python app.py
+        return True
+    argv0 = os.path.basename(sys.argv[0] if sys.argv else '').lower()
+    full = (sys.argv[0] if sys.argv else '').replace('\\', '/').lower()
+    return argv0.startswith('gunicorn') or argv0.startswith('flask') \
+        or '/gunicorn/' in full or '/flask/' in full
+
+
 # Scheduler (1 worker gunicorn + threads → pas de double-firing)
-scheduler = create_scheduler(app)
+scheduler = create_scheduler(app) if _should_start_scheduler() else None
 
 
 # =============================================================================

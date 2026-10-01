@@ -4,7 +4,7 @@ Optimisation des paramètres du backtest momentum
 =================================================
 Cherche la meilleure combinaison vol_target / max_exposure (vol_scaling=True)
 selon les critères :
-  - max_drawdown ≥ -30 %
+  - max_drawdown ≥ -40 % (les combos au-delà sont listés à part, pas supprimés)
   - Sharpe maximal
   - CAGR maximal (départage)
 
@@ -140,11 +140,18 @@ def main():
 
         end = pd.Timestamp.now().normalize()
         start = end - pd.DateOffset(years=args.years)
+        # Clamp à la profondeur daily réelle (comme BacktestService.run/optimize)
+        earliest = bt._earliest_daily_date()
+        if earliest is not None and start < pd.Timestamp(earliest):
+            start = pd.Timestamp(earliest)
         nb_jours = int((end - start).days) + 13 * 31 + 200
 
         pool = bt.build_candidate_pool()
+        # Filtre point-in-time (IndexMembership), comme run() / optimize()
+        membership = bt._load_membership(pool)
         close_px, dvol, low_px, fmeta = bt.fetch_history(
-            pool, nb_jours, start.date(), max_fetch=0  # uniquement depuis la DB
+            pool, nb_jours, start.date(), max_fetch=0,  # uniquement depuis la DB
+            load_from=(start - pd.Timedelta(days=bt.WARMUP_DAYS)).date(),
         )
 
         if close_px.empty:
@@ -156,9 +163,8 @@ def main():
         # monthly_px : priorité MonthlyPriceBar (20 ans)
         since_monthly = (start - pd.DateOffset(months=14)).date()
         monthly_px_db = bt._load_monthly_px(pool, since_monthly)
-        monthly_px = monthly_px_db.combine_first(
-            close_px.resample('ME').last()) if not monthly_px_db.empty \
-            else close_px.resample('ME').last()
+        # Une observation par mois (barres mensuelles recalées en fin de mois)
+        monthly_px = bt._build_monthly_px(monthly_px_db, close_px, end)
 
         # low_ret pour margin calls
         low_ret = None
@@ -187,16 +193,17 @@ def main():
         def run_combo(label, params_w, params_s):
             """Exécute une combinaison et retourne un dict de résultats."""
             weights_df, meta_w = bt.build_weight_matrix(
-                monthly_px, daily_ret, dvol, start, params_w)
+                monthly_px, daily_ret, dvol, start, params_w, membership=membership)
             if weights_df.empty:
                 return None
             sim = bt._simulate(
                 weights_df, daily_ret, start, end,
                 args.capital, {**sim_p, **params_s},
                 low_ret=low_ret,
-                max_dd_stop=MAX_DD_CONSTRAINT,  # arrêt anticipé si DD > 30%
             )
-            if sim is None or sim['equity'].empty or sim['ruined'] or sim.get('early_stop'):
+            # Simulation complète : un combo au-delà de la contrainte de drawdown
+            # (ou ruiné) reste dans les résultats et s'affiche dans « non éligibles ».
+            if sim is None or sim['equity'].empty:
                 return None
             st = _stats(sim)
             st['n_riskoff'] = meta_w.get('n_riskoff_months', 0)

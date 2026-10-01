@@ -82,6 +82,24 @@ class BacktestService:
     DEFAULT_CASH_YIELD_PCT = 0.0       # rémunération annuelle du cash oisif (conservateur)
     DEFAULT_MAINT_MARGIN_PCT = 25.0    # marge de maintenance Reg T (appel de marge sous ce seuil)
     DEFAULT_POST_CALL_LEVERAGE = 1.0   # levier cible après liquidation forcée (1.0 = désendettement total)
+    WARMUP_DAYS = 260                  # daily chargé avant `start` pour la vol 126 j (≈ 180 séances)
+
+    @staticmethod
+    def _resolve_window(years, start_date=None, end_date=None):
+        """
+        (end, start) du backtest : fenêtre datée si `start_date` est fourni
+        (end_date par défaut = aujourd'hui), sinon `years` jusqu'à aujourd'hui.
+        Lève ValueError si la fenêtre est vide.
+        """
+        today = pd.Timestamp.now().normalize()
+        end = min(pd.Timestamp(end_date).normalize(), today) if end_date else today
+        if start_date:
+            start = pd.Timestamp(start_date).normalize()
+        else:
+            start = end - pd.DateOffset(years=int(years))
+        if start >= end:
+            raise ValueError('La date de début doit précéder la date de fin.')
+        return end, start
 
     def __init__(self, momentum_service, screener_service):
         self.ms = momentum_service
@@ -317,14 +335,20 @@ class BacktestService:
         self._hist_cache.set(key, result)
         return result
 
-    def fetch_history(self, tickers, nb_jours, start_date, progress=None, max_fetch=None):
+    def fetch_history(self, tickers, nb_jours, start_date, progress=None, max_fetch=None,
+                      load_from=None):
         """
         Construit close_px (prix ajusté) + dvol (volume $) + low_px (plus-bas intraday).
         Lit d'abord le cache DB (instantané, 0 API) ; ne récupère au réseau que les
         tickers manquants, borné à `max_fetch`.
+
+        `load_from` (date, optionnel) : charge le daily dès cette date (< start_date)
+        pour que la vol réalisée 126 j soit déjà mesurée au 1er rééquilibrage.
+        La couverture d'un titre reste jugée par rapport à `start_date`.
         Returns (close_px, dvol, low_px, meta).
         """
         max_fetch = self.MAX_ONDEMAND_FETCH if max_fetch is None else max_fetch
+        load_from = start_date if load_from is None else min(load_from, start_date)
         closes, dollar_vol, lows, missing = {}, {}, {}, []
 
         def _add(t, df):
@@ -341,7 +365,7 @@ class BacktestService:
         # → entrée point-in-time, rien de plus profond à récupérer).
         monthly_min = self._monthly_min_dates(tickers)
         for t in tickers:
-            df = self._load_db(t, start_date)
+            df = self._load_db(t, load_from)
             if self._db_covers(df, start_date) or \
                self._listed_after_start(df, monthly_min.get(t.upper()), start_date):
                 _add(t, df)
@@ -396,6 +420,34 @@ class BacktestService:
             logger.warning('_load_monthly_px échec : %s', e)
             return pd.DataFrame()
 
+    @staticmethod
+    def _build_monthly_px(monthly_db, close_px, end=None):
+        """
+        Série mensuelle UNIQUE (une observation par mois, datée de la fin de mois)
+        pour le momentum 12-1.
+
+        MonthlyPriceBar (yfinance '1mo') date chaque barre du 1ᵉʳ du mois alors
+        qu'elle porte la clôture de CE mois (barre « 2024-01-01 » = clôture du
+        31/01/2024). Combinée telle quelle au resample daily fin de mois, chaque
+        mois apparaissait DEUX fois : le « 12-1 » (p[-2]/p[-13]) devenait un
+        momentum ≈ 6 mois sans mois sauté, et build_weight_matrix rééquilibrait
+        deux fois par mois. On recale donc les barres mensuelles en fin de mois
+        avant de compléter par le daily.
+        """
+        daily_me = close_px.resample('ME').last() if close_px is not None and not close_px.empty \
+            else pd.DataFrame()
+        if monthly_db is None or monthly_db.empty:
+            out = daily_me
+        else:
+            m = monthly_db.copy()
+            m.index = pd.DatetimeIndex(m.index) + pd.offsets.MonthEnd(0)
+            m = m.groupby(level=0).last()
+            out = m.combine_first(daily_me) if not daily_me.empty else m
+        if end is not None and not out.empty:
+            # Le mois en cours (fin de mois > end) n'est pas encore clôturé.
+            out = out[out.index <= pd.Timestamp(end)]
+        return out.sort_index()
+
     # ------------------------------------------------------------------
     # Univers point-in-time (IndexMembership — réduction du biais de survivance)
     # ------------------------------------------------------------------
@@ -446,14 +498,15 @@ class BacktestService:
     # Optimisation des paramètres (grid search vol_target × max_exposure)
     # ------------------------------------------------------------------
     def optimize(self, years=10, nb_top=5, capital=10000.0, quick=False,
-                 progress_cb=None):
+                 progress_cb=None, start_date=None, end_date=None):
         """
         Grid search sur vol_target_pct × max_exposure_pct (vol_scaling=True).
         Les données sont chargées une seule fois ; seuls build_weight_matrix +
         _simulate tournent pour chaque combinaison.
 
         Critères de sélection :
-          - max_drawdown ≥ -30 % (filtre dur)
+          - max_drawdown ≥ -40 % → `eligible` (les combos au-delà restent listés,
+            marqués non éligibles, au lieu d'être supprimés silencieusement)
           - tri principal : Sharpe ↓
           - départage : CAGR ↓
 
@@ -489,8 +542,7 @@ class BacktestService:
             return float((eq / eq.cummax() - 1).min())
 
         # ── chargement des données (1 seule fois) ────────────────────────
-        end = pd.Timestamp.now().normalize()
-        start = end - pd.DateOffset(years=int(years))
+        end, start = self._resolve_window(years, start_date, end_date)
         # Clamp à la profondeur daily réelle (cf. run()) — évite un cache vide sur 20-30 ans
         earliest = self._earliest_daily_date()
         if earliest is not None and start < pd.Timestamp(earliest):
@@ -500,19 +552,19 @@ class BacktestService:
         pool = self.build_candidate_pool()
         membership = self._load_membership(pool)
         close_px, dvol, low_px, _ = self.fetch_history(
-            pool, nb_jours, start.date(), max_fetch=0)
+            pool, nb_jours, start.date(), max_fetch=0,
+            load_from=(start - pd.Timedelta(days=self.WARMUP_DAYS)).date())
 
         if close_px.empty:
             raise RuntimeError(
                 "Cache DB vide — lance la collecte yfinance (Config → "
                 "Données de marché) puis réessaie.")
 
-        daily_ret = close_px.pct_change()
+        daily_ret = close_px.loc[:end].pct_change()
 
         since_m = (start - pd.DateOffset(months=14)).date()
         monthly_db = self._load_monthly_px(pool, since_m)
-        monthly_px = monthly_db.combine_first(close_px.resample('ME').last()) \
-            if not monthly_db.empty else close_px.resample('ME').last()
+        monthly_px = self._build_monthly_px(monthly_db, close_px, end)
 
         low_ret = None
         if low_px is not None and not low_px.empty:
@@ -561,10 +613,11 @@ class BacktestService:
                     membership=membership)
                 if wdf.empty:
                     continue
+                # Simulation complète (pas d'arrêt anticipé) : un combo au-delà de la
+                # limite de drawdown reste dans les résultats, marqué non éligible.
                 sim = self._simulate(wdf, daily_ret, start, end,
-                                     capital, sim_p, low_ret=low_ret,
-                                     max_dd_stop=MAX_DD_LIMIT)
-                if sim is None or sim['equity'].empty or sim['ruined'] or sim.get('early_stop'):
+                                     capital, sim_p, low_ret=low_ret)
+                if sim is None or sim['equity'].empty:
                     continue
                 twr = sim['twr_ret']
                 row = {
@@ -581,7 +634,8 @@ class BacktestService:
                     'max_leverage':     round(sim['max_leverage'], 2),
                     'n_margin_calls':   len(sim['margin_calls']),
                     'n_riskoff':        meta_w.get('n_riskoff_months', 0),
-                    'eligible':         _maxdd(twr) >= MAX_DD_LIMIT,
+                    'ruined':           bool(sim['ruined']),
+                    'eligible':         (not sim['ruined']) and _maxdd(twr) >= MAX_DD_LIMIT,
                 }
                 results.append(row)
             except Exception as e:
@@ -649,7 +703,7 @@ class BacktestService:
         return v if v > 1e-6 else self.VOL_DEFAULT
 
     def compute_weights(self, as_of, universe, monthly_px, daily_ret, params, mom_cache=None,
-                        membership=None):
+                        membership=None, lever=None):
         """
         Poids cibles à `as_of` pour `universe` (reproduit la config live) :
           1. momentum 12-1 > 0, garder top `nb_top` ;
@@ -665,6 +719,10 @@ class BacktestService:
         `membership` (dict optionnel, cf. _load_membership) : filtre point-in-time —
         seuls les titres membres d'un indice à `as_of` sont éligibles (réduction du
         biais de survivance). None = pas de filtrage.
+
+        `lever` (float optionnel, ex. 1.4) : levier autorisé par le régime post-krach
+        (crash_regime). Vol-scaling : le plafond d'exposition devient
+        max(max_exposure, lever) ; inverse-vol (100 %) : les poids sont × lever.
         """
         nb_top = params['nb_top']
         # 1) sélection momentum
@@ -698,11 +756,15 @@ class BacktestService:
             w = pd.Series({t: target / v for t, v in vols.items()})
             gross = w.sum()
             cap = params['max_exposure_pct'] / 100.0
+            if lever:
+                cap = max(cap, float(lever))
             if gross > cap and gross > 0:
                 w *= cap / gross
         else:
             inv = pd.Series({t: 1.0 / self._vol_monthly(monthly_px[t], as_of) for t in selected})
             w = inv / inv.sum()
+            if lever and float(lever) > 1.0:
+                w *= float(lever)
 
         # 4) frein anti-krach au niveau du panier
         if params['portfolio_filter'] and not w.empty:
@@ -719,7 +781,7 @@ class BacktestService:
     # 5) Construction de la matrice de poids (univers trimestriel + poids mensuels)
     # ------------------------------------------------------------------
     def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params, mom_cache=None,
-                            membership=None):
+                            membership=None, lever_signal=None, lever=None):
         """
         Pour chaque fin de mois ≥ start : calcule les poids cibles en classant le
         momentum sur TOUT l'univers disponible — **aucun screener, identique à
@@ -730,33 +792,65 @@ class BacktestService:
         la méthode sur le calcul live). `mom_cache` : mémoïse le momentum entre appels
         successifs (optimize() partage un seul cache sur toute la grille).
 
+        `lever_signal` (pd.Series bool, daily) + `lever` (float) : levier post-krach
+        (crash_regime). À chaque fin de mois, le levier est appliqué si le signal
+        est actif à cette date ; chaque BASCULE du signal entre deux fins de mois
+        ajoute une date de décision qui garde la sélection de la dernière fin de
+        mois et ne change que l'exposition (pas d'attente du mois suivant pour
+        couper ou remettre le levier). Aucun lookahead : signal ≤ t, appliqué en t+1.
+
         Retourne (weights_df [dates × tickers], meta dict).
         """
+        from crash_regime import lever_at
+
         month_ends = [d for d in monthly_px.index if d >= start]
+        me_set = set(month_ends)
+        use_lever = lever_signal is not None and lever is not None and len(lever_signal) > 0
+        switches = []
+        if use_lever:
+            sig = lever_signal.astype(bool)
+            changed = sig[sig != sig.shift(1)].index
+            switches = [t for t in changed if t >= start and t not in me_set]
         # Univers = pool complet, comme calculate. La disponibilité du momentum
         # (≥13 mois à la date) gère l'entrée point-in-time, pas un screener.
         universe = list(monthly_px.columns)
+        all_me = list(monthly_px.index)
         weights = {}
         n_riskoff = 0
+        n_lever = 0
 
-        for d in month_ends:
-            w = self.compute_weights(d, universe, monthly_px, daily_ret, params,
-                                     mom_cache=mom_cache, membership=membership)
+        for d in sorted(me_set | set(switches)):
+            if d in me_set:
+                as_of = d
+            else:
+                prev = [m for m in all_me if m <= d]
+                if not prev:
+                    continue
+                as_of = prev[-1]
+            on = use_lever and lever_at(lever_signal, d)
+            w = self.compute_weights(as_of, universe, monthly_px, daily_ret, params,
+                                     mom_cache=mom_cache, membership=membership,
+                                     lever=lever if on else None)
             # Risk-off (aucun momentum positif) → on passe réellement en cash
             # (ligne de poids nulle), au lieu de conserver le panier du mois précédent.
             if w.empty:
                 w = pd.Series(0.0, index=universe)
-                n_riskoff += 1
+                if d in me_set:
+                    n_riskoff += 1
+            if on and d in me_set:
+                n_lever += 1
             weights[d] = w
 
         meta = {'n_rebalances': 0, 'n_universe_changes': 0,
                 'n_riskoff_months': n_riskoff,
+                'n_lever_months': n_lever,
+                'n_regime_switches': len(switches),
                 'pit_universe': membership is not None}
         if not weights:
             return pd.DataFrame(), meta
         wdf = pd.DataFrame(weights).T.reindex(columns=monthly_px.columns).fillna(0.0)
         wdf = wdf.sort_index()
-        meta['n_rebalances'] = len(weights)
+        meta['n_rebalances'] = sum(1 for d in weights if d in me_set)
         return wdf, meta
 
     # ------------------------------------------------------------------
@@ -797,7 +891,9 @@ class BacktestService:
                     j = col_pos.get(t)
                     if j is not None and pd.notna(val):
                         arr[j] = float(val)
-                apply_vec.setdefault(fut[0], arr)
+                # La décision la plus récente l'emporte si deux dates (fin de mois +
+                # bascule de régime un week-end) tombent sur le même jour d'application.
+                apply_vec[fut[0]] = arr
         apply_days = sorted(apply_vec.keys())
 
         # Apports DCA : à chaque rebalance sauf le 1ᵉʳ (le capital initial est déjà versé).
@@ -1014,8 +1110,16 @@ class BacktestService:
             portfolio_vol_threshold_pct=20.0, benchmark='SPY', pool_size=None,
             tx_cost_bps=None, margin_rate_pct=None, cash_yield_pct=None,
             dca_amount=0.0, margin_call_enabled=True, maintenance_margin_pct=None,
-            post_call_leverage=None, progress=None):
-        """Exécute le backtest complet et retourne un dict JSON-sérialisable."""
+            post_call_leverage=None, progress=None, start_date=None, end_date=None,
+            crash_overlay=False, crash_params=None):
+        """
+        Exécute le backtest complet et retourne un dict JSON-sérialisable.
+
+        `start_date` / `end_date` (ISO 'YYYY-MM-DD', optionnels) : fenêtre datée
+        (ex. une crise) ; sinon `years` jusqu'à aujourd'hui.
+        `crash_overlay` : levier conditionnel post-krach (crash_regime) calculé
+        sur le benchmark ; `crash_params` surcharge la spec pré-enregistrée.
+        """
         params = {
             'nb_top': int(nb_top), 'vol_scaling': bool(vol_scaling),
             'vol_target_pct': float(vol_target_pct), 'max_exposure_pct': float(max_exposure_pct),
@@ -1032,8 +1136,7 @@ class BacktestService:
             'maintenance_margin_pct': self.DEFAULT_MAINT_MARGIN_PCT if maintenance_margin_pct is None else float(maintenance_margin_pct),
             'post_call_leverage': self.DEFAULT_POST_CALL_LEVERAGE if post_call_leverage is None else float(post_call_leverage),
         }
-        end = pd.Timestamp.now().normalize()
-        start = end - pd.DateOffset(years=int(years))
+        end, start = self._resolve_window(years, start_date, end_date)
 
         # Clamp de la date de début à la profondeur réellement disponible en base.
         # Sans ça, demander 20-30 ans alors que le daily ne remonte qu'à ~2015 ferait
@@ -1054,7 +1157,11 @@ class BacktestService:
         # Filtre point-in-time (IndexMembership) : réduit le biais de survivance
         # en n'autorisant un titre qu'aux dates où il appartenait à un indice.
         membership = self._load_membership(pool)
-        close_px, dvol, low_px, fmeta = self.fetch_history(pool, nb_jours, start.date(), progress)
+        # Daily chargé avec une marge avant `start` : la vol réalisée 126 j est déjà
+        # mesurée au 1er rééquilibrage (sinon vol par défaut de 20 % le 1er mois).
+        close_px, dvol, low_px, fmeta = self.fetch_history(
+            pool, nb_jours, start.date(), progress,
+            load_from=(start - pd.Timedelta(days=self.WARMUP_DAYS)).date())
         if close_px.empty:
             raise RuntimeError(
                 "Cache de prix vide pour cette période. Lance le pré-remplissage "
@@ -1082,23 +1189,36 @@ class BacktestService:
             benchmark = '^GSPC'
             bench_df = _bench(benchmark)
         bench_close = bench_df['adjClose'] if bench_df is not None else pd.Series(dtype=float)
+        bench_close = bench_close.loc[:end]
+        bench_gap = bench_close.empty or bench_close.index.min() > start + pd.Timedelta(days=20)
 
-        daily_ret = close_px.pct_change()
+        daily_ret = close_px.loc[:end].pct_change()
 
-        # monthly_px pour le momentum : priorité MonthlyPriceBar (20 ans, yfinance)
-        # qui couvre le lookback 13 mois même pour les backtests longs.
-        # Le resample daily sert de fallback pour les tickers absents de MonthlyPriceBar.
+        # monthly_px pour le momentum : MonthlyPriceBar (long historique) recalé en
+        # fin de mois, complété par le resample daily — UNE observation par mois.
         since_monthly = (start - pd.DateOffset(months=14)).date()
         monthly_px_db = self._load_monthly_px(pool, since_monthly)
-        monthly_px_daily = close_px.resample('ME').last()
-        if not monthly_px_db.empty:
-            # DB mensuelle comme base (historique long), daily comme complément
-            monthly_px = monthly_px_db.combine_first(monthly_px_daily)
-        else:
-            monthly_px = monthly_px_daily
+        monthly_px = self._build_monthly_px(monthly_px_db, close_px, end)
+
+        # Levier conditionnel post-krach : régime calculé sur le cours du benchmark
+        # (clôture non ajustée si dispo, comme la définition usuelle d'un bear market).
+        lever_signal, lever, crash_cfg, crash_episodes = None, None, None, []
+        if crash_overlay:
+            from crash_regime import regime_params, compute_crash_regime, episodes_summary
+            crash_cfg = regime_params(crash_params)
+            px_reg = bench_df['close'] if bench_df is not None and 'close' in bench_df.columns \
+                and bench_df['close'].notna().any() else bench_close
+            px_reg = px_reg.loc[:end].dropna()
+            reg = compute_crash_regime(px_reg, **crash_cfg)
+            if not reg.empty:
+                lever_signal = reg['lever']
+                lever = float(crash_cfg['leverage'])
+                crash_episodes = [e for e in episodes_summary(px_reg, **crash_cfg)
+                                  if e['end'] >= start.strftime('%Y-%m-%d')]
 
         weights_df, meta = self.build_weight_matrix(monthly_px, daily_ret, dvol, start, params,
-                                                    membership=membership)
+                                                    membership=membership,
+                                                    lever_signal=lever_signal, lever=lever)
         if weights_df.empty:
             raise RuntimeError("Aucun signal sur la période (période trop courte ou données insuffisantes).")
 
@@ -1148,6 +1268,9 @@ class BacktestService:
                 'n_rebalances': meta['n_rebalances'],
                 'n_universe_changes': meta['n_universe_changes'],
                 'n_riskoff_months': meta.get('n_riskoff_months', 0),
+                'n_lever_months': meta.get('n_lever_months', 0),
+                'crash_overlay': crash_cfg,
+                'crash_episodes': crash_episodes,
                 'pit_universe': meta.get('pit_universe', False),
                 'warnings': ([
                     "Biais de survivance résiduel : l'univers candidat est constitué des "
@@ -1165,6 +1288,10 @@ class BacktestService:
                     f"Cache incomplet : {fmeta['skipped']} ticker(s) pas encore en base "
                     f"(récupérés progressivement par le cron nocturne). Résultat partiel."
                 ] if fmeta.get('skipped') else []) + ([
+                    f"⚠️ Benchmark {benchmark} sans historique daily au début de la période : "
+                    f"sa courbe (et le régime post-krach) ne démarre qu'au "
+                    f"{bench_close.index.min().strftime('%Y-%m-%d') if not bench_close.empty else '—'}."
+                ] if bench_gap else []) + ([
                     "⚠️ Données mensuelles yfinance absentes : le momentum est calculé "
                     "depuis le resampling du daily (limité à 6 ans). Lance la collecte yfinance "
                     "(Config → Données de marché) pour un historique complet jusqu'à 20 ans."

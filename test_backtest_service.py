@@ -168,3 +168,36 @@ def test_run_end_to_end_synthetique(svc, monkeypatch):
     assert 'drawdown_periods' in res
     assert 'benchmark_stats' in res
     assert res['stats']['tx_costs'] >= 0
+
+
+def test_run_fenetre_datee_et_levier_post_krach(svc, monkeypatch):
+    """run() accepte start_date/end_date et le levier post-krach (meta renseignée)."""
+    tickers = ['AAA', 'BBB', 'CCC', 'DDD', 'EEE']
+    frames = {t: _daily_frame('2017-01-02', 1500, drift=0.0007 + i * 0.0001,
+                              vol=0.012, vol_dollar=20e6, seed=i)
+              for i, t in enumerate(tickers)}
+    # SPY : hausse, krach -40 % volatil, rebond calme → ouvre une fenêtre de levier
+    rng = np.random.default_rng(7)
+    rets = np.concatenate([rng.normal(0.0004, 0.006, 600), rng.normal(-0.006, 0.035, 80),
+                           rng.normal(0.0015, 0.008, 820)])
+    idx = pd.bdate_range('2017-01-02', periods=len(rets))
+    px = 100 * np.cumprod(1 + rets)
+    frames['SPY'] = pd.DataFrame({'adjClose': px, 'close': px, 'volume': 1e6}, index=idx)
+
+    monkeypatch.setattr(svc, 'build_candidate_pool', lambda pool_size=None: tickers)
+    monkeypatch.setattr(svc, '_fetch_ticker',
+                        lambda t, n: (frames[t.upper()], None) if t.upper() in frames
+                        else (None, 'absent'))
+
+    res = svc.run(capital=10000, nb_top=2, benchmark='SPY', vol_scaling=True,
+                  vol_target_pct=40, max_exposure_pct=100, margin_call_enabled=False,
+                  start_date='2018-06-01', end_date='2021-12-31', crash_overlay=True)
+    assert res['success'] is True
+    assert res['meta']['start'] >= '2018-06-01'
+    assert res['meta']['end'] <= '2021-12-31'
+    assert res['meta']['crash_overlay']['leverage'] == 1.4
+    assert len(res['meta']['crash_episodes']) >= 1
+    assert res['meta']['n_lever_months'] >= 1
+    # le levier n'apparaît que pendant la fenêtre post-krach
+    # (le levier dérive avec les prix entre deux rééquilibrages)
+    assert res['leverage'] and 1.3 <= max(p['v'] for p in res['leverage']) <= 1.6

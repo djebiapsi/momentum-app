@@ -88,6 +88,34 @@ def _parse_run_params(data):
 
     if capital <= 0 or years < 1 or years > 30:
         raise ValueError('capital > 0 et 1 ≤ années ≤ 30')
+
+    # Fenêtre datée optionnelle (ex. une crise) — prioritaire sur `years`.
+    from datetime import date as _date
+    start_date = (data.get('start_date') or '').strip() or None
+    end_date = (data.get('end_date') or '').strip() or None
+    for label, val in (('début', start_date), ('fin', end_date)):
+        if val is not None:
+            _date.fromisoformat(val[:10])  # ValueError si invalide
+    if start_date and end_date and start_date[:10] >= end_date[:10]:
+        raise ValueError('la date de début doit précéder la date de fin')
+
+    # Levier conditionnel post-krach (crash_regime) : spec pré-enregistrée,
+    # seuls quelques paramètres bornés sont surchargeables.
+    crash_overlay = bool(data.get('crash_overlay', False))
+    crash_params = None
+    if crash_overlay:
+        raw = data.get('crash_params') or {}
+        crash_params = {}
+        bounds = {'dd_threshold': (0.10, 0.60), 'leverage': (1.0, 2.0),
+                  'window_days': (21, 504)}
+        for k, (lo, hi) in bounds.items():
+            if raw.get(k) is not None:
+                v = float(raw[k])
+                if not lo <= v <= hi:
+                    raise ValueError(f'crash_params.{k} hors bornes ({lo}–{hi})')
+                crash_params[k] = int(v) if k == 'window_days' else v
+        if raw.get('exit_on_vol') is not None:
+            crash_params['exit_on_vol'] = bool(raw['exit_on_vol'])
     if dca_amount < 0 or dca_amount > 1_000_000:
         raise ValueError('apport DCA invalide (0 ≤ DCA ≤ 1 000 000)')
     for label, val in (('coût', tx_cost_bps), ('taux de marge', margin_rate_pct),
@@ -99,7 +127,9 @@ def _parse_run_params(data):
                 tx_cost_bps=tx_cost_bps, margin_rate_pct=margin_rate_pct,
                 cash_yield_pct=cash_yield_pct, maintenance_margin_pct=maintenance_margin_pct,
                 post_call_leverage=post_call_leverage,
-                dca_amount=dca_amount, margin_call_enabled=margin_call_enabled)
+                dca_amount=dca_amount, margin_call_enabled=margin_call_enabled,
+                start_date=start_date, end_date=end_date,
+                crash_overlay=crash_overlay, crash_params=crash_params)
 
 
 @bp.route('/api/backtest/run', methods=['POST'])
@@ -223,6 +253,8 @@ def backtest_optimize():
     nb_top  = int(data.get('nb_top', int(Settings.get('nb_top', current_app.config.get('DEFAULT_NB_TOP', 5)))))
     capital = float(data.get('capital', 10000.0))
     quick   = bool(data.get('quick', False))
+    start_date = (data.get('start_date') or '').strip() or None
+    end_date = (data.get('end_date') or '').strip() or None
 
     import time as _time
     app_obj = current_app._get_current_object()
@@ -244,7 +276,8 @@ def backtest_optimize():
             try:
                 svc = get_backtest_service()
                 results = svc.optimize(years=years, nb_top=nb_top, capital=capital,
-                                       quick=quick, progress_cb=_progress)
+                                       quick=quick, progress_cb=_progress,
+                                       start_date=start_date, end_date=end_date)
                 with _opt_lock:
                     _opt_state.update({'running': False, 'results': results,
                                        'elapsed_s': round(_time.time() - t0, 1)})
