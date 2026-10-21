@@ -1,9 +1,11 @@
         <!-- PAGE: Backtest -->
         <div id="page-backtest" class="page">
-            <div class="header long" style="background: linear-gradient(135deg,#2d1e5f,#0f2027);">
-                <div class="header-label long">Validation historique</div>
-                <h1>Backtest Momentum 12-1</h1>
-                <p>Intérêt composé · univers complet SP500 + Nasdaq-100 · config live</p>
+            <div class="page-head">
+                <div>
+                    <div class="eyebrow">Validation historique · SP500 + Nasdaq-100</div>
+                    <h1 class="page-title">Backtest</h1>
+                </div>
+                <p class="page-meta">Rejoue la stratégie live, jour par jour, coûts et marge inclus</p>
             </div>
 
             <div class="perf-dashboard">
@@ -74,6 +76,49 @@
                         </div>
                         <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
                             Maintenance Reg T 25 % · appel évalué sur clôture · TWR pour les ratios, MWR (XIRR) pour l'investisseur DCA.
+                        </div>
+                    </details>
+
+                    <!-- Régime de tendance : quand sortir / rentrer (trend_regime) -->
+                    <details id="bt-trend" style="margin-top:10px;" open>
+                        <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);user-select:none;">
+                            Régime de marché : sortie en cash et rentrée (4 états)
+                        </summary>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:12px 2px 2px;">
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Signal de sortie</label>
+                                <select id="bt-trend-mode"
+                                        style="padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);">
+                                    <option value="off">Aucun (toujours investi)</option>
+                                    <option value="blend">Mixte ½ mensuel + ½ quotidien (config live)</option>
+                                    <option value="monthly">Mensuel (fin de mois)</option>
+                                    <option value="daily">Quotidien</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;" for="bt-regime-scope">Indice(s) suivi(s)</label>
+                                <select id="bt-regime-scope"
+                                        style="padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);">
+                                    <option value="sleeve">Par poche : Nasdaq → QQQ, autres → SPY</option>
+                                    <option value="either">SPY ou QQQ en BEAR → sortie</option>
+                                    <option value="spy">SPY seul</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Exposition en BULL (×)</label>
+                                <input id="bt-trend-bull" type="number" min="1" max="1.5" step="0.05" value="1"
+                                       style="width:90px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                            </div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);height:38px;cursor:pointer;">
+                                <input id="bt-rebound-index" type="checkbox" style="width:16px;height:16px;">
+                                Poche rebond : indice au lieu des gagnants après 24 mois de baisse (exploratoire)
+                            </label>
+
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
+                            États du SPY : momentum 12 mois × 1 mois. Cash seulement en BEAR (les deux négatifs) ;
+                            rentrée dès que le dernier mois redevient positif (REBOUND). Le mode mixte coupe à 50 %
+                            sur le signal quotidien et à 0 % quand le mensuel confirme.
                         </div>
                     </details>
 
@@ -252,94 +297,7 @@
                     </div>
                 </div>
 
-                <!-- ═══════════════════════════════════════════════════════════
-                     Optimisation des paramètres (grid search Sharpe/CAGR/MaxDD)
-                     ═══════════════════════════════════════════════════════════ -->
-                <details id="bt-optimize-section" style="margin-top:8px;">
-                    <summary style="cursor:pointer;padding:14px 18px;background:var(--bg-secondary);
-                        border:1px solid var(--border);border-radius:12px;font-size:13px;
-                        font-weight:600;color:var(--text-secondary);user-select:none;
-                        list-style:none;display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:15px;">🔬</span>
-                        Optimisation des paramètres
-                        <span style="margin-left:auto;font-size:11px;font-weight:400;color:var(--text-muted);">
-                            Grid search vol_target × max_exposure → meilleur Sharpe avec MaxDD ≤ 40 %
-                        </span>
-                    </summary>
-                    <div style="padding:18px;background:var(--bg-secondary);border:1px solid var(--border);
-                         border-top:none;border-radius:0 0 12px 12px;">
-
-                        <!-- Options + boutons -->
-                        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:14px;">
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Horizon</label>
-                                <div class="perf-range-selector" id="opt-years" style="margin:0;">
-                                    <button class="perf-pill" data-years="5">5 ans</button>
-                                    <button class="perf-pill active" data-years="10">10 ans</button>
-                                    <button class="perf-pill" data-years="20">20 ans</button>
-                                    <button class="perf-pill" data-years="30">30 ans</button>
-                                </div>
-                            </div>
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Nb positions</label>
-                                <input id="opt-nb-top" type="number" min="1" max="20" value="5"
-                                       style="width:72px;padding:8px 10px;background:var(--bg-card);border:1px solid var(--border);
-                                              border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
-                            </div>
-                            <button id="btn-opt-full" class="btn btn-primary admin-only"
-                                    style="height:38px;" onclick="launchOptimize(false)">
-                                Lancer l'optimisation complète
-                                <span style="font-size:10px;opacity:.7;display:block;margin-top:1px;">~50 combos · 3-5 min</span>
-                            </button>
-                            <button id="btn-opt-quick" class="btn btn-secondary admin-only"
-                                    style="height:38px;" onclick="launchOptimize(true)">
-                                Test rapide
-                                <span style="font-size:10px;opacity:.7;display:block;margin-top:1px;">~12 combos · 1 min</span>
-                            </button>
-                        </div>
-
-                        <!-- Progression -->
-                        <div id="opt-progress" style="display:none;margin-bottom:14px;">
-                            <div style="display:flex;justify-content:space-between;font-size:12px;
-                                 color:var(--text-muted);margin-bottom:5px;">
-                                <span id="opt-progress-label">Démarrage…</span>
-                                <span id="opt-progress-pct"></span>
-                            </div>
-                            <div style="height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden;">
-                                <div id="opt-progress-bar"
-                                     style="height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#8b5cf6);
-                                            border-radius:3px;transition:width .4s ease;"></div>
-                            </div>
-                        </div>
-
-                        <!-- Résultats -->
-                        <div id="opt-results" style="display:none;">
-                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;"
-                                 id="opt-results-meta"></div>
-                            <div style="overflow-x:auto;">
-                                <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                                    <thead>
-                                        <tr style="background:var(--bg-hover);color:var(--text-muted);">
-                                            <th style="padding:7px 10px;text-align:left;">#</th>
-                                            <th style="padding:7px 10px;text-align:left;">Paramètres</th>
-                                            <th style="padding:7px 10px;text-align:right;">Sharpe</th>
-                                            <th style="padding:7px 10px;text-align:right;">Sortino</th>
-                                            <th style="padding:7px 10px;text-align:right;">CAGR</th>
-                                            <th style="padding:7px 10px;text-align:right;">Max DD</th>
-                                            <th style="padding:7px 10px;text-align:right;">Vol.</th>
-                                            <th style="padding:7px 10px;text-align:right;">Lev.moy</th>
-                                            <th style="padding:7px 10px;text-align:right;">Marges</th>
-                                            <th style="padding:7px 10px;text-align:center;"></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="opt-results-body"></tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div id="opt-error" style="display:none;font-size:12px;color:#ef4444;margin-top:8px;"></div>
-                    </div>
-                </details>
+                <!-- Optimisation vol_target × max_exposure retirée : la volatilité cible n'est plus utilisée (régime de marché). -->
 
             </div>
         </div>

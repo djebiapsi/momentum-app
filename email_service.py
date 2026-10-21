@@ -768,16 +768,36 @@ Stratégie Momentum 12-1
         cards_block = (f'<table style="width:100%;border-collapse:collapse;margin-top:10px;">{cards_rows}</table>'
                        if cards_rows else '<p style="color:#a1a1aa;">Aucune action à investir ce mois-ci.</p>')
 
+        # Régime de marché du mois : exposition de chaque poche
+        reg = recommandations_data.get('regime') or {}
+        expo_total = sum(float(r.get('allocation') or 0) for r in investir)
+        regime_block = ''
+        if reg.get('sleeves'):
+            colors = {'BULL': '#22c55e', 'CORRECTION': '#f59e0b', 'REBOUND': '#60a5fa', 'BEAR': '#ef4444'}
+            cells = ''.join(
+                self._kpi_card(f"Poche {sl.get('label')} · {sl.get('state') or '—'}",
+                               f"{round(float(sl.get('exposure', 0)) * 100)} %",
+                               colors.get(sl.get('state'), '#fafafa'))
+                for sl in reg['sleeves'].values())
+            regime_block = f"""
+    <div style="background:#18181b;border:1px solid #27272a;padding:16px;border-radius:10px;margin:10px 0;">
+      <p style="margin:0 0 10px;font-size:15px;font-weight:600;">{reg.get('headline', '')}</p>
+      <table style="width:100%;border-collapse:collapse;"><tr>{cells}</tr></table>
+      <p style="margin:10px 0 0;color:#a1a1aa;font-size:12px;">Exposition cible totale : {round(expo_total)} % ·
+        prochaine décision le {reg.get('next_decision', '—')}. Une alerte email + notification part le jour où une poche passe en BEAR.</p>
+    </div>"""
+
         dl_path = f"/api/history/{history_id}/download" if history_id else "/api/history/latest/download"
         body = f"""
     <div style="background:#18181b;border:1px solid #27272a;padding:20px;border-radius:10px;
                 text-align:center;margin-bottom:8px;">
-      <p style="margin:0;font-size:17px;font-weight:600;">📅 C'est le moment de rééquilibrer !</p>
+      <p style="margin:0;font-size:17px;font-weight:600;">C'est le moment de rééquilibrer</p>
       <p style="margin:8px 0 0;color:#a1a1aa;font-size:14px;">
-        Nouveau calcul de momentum disponible ({date_calcul}). Voici le top à conserver/acheter.</p>
+        Nouveau calcul de momentum disponible ({date_calcul}). Voici les positions cibles.</p>
     </div>
+    {regime_block}
     {cards_block}
-    {self._cta_button('⬇️ Télécharger le momentum (CSV)', dl_path)}
+    {self._cta_button('Télécharger le classement (CSV)', dl_path)}
     <p style="color:#a1a1aa;font-size:13px;text-align:center;">
       Connecte-toi à l'app pour lancer le rééquilibrage IBKR en un clic.</p>"""
 
@@ -986,6 +1006,80 @@ Stratégie Momentum 12-1
                 f"Tickers: {n} | échec mensuel {fr_m:.0f}% | échec daily {fr_d:.0f}%\n"
                 f"En échec ({len(failed)}): {', '.join(failed[:60])}")
         return self._send(f"⚠️ Échec collecte de prix — {fr_m:.0f}% mensuel / {fr_d:.0f}% daily", html, text)
+
+    def envoyer_alerte_regime(self, reg: dict, ev: dict) -> dict:
+        """
+        Alerte de bascule du régime de marché (core.check_regime_and_alert).
+        `reg` = regime_service.live_regime(), `ev` = évènement enrichi
+        (kind, title, body, orders). Les baisses d'exposition sont en rouge.
+        """
+        kind = ev.get('kind')
+        accent = {'ALL_CASH': '#dc2626,#7f1d1d', 'CASH': '#dc2626,#7f1d1d',
+                  'REDUCE': '#d97706,#7c2d12', 'WATCH': '#d97706,#78350f',
+                  'REENTER': '#059669,#065f46', 'LEVER_ON': '#059669,#1d4ed8'}.get(kind, '#1d4ed8,#7c3aed')
+        border = accent.split(',')[0]
+        state_color = {'BULL': '#22c55e', 'CORRECTION': '#f59e0b', 'REBOUND': '#60a5fa', 'BEAR': '#ef4444'}
+        pct = lambda x: f"{round((x or 0) * 100)} %"
+        sgn = lambda v: '—' if v is None else (f'+{v}' if v >= 0 else f'{v}') + ' %'
+
+        rows = ''
+        for k, v in reg.get('indexes', {}).items():
+            if not v.get('state'):
+                continue
+            sleeve = next((s for s in reg['sleeves'].values() if s.get('index') == k), None)
+            rows += f"""
+          <tr>
+            <td style="padding:10px 8px;border-bottom:1px solid #27272a;font-weight:600;">{v['symbol']}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #27272a;color:{state_color.get(v['state'], '#fafafa')};font-weight:600;">{v['state']}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #27272a;color:{state_color.get(v['daily_state'], '#a1a1aa')};">{v.get('daily_state') or '—'}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #27272a;text-align:right;font-family:monospace;">{sgn(v.get('slow_ret_pct'))} / {sgn(v.get('fast_ret_pct'))}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #27272a;text-align:right;font-family:monospace;">{sgn(v.get('pct_vs_pivot'))}</td>
+            <td style="padding:10px 8px;border-bottom:1px solid #27272a;text-align:right;font-family:monospace;font-weight:600;">{pct(sleeve['exposure']) if sleeve else '—'}</td>
+          </tr>"""
+
+        orders = ev.get('orders') or []
+        orders_html = ''
+        if orders:
+            items = ''.join(
+                f"""<tr><td style="padding:7px 8px;border-bottom:1px solid #27272a;font-weight:600;color:{'#fca5a5' if o['action'] == 'VENDRE' else '#86efac'};">{o['action']}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid #27272a;font-family:monospace;">{o['ticker']}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid #27272a;text-align:right;font-family:monospace;">{o['before']} % → {o['after']} %</td></tr>"""
+                for o in orders)
+            orders_html = f"""
+    <div style="background:#18181b;border:1px solid #27272a;border-radius:10px;padding:16px;margin:14px 0;">
+      <div style="color:#a1a1aa;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Ordres à passer (part du portefeuille)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">{items}</table>
+    </div>"""
+
+        body = f"""
+    <div style="background:#18181b;border:1px solid #27272a;border-left:4px solid {border};
+                padding:20px;border-radius:10px;margin:14px 0;">
+      <p style="margin:0 0 6px;font-size:18px;font-weight:600;">{ev.get('title', '')}</p>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#d4d4d8;">{ev.get('body', '')}</p>
+    </div>
+    {orders_html}
+    <div style="background:#18181b;border:1px solid #27272a;border-radius:10px;padding:16px;margin:14px 0;">
+      <div style="color:#a1a1aa;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">État des marchés</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <tr style="color:#a1a1aa;font-size:11px;">
+          <td style="padding:6px 8px;">Indice</td><td style="padding:6px 8px;">Mensuel</td><td style="padding:6px 8px;">Jour</td>
+          <td style="padding:6px 8px;text-align:right;">12 m / 1 m</td><td style="padding:6px 8px;text-align:right;">vs pivot</td>
+          <td style="padding:6px 8px;text-align:right;">Exposition</td></tr>
+        {rows}
+      </table>
+      <p style="margin:12px 0 0;color:#a1a1aa;font-size:12px;">Prochaine décision mensuelle : clôture du {reg.get('next_decision') or '—'}.</p>
+    </div>
+    <p style="color:#a1a1aa;font-size:12px;margin-top:14px;line-height:1.6;">
+      Règle : chaque action suit le régime de son indice (Nasdaq → QQQ, autres → SPY).
+      Cash quand le momentum 12 mois ET 1 mois de l'indice sont négatifs (BEAR) ; la moitié
+      réagit au signal quotidien, l'autre à la fin de mois ; 125 % en BULL.
+      Ouvre l'app pour vérifier les cibles puis rééquilibrer.</p>"""
+        now = datetime.now().strftime('%Y-%m-%d %H:%M')
+        emoji = (ev.get('title') or '🧭')[:1]
+        html = self._html_shell('Régime de marché', now, body, accent=accent, emoji=emoji)
+        text = f"{ev.get('title')}\n{ev.get('body')}\n" + '\n'.join(
+            f"{o['action']} {o['ticker']} {o['before']}% -> {o['after']}%" for o in orders)
+        return self._send(ev.get('title') or 'Régime de marché', html, text)
 
     # =====================================================================
     # DIGEST D'ACTUALITÉS QUOTIDIEN

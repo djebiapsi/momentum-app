@@ -6,11 +6,11 @@
             const data = await api('/calculate', { method: 'POST' });
             
             btn.disabled = false;
-            btn.innerHTML = 'Calculer le momentum';
+            btn.innerHTML = 'Recalculer les cibles';
             
             if (data && data.success) {
                 displayRecommendations(data);
-                showToast('Recommandations mises à jour !');
+                showToast('Cibles mises à jour');
             } else {
                 showToast(data?.error || 'Erreur lors du calcul', 'error');
             }
@@ -18,13 +18,14 @@
         
         async function calculateAndNotify() {
             const btn = event.currentTarget;
+            const label = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Calcul et envoi...';
             
             const data = await api('/calculate-and-notify', { method: 'POST' });
             
             btn.disabled = false;
-            btn.innerHTML = 'Calculer et notifier';
+            btn.innerHTML = label;
             
             if (data && data.success) {
                 displayRecommendations(data);
@@ -56,6 +57,20 @@
             } catch (e) { /* indicatif : silencieux */ }
         }
 
+        // Résumé du dernier calcul, partagé avec regime.js (KPI de la décision)
+        let lastRecoSummary = null;
+
+        const SLEEVE_LABELS = { nasdaq: 'Nasdaq', other: 'S&P 500' };
+
+        function _sleeveBadge(r) {
+            if (!r.sleeve) return '';
+            const m = r.regime_mult;
+            const tag = m != null && m !== 1 ? ` · ×${String(m).replace('.', ',')}` : '';
+            return `<span class="sleeve-badge" data-sleeve="${r.sleeve}">${SLEEVE_LABELS[r.sleeve] || r.sleeve}${tag}</span>`;
+        }
+
+        function dateStrFor(data) { return data.calculation_date || data.date_calcul || null; }
+
         function displayRecommendations(data) {
             const investList = document.getElementById('invest-list');
             const sellList = document.getElementById('sell-list');
@@ -63,211 +78,135 @@
             const recs = data.recommandations || data.details || [];
             const invest = recs.filter(r => r.signal === 'Investir');
             const cash   = recs.filter(r => r.signal === 'Cash');
-            const sell   = recs.filter(r => r.signal === 'Sortir');
+            // Titres écartés par le régime : leur poche est à 0 % (BEAR)
+            const lastInvestRank = Math.max(0, ...invest.map(r => r.rank || 0), ...cash.map(r => r.rank || 0));
+            const blocked = recs.filter(r => r.regime_blocked
+                || (r.regime_mult === 0 && r.signal === 'Sortir' && (r.rank || 999) < Math.max(lastInvestRank, (data.nb_top || 5) + 1)));
+            const blockedSet = new Set(blocked.map(r => r.ticker));
+            const sell = recs.filter(r => r.signal === 'Sortir' && !blockedSet.has(r.ticker));
 
             currentRecommendations = recs;
 
-            // Stocker pour export TWS et afficher le bouton si positions Investir
+            // Export TWS / IBKR : cibles du dernier calcul
             lastRecoData = { recommendations: recs.map(r => ({ ticker: r.ticker, signal: r.signal, allocation: r.allocation })) };
             const btnExport = document.getElementById('btn-export-tws');
             if (btnExport) btnExport.style.display = invest.length > 0 ? '' : 'none';
+            const btnMain = document.getElementById('btn-rebalance-main');
+            if (btnMain) btnMain.disabled = recs.length === 0;
 
-            // --- Stats (4 cartes) ---
-            document.getElementById('stat-top').textContent = invest.length;
-            document.getElementById('stat-allocation').textContent = invest.length > 0
-                ? invest[0].allocation + '%' : '—';
-
-            const avgMomentum = invest.length > 0
-                ? (invest.reduce((s, r) => s + r.momentum, 0) / invest.length).toFixed(1)
-                : null;
-            document.getElementById('stat-momentum-avg').textContent =
-                avgMomentum != null ? (avgMomentum >= 0 ? '+' : '') + avgMomentum + '%' : '—';
-
-            const vols = invest.filter(r => r.vol_annualisee != null).map(r => r.vol_annualisee);
-            const avgVol = vols.length > 0
-                ? (vols.reduce((s, v) => s + v, 0) / vols.length).toFixed(1)
-                : null;
-            document.getElementById('stat-vol-avg').textContent =
-                avgVol != null ? avgVol + '%' : '—';
-
-            // --- Bannière exposition brute (vol scaling et/ou filtre portefeuille) ---
-            const expoBanner = document.getElementById('exposure-banner');
-            if (expoBanner) {
-                if ((data.vol_scaling || data.portfolio_filter) && data.exposition_brute != null) {
-                    const brute = data.exposition_brute;
-                    const levier = brute > 100;
-                    let html = `<span style="color:${levier ? 'var(--accent-short)' : 'var(--text-primary,#fff)'}">${brute.toFixed(1)}%</span>`
-                        + (levier ? ' <span style="font-size:11px;color:var(--accent-short);">⚡ levier</span>' : '');
-                    // Frein anti-krach actif ?
-                    if (data.portfolio_filter && data.portfolio_factor != null) {
-                        const f = data.portfolio_factor;
-                        const pvol = data.portfolio_vol != null ? data.portfolio_vol + '%' : '—';
-                        if (f < 1) {
-                            html += ` <span style="font-size:11px;color:var(--accent-short);" title="Vol panier ${pvol} > seuil ${data.portfolio_threshold_pct}%">🛡️ frein ×${f}</span>`;
-                        } else {
-                            html += ` <span style="font-size:11px;color:var(--text-secondary,#888);" title="Vol panier ${pvol} ≤ seuil ${data.portfolio_threshold_pct}%">🛡️ veille (vol ${pvol})</span>`;
-                        }
-                    }
-                    document.getElementById('exposure-value').innerHTML = html;
-                    expoBanner.style.display = 'flex';
-                } else {
-                    expoBanner.style.display = 'none';
-                }
+            // Résumé (KPI + décision)
+            const exposure = invest.reduce((s, r) => s + (r.allocation || 0), 0);
+            const bySleeve = {};
+            invest.forEach(r => { if (r.sleeve) bySleeve[r.sleeve] = (bySleeve[r.sleeve] || 0) + 1; });
+            lastRecoSummary = {
+                // Cibles calculées avant le régime (aucune poche renseignée) : à recalculer
+                stale: invest.length > 0 && !invest.some(r => r.sleeve),
+                date: dateStrFor(data),
+                exposure: recs.length ? exposure : null,
+                positions: invest.length,
+                bySleeve: Object.entries(bySleeve).map(([k, n]) => `${n} ${SLEEVE_LABELS[k] || k}`).join(' · '),
+            };
+            const total = document.getElementById('target-total');
+            if (total) {
+                total.textContent = !recs.length ? '—'
+                    : exposure <= 0.5 ? '100 % cash'
+                    : `${Math.round(exposure)} % investi` + (exposure > 100.5 ? ' (levier)' : exposure < 99.5 ? ` · ${Math.round(100 - exposure)} % cash` : '');
             }
 
-            // Couleur momentum moyen
-            const statMom = document.getElementById('stat-momentum-avg');
-            statMom.style.color = avgMomentum != null
-                ? (parseFloat(avgMomentum) >= 0 ? 'var(--accent-long)' : 'var(--accent-short)')
-                : '';
-
-            // Update date
             const dateStr = data.calculation_date || data.date_calcul;
-            document.getElementById('last-update').textContent = 'Dernière MAJ: ' + dateStr;
+            const upd = document.getElementById('last-update');
+            if (upd) upd.textContent = dateStr ? `Cibles calculées le ${rgDate(dateStr, true)}` : '—';
 
             if (recs.length > 0) document.getElementById('toggle-all').style.display = 'flex';
 
-            // --- Carte état du marché ---
-            const marketCard = document.getElementById('market-card');
-            const regime = data.market_regime;
-            if (regime && regime.regime !== 'UNKNOWN' && regime.spy_price != null) {
-                const isBear = regime.regime === 'BEAR';
-                const sign = regime.pct_vs_sma200 >= 0 ? '+' : '';
-                const gapColor = isBear ? 'var(--accent-short)' : 'var(--accent-long)';
-
-                // Badge
-                const badge = document.getElementById('market-regime-badge');
-                badge.className = 'market-badge ' + (isBear ? 'bear' : 'bull');
-                badge.textContent = isBear ? '⚠ BEAR' : '↑ BULL';
-
-                // Métriques
-                document.getElementById('market-spy-price').textContent = '$' + regime.spy_price;
-                document.getElementById('market-sma200').textContent    = '$' + regime.sma200;
-                const gapEl = document.getElementById('market-gap');
-                gapEl.textContent = sign + regime.pct_vs_sma200 + '%';
-                gapEl.style.color = gapColor;
-
-                // Jauge : SPY vs SMA200
-                // On mappe l'écart [-15%, +15%] sur [0%, 100%] (50% = neutre = SMA200)
-                const pct = regime.pct_vs_sma200;
-                const clampedPct = Math.max(-15, Math.min(15, pct));
-                const fillPct = 50 + (clampedPct / 15) * 50;          // 0→100
-                const markerLeft = 50;                                  // SMA200 toujours au centre
-
-                const fill = document.getElementById('market-gauge-fill');
-                if (isBear) {
-                    // Barre de gauche (rouge) : de fillPct jusqu'au centre
-                    fill.style.width  = (50 - fillPct) + '%';
-                    fill.style.marginLeft = fillPct + '%';
-                    fill.style.background = 'var(--accent-short)';
-                } else {
-                    // Barre de droite (verte) : du centre jusqu'à fillPct
-                    fill.style.width      = (fillPct - 50) + '%';
-                    fill.style.marginLeft = '50%';
-                    fill.style.background = 'var(--accent-long)';
-                }
-                document.getElementById('market-gauge-marker').style.left = markerLeft + '%';
-
-                // Explication contextuelle
-                const explications = {
-                    bull_strong:  `<strong>Tendance haussière confirmée</strong> — SPY nettement au-dessus de sa SMA200 (+${pct}%). Le momentum 12-1 est statistiquement plus fiable dans ce régime. Les signaux <em>Acheter</em> ont une probabilité de succès historiquement plus élevée.`,
-                    bull_weak:    `<strong>Tendance haussière modérée</strong> — SPY légèrement au-dessus de sa SMA200 (+${pct}%). Signal positif, mais surveiller un éventuel retournement vers la SMA200.`,
-                    bear_weak:    `<strong>Attention — marché légèrement baissier</strong> (${pct}% sous SMA200). Les drawdowns sont plus fréquents. Envisager de réduire la taille des positions.`,
-                    bear_strong:  `<strong>Marché baissier — prudence maximale</strong> (${pct}% sous SMA200). Historiquement, le momentum génère plus de faux signaux en bear market et les pertes peuvent être sévères. Considérer de rester en cash sur une partie du portefeuille.`
-                };
-                let key;
-                if (!isBear) key = pct >= 5 ? 'bull_strong' : 'bull_weak';
-                else         key = pct <= -5 ? 'bear_strong' : 'bear_weak';
-
-                document.getElementById('market-explication').innerHTML = explications[key];
-
-                // Bordure de la carte selon régime
-                marketCard.className = 'market-card o-2 ' + (isBear ? 'bear' : 'bull');
-                marketCard.style.display = 'block';
-            } else {
-                marketCard.style.display = 'none';
-            }
-
-            // Helper : affiche la perf du mois récent (exclu du momentum 12-1)
+            // Perf du mois récent (exclu du momentum 12-1)
             function perfRecentHtml(r) {
                 if (r.perf_recent_1m == null) return '';
                 const cls = r.perf_recent_1m >= 0 ? 'positive' : 'negative';
                 const sign = r.perf_recent_1m >= 0 ? '+' : '';
-                return `<div class="perf-recent ${cls}" title="Perf mois récent (exclu du momentum 12-1)">1m récent: ${sign}${r.perf_recent_1m}%</div>`;
+                return `<div class="perf-recent ${cls}" title="Perf du dernier mois (exclu du momentum 12-1)">1 m : ${sign}${r.perf_recent_1m}%</div>`;
             }
 
-            // --- Render invest list ---
+            // --- Portefeuille cible ---
             const investAndCash = [...invest, ...cash];
-            // Allocation max (pour dimensionner les barres relatives)
             const maxAlloc = Math.max(1, ...invest.map(r => r.allocation || 0));
             if (investAndCash.length > 0) {
-                investList.innerHTML = investAndCash.map((r, i) => {
+                investList.innerHTML = investAndCash.map(r => {
                     const isCash = r.signal === 'Cash';
                     const barPct = isCash ? 0 : Math.round(((r.allocation || 0) / maxAlloc) * 100);
                     return `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                        <div class="stock-rank ${isCash ? '' : 'top'}">${i + 1}</div>
+                        <div class="stock-rank ${isCash ? '' : 'top'}" title="Rang dans le classement momentum">${r.rank ?? ''}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                                ${_sleeveBadge(r)}
                                 <span class="qv-q-badge" id="qvq-${r.ticker}" title="Score qualité (indicatif · Quality-Value)"></span>
                             </div>
-                            <div class="stock-signal ${isCash ? 'cash' : 'buy'}">${isCash ? 'Cash (momentum <0)' : 'Acheter'}</div>
+                            <div class="stock-signal ${isCash ? 'cash' : 'buy'}">${isCash ? 'Cash : momentum négatif' : 'Détenir'}</div>
                             ${!isCash ? `<div class="alloc-bar" title="Part du portefeuille : ${r.allocation}%"><span style="width:${barPct}%"></span></div>` : ''}
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
-                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(1)}%
                             </div>
                             ${perfRecentHtml(r)}
-                            ${r.vol_annualisee != null ? `<div class="perf-recent" style="opacity:0.6;" title="Volatilité annualisée du titre">vol: ${r.vol_annualisee}%${r.multiplier != null ? ` · ×${r.multiplier}` : ''}</div>` : ''}
                             ${!isCash ? `<div class="allocation-badge">${r.allocation}%</div>` : ''}
                         </div>
                     </div>`;
                 }).join('');
-                _fillMomentumQuality(investAndCash.filter(r => r.signal !== 'Cash').map(r => r.ticker));
+                _fillMomentumQuality(invest.map(r => r.ticker));
+            } else if (recs.length > 0) {
+                investList.innerHTML = `<div class="empty-state cash-state">
+                    <p class="empty-title">100 % cash</p>
+                    <p>Les deux marchés sont en BEAR : aucune action à détenir. Le retour se fera dès que le dernier mois d'un des indices redevient positif.</p></div>`;
             } else {
-                investList.innerHTML = '<div class="empty-state"><p>Aucune action sélectionnée</p></div>';
+                investList.innerHTML = '<div class="empty-state"><p class="empty-title">Pas encore de cibles</p><p>Lance « Recalculer les cibles ».</p></div>';
             }
             animIn(investList);
 
-            // --- Stat pop ---
-            ['stat-top','stat-allocation','stat-momentum','stat-vol'].forEach(popEl);
+            // --- Écartés par le régime ---
+            const blockedBox = document.getElementById('blocked-list');
+            if (blockedBox) {
+                if (blocked.length) {
+                    const groups = {};
+                    blocked.forEach(r => { (groups[r.sleeve || 'other'] = groups[r.sleeve || 'other'] || []).push(r.ticker); });
+                    blockedBox.innerHTML = Object.entries(groups).map(([k, t]) =>
+                        `<p><b>Écartés par le régime</b> (poche ${SLEEVE_LABELS[k] || k} en BEAR) : ${t.join(', ')}</p>`).join('');
+                    blockedBox.hidden = false;
+                } else {
+                    blockedBox.hidden = true;
+                }
+            }
 
-            // --- Render sell list (top 5 visibles) ---
+            // --- Juste après dans le classement (5) ---
             if (sell.length > 0) {
-                sellList.innerHTML = sell.slice(0, 5).map((r, i) => `
+                sellList.innerHTML = sell.slice(0, 5).map(r => `
                     <div class="stock-item clickable" onclick="openModal('${r.ticker}')">
-                        <div class="stock-rank">${investAndCash.length + i + 1}</div>
+                        <div class="stock-rank">${r.rank ?? ''}</div>
                         <div class="stock-info">
                             <div class="stock-ticker">
                                 <a href="${getTradingViewUrl(r.ticker)}" target="_blank" rel="noopener" class="ticker-link" onclick="event.stopPropagation()">${r.ticker}</a>
+                                ${_sleeveBadge({ ...r, regime_mult: null })}
                             </div>
-                            <div class="stock-signal sell">Éviter</div>
                         </div>
                         <div class="stock-momentum">
                             <div class="momentum-value ${r.momentum >= 0 ? 'positive' : 'negative'}">
-                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(2)}%
+                                ${r.momentum >= 0 ? '+' : ''}${r.momentum.toFixed(1)}%
                             </div>
                             ${perfRecentHtml(r)}
                         </div>
                     </div>
                 `).join('');
-
-                if (sell.length > 5) {
-                    sellList.innerHTML += `<p style="text-align: center; color: var(--text-muted); font-size: 12px; padding: 8px;">+ ${sell.length - 5} autres actions</p>`;
-                }
             } else {
-                sellList.innerHTML = '<div class="empty-state"><p>--</p></div>';
+                sellList.innerHTML = '<div class="empty-state"><p>—</p></div>';
             }
             animIn(sellList);
 
-            // Si le toggle est ouvert, mettre à jour la liste
-            if (showAllStocks) {
-                renderAllStocks();
-            }
+            if (showAllStocks) renderAllStocks();
+            if (typeof renderDecision === 'function') renderDecision();
         }
-        
+
         // =================================================================
         // RÉÉQUILIBRAGE
         // =================================================================
@@ -584,4 +523,3 @@
         // =================================================================
         // PANEL
         // =================================================================
-

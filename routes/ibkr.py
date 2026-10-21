@@ -1148,8 +1148,10 @@ def ibkr_rebalance():
     data = request.get_json() or {}
     targets = data.get('targets', [])
     dry_run = data.get('dry_run', True)
+    # Régime BEAR : cibles vides autorisées si explicitement demandé → tout liquider.
+    go_cash = bool(data.get('allow_cash', False))
 
-    if not targets:
+    if not targets and not go_cash:
         return jsonify({'success': False, 'error': 'targets requis'}), 400
     try:
         needed = not dry_run

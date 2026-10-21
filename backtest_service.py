@@ -494,6 +494,59 @@ class BacktestService:
                 return True
         return False
 
+    def _index_close(self, sym, load_start, nb_jours):
+        """Clôtures ajustées d'un indice / ETF : DB, puis IBKR/Tiingo, puis yfinance."""
+        load_start = pd.Timestamp(load_start)
+        df = self._load_db(sym, load_start.date())
+        if self._db_covers(df, (load_start + pd.Timedelta(days=30)).date()):
+            return df['adjClose']
+        df, _ = self._fetch_ticker(sym, nb_jours)
+        if df is not None and not df.empty and 'adjClose' in df.columns \
+                and df.index.min() <= load_start + pd.Timedelta(days=30):
+            return df['adjClose']
+        try:
+            import yfinance as yf
+            y = yf.download(sym, start=load_start.strftime('%Y-%m-%d'), progress=False,
+                            auto_adjust=True)['Close'].squeeze()
+            y.index = pd.DatetimeIndex(y.index).tz_localize(None)
+            return y.dropna()
+        except Exception as e:
+            logger.warning('_index_close %s : %s', sym, e)
+            return None
+
+    @staticmethod
+    def nasdaq_sleeve_tickers(tickers, source='nasdaq_listed'):
+        """
+        Titres rattachés à la poche QQQ du régime par poche.
+          - 'nasdaq_listed' (défaut) : cotés au Nasdaq (exchange NMS/NGM/NCM du profil
+            yfinance, TickerInfoSnapshot). La place de cotation ne dépend pas de la
+            performance future → peu de biais (l'historique de composition du
+            Nasdaq-100 n'est pas disponible).
+          - 'ndx_current' : membres ACTUELS du Nasdaq-100 (IndexMembership) — biais
+            de survivance (les futurs gagnants), à n'utiliser que comme borne haute.
+        """
+        import json as _json
+        upper = {t.upper() for t in tickers}
+        try:
+            if source == 'ndx_current':
+                from models import IndexMembership
+                rows = IndexMembership.query.filter_by(index_name='NDX100').all()
+                return {r.ticker for r in rows if r.ticker in upper}
+            from models import TickerInfoSnapshot
+            out = set()
+            rows = TickerInfoSnapshot.query.filter(TickerInfoSnapshot.ticker.in_(list(upper))).all()
+            for r in rows:
+                try:
+                    ex = (_json.loads(r.raw_info or '{}') or {}).get('exchange', '')
+                except Exception:
+                    ex = ''
+                if ex in ('NMS', 'NGM', 'NCM', 'NAS', 'NASDAQ'):
+                    out.add(r.ticker)
+            return out
+        except Exception as e:
+            logger.warning('nasdaq_sleeve_tickers : %s', e)
+            return set()
+
     # ------------------------------------------------------------------
     # Optimisation des paramètres (grid search vol_target × max_exposure)
     # ------------------------------------------------------------------
@@ -703,7 +756,7 @@ class BacktestService:
         return v if v > 1e-6 else self.VOL_DEFAULT
 
     def compute_weights(self, as_of, universe, monthly_px, daily_ret, params, mom_cache=None,
-                        membership=None, lever=None):
+                        membership=None, lever=None, mult_fn=None):
         """
         Poids cibles à `as_of` pour `universe` (reproduit la config live) :
           1. momentum 12-1 > 0, garder top `nb_top` ;
@@ -723,6 +776,11 @@ class BacktestService:
         `lever` (float optionnel, ex. 1.4) : levier autorisé par le régime post-krach
         (crash_regime). Vol-scaling : le plafond d'exposition devient
         max(max_exposure, lever) ; inverse-vol (100 %) : les poids sont × lever.
+
+        `mult_fn` (callable ticker → float, optionnel) : multiplicateur par titre du
+        régime par poche (sleeve_regime). Un titre à 0 (son indice en BEAR) est exclu
+        AVANT le classement : le top N est pris parmi les poches encore investies ;
+        les poids finaux sont ensuite × multiplicateur (1,25 en BULL, 0,5 en alerte…).
         """
         nb_top = params['nb_top']
         # 1) sélection momentum
@@ -731,6 +789,8 @@ class BacktestService:
             if t not in monthly_px.columns:
                 continue
             if membership is not None and not self._member_at(membership, t, as_of):
+                continue
+            if mult_fn is not None and mult_fn(t) <= 0:
                 continue
             if mom_cache is not None:
                 ckey = (t, as_of)
@@ -766,6 +826,9 @@ class BacktestService:
             if lever and float(lever) > 1.0:
                 w *= float(lever)
 
+        if mult_fn is not None and not w.empty:
+            w = w * pd.Series({t: mult_fn(t) for t in w.index})
+
         # 4) frein anti-krach au niveau du panier
         if params['portfolio_filter'] and not w.empty:
             cols = [t for t in w.index if t in daily_ret.columns]
@@ -781,7 +844,9 @@ class BacktestService:
     # 5) Construction de la matrice de poids (univers trimestriel + poids mensuels)
     # ------------------------------------------------------------------
     def build_weight_matrix(self, monthly_px, daily_ret, dvol, start, params, mom_cache=None,
-                            membership=None, lever_signal=None, lever=None):
+                            membership=None, lever_signal=None, lever=None,
+                            exposure_signal=None, index_signal=None, index_ticker=None,
+                            sleeve=None):
         """
         Pour chaque fin de mois ≥ start : calcule les poids cibles en classant le
         momentum sur TOUT l'univers disponible — **aucun screener, identique à
@@ -799,25 +864,53 @@ class BacktestService:
         mois et ne change que l'exposition (pas d'attente du mois suivant pour
         couper ou remettre le levier). Aucun lookahead : signal ≤ t, appliqué en t+1.
 
+        `exposure_signal` (pd.Series float, daily) : multiplicateur d'exposition du
+        régime de tendance (trend_regime : 0 = cash en BEAR, 1 sinon, >1 = levier
+        en BULL). Appliqué APRÈS la pondération ; chaque bascule entre deux fins de
+        mois ajoute une date de décision (même mécanique que `lever_signal`).
+        `index_signal` (pd.Series bool) + `index_ticker` : quand actif, la poche
+        momentum est remplacée par l'indice (poche « rebond », exploratoire).
+
+        `sleeve` (dict optionnel) : régime PAR POCHE — {'tickers': set des titres
+        rattachés à l'indice secondaire (QQQ), 'expo_main': exposition du benchmark
+        (SPY), 'expo_alt': exposition de l'indice secondaire}. Chaque titre suit le
+        régime de son indice : poche en BEAR → exclue du classement, poche en BULL
+        → poids × bull_exposure. Les deux en BEAR → cash.
+
         Retourne (weights_df [dates × tickers], meta dict).
         """
         from crash_regime import lever_at
+        from trend_regime import exposure_at
 
         month_ends = [d for d in monthly_px.index if d >= start]
         me_set = set(month_ends)
         use_lever = lever_signal is not None and lever is not None and len(lever_signal) > 0
-        switches = []
-        if use_lever:
-            sig = lever_signal.astype(bool)
-            changed = sig[sig != sig.shift(1)].index
-            switches = [t for t in changed if t >= start and t not in me_set]
+        use_expo = exposure_signal is not None and len(exposure_signal) > 0
+        use_index = (index_signal is not None and index_ticker is not None
+                     and len(index_signal) > 0)
+        switches = set()
+        use_sleeve = sleeve is not None
+        sleeve_sigs = ((True, sleeve['expo_main']), (True, sleeve['expo_alt'])) if use_sleeve else ()
+        for on_, sig_ in ((use_lever, lever_signal), (use_expo, exposure_signal),
+                          (use_index, index_signal)) + sleeve_sigs:
+            if on_:
+                changed = sig_[sig_ != sig_.shift(1)].index
+                switches.update(t for t in changed if t >= start and t not in me_set)
+        switches = sorted(switches)
         # Univers = pool complet, comme calculate. La disponibilité du momentum
         # (≥13 mois à la date) gère l'entrée point-in-time, pas un screener.
         universe = list(monthly_px.columns)
         all_me = list(monthly_px.index)
+        if use_index and index_ticker not in monthly_px.columns:
+            universe_cols = list(monthly_px.columns) + [index_ticker]
+        else:
+            universe_cols = list(monthly_px.columns)
         weights = {}
         n_riskoff = 0
         n_lever = 0
+        n_regime_cash = 0
+        n_index = 0
+        n_sleeve = {}
 
         for d in sorted(me_set | set(switches)):
             if d in me_set:
@@ -828,9 +921,18 @@ class BacktestService:
                     continue
                 as_of = prev[-1]
             on = use_lever and lever_at(lever_signal, d)
+            mult_fn = None
+            if use_sleeve:
+                m_main = exposure_at(sleeve['expo_main'], d)
+                m_alt = exposure_at(sleeve['expo_alt'], d)
+                alt_set = sleeve['tickers']
+                mult_fn = (lambda t, a=m_alt, b=m_main: a if t in alt_set else b)
+                if d in me_set:
+                    key = (m_main > 0, m_alt > 0)
+                    n_sleeve[key] = n_sleeve.get(key, 0) + 1
             w = self.compute_weights(as_of, universe, monthly_px, daily_ret, params,
                                      mom_cache=mom_cache, membership=membership,
-                                     lever=lever if on else None)
+                                     lever=lever if on else None, mult_fn=mult_fn)
             # Risk-off (aucun momentum positif) → on passe réellement en cash
             # (ligne de poids nulle), au lieu de conserver le panier du mois précédent.
             if w.empty:
@@ -839,16 +941,32 @@ class BacktestService:
                     n_riskoff += 1
             if on and d in me_set:
                 n_lever += 1
+            if use_index and lever_at(index_signal, d):
+                w = pd.Series({index_ticker: 1.0})
+                if d in me_set:
+                    n_index += 1
+            if use_expo:
+                mult = exposure_at(exposure_signal, d)
+                w = w * mult
+                if mult <= 0 and d in me_set:
+                    n_regime_cash += 1
             weights[d] = w
 
         meta = {'n_rebalances': 0, 'n_universe_changes': 0,
                 'n_riskoff_months': n_riskoff,
                 'n_lever_months': n_lever,
                 'n_regime_switches': len(switches),
+                'n_regime_cash_months': n_regime_cash,
+                'n_index_months': n_index,
+                'sleeve_months': {
+                    'les_deux': n_sleeve.get((True, True), 0),
+                    'spy_seul': n_sleeve.get((True, False), 0),
+                    'qqq_seul': n_sleeve.get((False, True), 0),
+                    'cash': n_sleeve.get((False, False), 0)} if use_sleeve else None,
                 'pit_universe': membership is not None}
         if not weights:
             return pd.DataFrame(), meta
-        wdf = pd.DataFrame(weights).T.reindex(columns=monthly_px.columns).fillna(0.0)
+        wdf = pd.DataFrame(weights).T.reindex(columns=universe_cols).fillna(0.0)
         wdf = wdf.sort_index()
         meta['n_rebalances'] = sum(1 for d in weights if d in me_set)
         return wdf, meta
@@ -1111,7 +1229,10 @@ class BacktestService:
             tx_cost_bps=None, margin_rate_pct=None, cash_yield_pct=None,
             dca_amount=0.0, margin_call_enabled=True, maintenance_margin_pct=None,
             post_call_leverage=None, progress=None, start_date=None, end_date=None,
-            crash_overlay=False, crash_params=None):
+            crash_overlay=False, crash_params=None,
+            trend_regime=False, trend_params=None, rebound_index=False,
+            sleeve_regime=False, sleeve_tickers=None, sleeve_symbol='QQQ',
+            sleeve_source='nasdaq_listed', regime_either=False):
         """
         Exécute le backtest complet et retourne un dict JSON-sérialisable.
 
@@ -1119,6 +1240,17 @@ class BacktestService:
         (ex. une crise) ; sinon `years` jusqu'à aujourd'hui.
         `crash_overlay` : levier conditionnel post-krach (crash_regime) calculé
         sur le benchmark ; `crash_params` surcharge la spec pré-enregistrée.
+        `trend_regime` : sortie en cash quand le benchmark est en BEAR (momentum
+        12 mois ET 1 mois négatifs, trend_regime) ; `trend_params` : mode
+        'monthly' (défaut) / 'daily', `bull_exposure` (levier limité au BULL).
+        `rebound_index` : en REBOUND après 24 mois de baisse, détenir le
+        benchmark au lieu des gagnants (exploratoire, Daniel & Moskowitz 2016).
+        `sleeve_regime` : régime PAR POCHE — les titres de `sleeve_tickers` (défaut :
+        `nasdaq_sleeve_tickers(pool, sleeve_source)`) suivent le régime de
+        `sleeve_symbol` (QQQ), les autres celui du benchmark (SPY). Remplace
+        `trend_regime` (mêmes `trend_params` : mode, bull_exposure).
+        `regime_either` (avec `trend_regime`) : exposition = min(régime SPY, régime
+        `sleeve_symbol`) — on sort dès que l'un des deux indices est en BEAR.
         """
         params = {
             'nb_top': int(nb_top), 'vol_scaling': bool(vol_scaling),
@@ -1178,7 +1310,9 @@ class BacktestService:
         # Benchmark (DB d'abord, sinon récupération ; SPY → fallback ^GSPC).
         # Chargé avec ~1 an de lookback avant `start` pour que la SMA200 (régime
         # bull/bear) soit déjà valide dès le début de la courbe d'équité.
-        bench_load_start = (start - pd.Timedelta(days=400)).date()
+        # Le régime de tendance demande 12 fins de mois (24 pour la poche rebond).
+        lookback_days = 800 if (trend_regime or rebound_index or sleeve_regime) else 400
+        bench_load_start = (start - pd.Timedelta(days=lookback_days)).date()
         def _bench(sym):
             df = self._load_db(sym, bench_load_start)
             if not self._db_covers(df, start.date()):
@@ -1216,9 +1350,47 @@ class BacktestService:
                 crash_episodes = [e for e in episodes_summary(px_reg, **crash_cfg)
                                   if e['end'] >= start.strftime('%Y-%m-%d')]
 
+        # Régime de tendance 4 états (Goulding-Harvey-Mazzoleni) sur le benchmark
+        # en rendement total : exposition 0 en BEAR, 1 sinon (bull_exposure en BULL).
+        expo_signal, index_signal, trend_cfg, trend_episodes = None, None, None, []
+        sleeve = None
+        if sleeve_regime:
+            import trend_regime as tr
+            trend_cfg = tr.regime_params(trend_params)
+            alt_close = self._index_close(sleeve_symbol, bench_load_start, nb_jours + 400)
+            if alt_close is None or alt_close.empty:
+                raise RuntimeError(f"Historique {sleeve_symbol} indisponible pour le régime par poche.")
+            alt_set = set(sleeve_tickers) if sleeve_tickers is not None \
+                else self.nasdaq_sleeve_tickers(pool, sleeve_source)
+            sleeve = {'tickers': alt_set,
+                      'expo_main': tr.exposure_series(bench_close, **trend_cfg)[0],
+                      'expo_alt': tr.exposure_series(alt_close.loc[:end], **trend_cfg)[0]}
+            trend_regime = False
+        if trend_regime or rebound_index:
+            import trend_regime as tr
+            trend_cfg = tr.regime_params(trend_params)
+            if trend_regime:
+                expo_signal, _ = tr.exposure_series(bench_close, **trend_cfg)
+                if regime_either:
+                    alt_close = self._index_close(sleeve_symbol, bench_load_start, nb_jours + 400)
+                    if alt_close is not None and not alt_close.empty:
+                        e_alt, _ = tr.exposure_series(alt_close.loc[:end], **trend_cfg)
+                        j = pd.concat([expo_signal, e_alt], axis=1).ffill().fillna(1.0)
+                        expo_signal = j.min(axis=1)
+                trend_episodes = [e for e in tr.episodes(bench_close, **trend_cfg)
+                                  if (e['reentry'] or '9999') >= start.strftime('%Y-%m-%d')]
+            if rebound_index:
+                index_signal = tr.rebound_index_series(bench_close)
+                if benchmark not in daily_ret.columns:
+                    daily_ret[benchmark] = bench_close.pct_change().reindex(daily_ret.index)
+
         weights_df, meta = self.build_weight_matrix(monthly_px, daily_ret, dvol, start, params,
                                                     membership=membership,
-                                                    lever_signal=lever_signal, lever=lever)
+                                                    lever_signal=lever_signal, lever=lever,
+                                                    exposure_signal=expo_signal,
+                                                    index_signal=index_signal,
+                                                    index_ticker=benchmark if rebound_index else None,
+                                                    sleeve=sleeve)
         if weights_df.empty:
             raise RuntimeError("Aucun signal sur la période (période trop courte ou données insuffisantes).")
 
@@ -1271,6 +1443,17 @@ class BacktestService:
                 'n_lever_months': meta.get('n_lever_months', 0),
                 'crash_overlay': crash_cfg,
                 'crash_episodes': crash_episodes,
+                'trend_regime': ({**trend_cfg, 'enabled': bool(trend_regime),
+                                  'either': bool(regime_either),
+                                  'rebound_index': bool(rebound_index)}
+                                 if trend_cfg else None),
+                'trend_episodes': trend_episodes,
+                'n_regime_cash_months': meta.get('n_regime_cash_months', 0),
+                'n_index_months': meta.get('n_index_months', 0),
+                'sleeve_regime': ({'symbol': sleeve_symbol, 'source': sleeve_source,
+                                   'n_tickers': len(sleeve['tickers']),
+                                   'months': meta.get('sleeve_months'), **trend_cfg}
+                                  if sleeve else None),
                 'pit_universe': meta.get('pit_universe', False),
                 'warnings': ([
                     "Biais de survivance résiduel : l'univers candidat est constitué des "

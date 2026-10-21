@@ -168,28 +168,11 @@
         // SETTINGS
         // =================================================================
         
-        function toggleVolScalingInputs() {
-            const on = document.getElementById('input-vol-scaling').checked;
-            document.getElementById('vol-scaling-params').style.display = on ? 'block' : 'none';
-        }
-
-        function togglePortfolioFilterInputs() {
-            const on = document.getElementById('input-portfolio-filter').checked;
-            document.getElementById('portfolio-filter-params').style.display = on ? 'block' : 'none';
-        }
-
         async function loadSettings() {
             const data = await api('/settings');
             if (data) {
                 document.getElementById('input-nb-top').value = data.nb_top;
                 document.getElementById('input-date-calcul').value = data.date_calcul || '';
-                document.getElementById('input-vol-scaling').checked = !!data.vol_scaling_enabled;
-                if (data.vol_target != null) document.getElementById('input-vol-target').value = data.vol_target;
-                if (data.max_exposure != null) document.getElementById('input-max-exposure').value = data.max_exposure;
-                document.getElementById('input-portfolio-filter').checked = !!data.portfolio_filter_enabled;
-                if (data.portfolio_vol_threshold != null) document.getElementById('input-portfolio-threshold').value = data.portfolio_vol_threshold;
-                toggleVolScalingInputs();
-                togglePortfolioFilterInputs();
 
                 // Email status
                 const emailDiv = document.getElementById('email-status');
@@ -214,22 +197,12 @@
         async function saveSettings() {
             const nbTop = document.getElementById('input-nb-top').value;
             const dateCalcul = document.getElementById('input-date-calcul').value;
-            const volScaling = document.getElementById('input-vol-scaling').checked;
-            const volTarget = parseFloat(document.getElementById('input-vol-target').value);
-            const maxExposure = parseFloat(document.getElementById('input-max-exposure').value);
-            const portfolioFilter = document.getElementById('input-portfolio-filter').checked;
-            const portfolioThreshold = parseFloat(document.getElementById('input-portfolio-threshold').value);
 
             const data = await api('/settings', {
                 method: 'POST',
                 body: JSON.stringify({
                     nb_top: parseInt(nbTop),
-                    date_calcul: dateCalcul,
-                    vol_scaling_enabled: volScaling,
-                    vol_target: volTarget,
-                    max_exposure: maxExposure,
-                    portfolio_filter_enabled: portfolioFilter,
-                    portfolio_vol_threshold: portfolioThreshold
+                    date_calcul: dateCalcul
                 })
             });
             
@@ -346,11 +319,15 @@
                 .filter(r => r.signal === 'Investir' && r.allocation > 0)
                 .map(r => ({ ticker: r.ticker, target_pct: r.allocation }));
 
-            if (!targets.length) { showToast('Aucune position à acheter', 'error'); return; }
+            // Régime BEAR sur les deux poches : aucune cible → tout vendre (passage en cash)
+            const goCash = !targets.length;
+            if (goCash && !confirm('Le régime demande de passer 100 % en cash.\n\n'
+                    + 'Prévisualiser la vente de TOUTES les positions du compte IBKR ?')) return;
 
             // Aperçu d'abord
             showToast('Calcul des ordres...', 'info');
-            const preview = await api('/ibkr/rebalance', { method: 'POST', body: JSON.stringify({ targets, dry_run: true }) });
+            const preview = await api('/ibkr/rebalance', { method: 'POST',
+                body: JSON.stringify({ targets, dry_run: true, allow_cash: goCash }) });
             if (!preview || !preview.success) { showToast(preview?.error || 'Erreur IBKR', 'error'); return; }
 
             if (!preview.orders.length) { showToast('Aucun ordre nécessaire (portefeuille déjà équilibré)', 'success'); return; }
@@ -376,7 +353,8 @@
             if (!confirm(`${preview.count} ordre(s) à passer :\n${warn}\n${summary}\nConfirmer l'exécution ?`)) return;
 
             showToast('Passage des ordres...', 'info');
-            const result = await api('/ibkr/rebalance', { method: 'POST', body: JSON.stringify({ targets, dry_run: false }) });
+            const result = await api('/ibkr/rebalance', { method: 'POST',
+                body: JSON.stringify({ targets, dry_run: false, allow_cash: goCash }) });
             if (result && result.success) {
                 const placed = result.placed_count || 0;
                 const failed = result.failed_count || 0;

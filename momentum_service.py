@@ -604,7 +604,8 @@ class MomentumService:
                                 vol_scaling=False, vol_target_pct=12.0,
                                 max_exposure_pct=250.0,
                                 portfolio_filter=False,
-                                portfolio_vol_threshold_pct=20.0):
+                                portfolio_vol_threshold_pct=20.0,
+                                regime=None, nasdaq_set=None):
         """
         Génère les signaux d'investissement et calcule les allocations.
 
@@ -629,6 +630,12 @@ class MomentumService:
             max_exposure_pct: plafond d'exposition brute en % (ex. 250)
             portfolio_filter: active le frein anti-krach au niveau du panier
             portfolio_vol_threshold_pct: vol annualisée seuil du panier en % (ex. 20)
+            regime: régime live (regime_service.live_regime) — chaque titre suit
+                l'exposition de sa poche (Nasdaq → QQQ, autres → SPY). Une poche à
+                0 % est retirée du classement (le top N est pris dans les poches
+                investies) ; les poids sont ensuite × exposition (1,25 en BULL,
+                0,5 en alerte quotidienne). None = comportement historique.
+            nasdaq_set: titres de la poche Nasdaq (défaut : regime_service.nasdaq_tickers)
 
         Returns:
             dict avec recommandations + métriques (vol_scaling, exposition_brute,
@@ -679,8 +686,19 @@ class MomentumService:
             annual_vol = monthly_vol * math.sqrt(12)
             return annual_vol if annual_vol > 1e-6 else VOL_DEFAULT
 
-        # Titres "Investir" : top N avec momentum > 0
-        investir_resultats = [r for r in resultats[:nb_selection] if r['momentum'] > 0]
+        # Régime par poche : multiplicateur d'exposition par titre
+        mults = None
+        if regime is not None:
+            import regime_service as rs
+            if nasdaq_set is None:
+                nasdaq_set = rs.nasdaq_tickers([r['ticker'] for r in resultats])
+            mults = rs.multipliers_for([r['ticker'] for r in resultats], regime, nasdaq_set)
+
+        # Sélection : top N (dans les poches investies si régime), momentum > 0 → Investir
+        pool = [r for r in resultats if mults is None or mults.get(r['ticker'], 1.0) > 0]
+        selection = pool[:nb_top]
+        selected_set = {r['ticker'] for r in selection}
+        investir_resultats = [r for r in selection if r['momentum'] > 0]
 
         # ------------------------------------------------------------------
         # Choix de la volatilité utilisée par titre :
@@ -752,11 +770,15 @@ class MomentumService:
                                    for t, a in allocations.items()}
                     multipliers = {t: m * portfolio_factor for t, m in multipliers.items()}
 
+        # Layer 3 — régime de marché : poids × exposition de la poche du titre
+        if mults is not None and allocations:
+            allocations = {t: round(a * mults.get(t, 1.0), 2) for t, a in allocations.items()}
+
         recommandations = []
 
         for i, r in enumerate(resultats):
             multiplier = None
-            if i < nb_selection:
+            if r['ticker'] in selected_set:
                 if r['momentum'] > 0:
                     signal = "Investir"
                     allocation = allocations.get(r['ticker'], 0.0)
@@ -773,8 +795,18 @@ class MomentumService:
                 allocation = 0.0
                 vol = None
 
+            sleeve = None
+            regime_mult = None
+            regime_blocked = False
+            if mults is not None:
+                sleeve = 'nasdaq' if r['ticker'] in nasdaq_set else 'other'
+                regime_mult = mults.get(r['ticker'], 1.0)
+                regime_blocked = regime_mult <= 0 and i < nb_top
             recommandations.append({
                 'ticker': r['ticker'],
+                'sleeve': sleeve,
+                'regime_mult': regime_mult,
+                'regime_blocked': regime_blocked,
                 'momentum': round(r['momentum'], 2),
                 'perf_recent_1m': r.get('perf_recent_1m'),
                 'vol_annualisee': vol,   # % annualisé — visible dans l'UI
@@ -802,7 +834,9 @@ class MomentumService:
             'portfolio_filter': bool(portfolio_filter),
             'portfolio_vol': round(portfolio_vol * 100, 1) if portfolio_vol else None,
             'portfolio_threshold_pct': portfolio_vol_threshold_pct if portfolio_filter else None,
-            'portfolio_factor': round(portfolio_factor, 3) if portfolio_filter else None
+            'portfolio_factor': round(portfolio_factor, 3) if portfolio_filter else None,
+            'regime': regime,
+            'cash_pct': round(max(0.0, 100.0 - exposition_brute), 2),
         }
     
     def valider_ticker(self, ticker):
@@ -879,11 +913,23 @@ class MomentumService:
                 'error': str or None
             }
         """
-        df, erreur = self.recuperer_prix_journaliers('SPY', nb_jours=300)
+        # 500 j calendaires : SMA200 + régime de tendance 4 états (≥ 14 fins de mois).
+        df, erreur = self.recuperer_prix_journaliers('SPY', nb_jours=500)
 
         if erreur or df is None or len(df) < 200:
             return {'regime': 'UNKNOWN', 'spy_price': None, 'sma200': None,
-                    'pct_vs_sma200': None, 'error': erreur or 'Données insuffisantes'}
+                    'pct_vs_sma200': None, 'trend': None,
+                    'error': erreur or 'Données insuffisantes'}
+
+        # Régime de tendance 4 états (trend_regime, Goulding-Harvey-Mazzoleni) :
+        # signal de sortie / rentrée validé (sprint 3). La SMA200 reste affichée
+        # pour information mais n'est plus le signal recommandé.
+        try:
+            from trend_regime import current_regime
+            trend = current_regime(df['adjClose'])
+        except Exception as e:
+            logger.warning('Régime de tendance indisponible : %s', e)
+            trend = None
 
         closes = df['adjClose'].values
         sma200 = round(float(closes[-200:].mean()), 2)
@@ -896,6 +942,7 @@ class MomentumService:
             'spy_price': spy_price,
             'sma200': sma200,
             'pct_vs_sma200': pct_vs_sma200,
+            'trend': trend,
             'error': None
         }
 

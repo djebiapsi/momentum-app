@@ -33,6 +33,7 @@ from routes.backtest import bp as backtest_bp
 from routes.prices import bp as prices_bp
 from routes.push import bp as push_bp
 from routes.quality_value import bp as quality_value_bp
+from routes.regime import bp as regime_bp
 from scheduler import create_scheduler
 
 
@@ -64,6 +65,7 @@ def create_app():
     app.register_blueprint(prices_bp)
     app.register_blueprint(push_bp)
     app.register_blueprint(quality_value_bp)
+    app.register_blueprint(regime_bp)
 
     return app
 
