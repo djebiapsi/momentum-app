@@ -8,7 +8,7 @@ from jobs import (job_market_monitor, job_market_monitor_offhours, job_briefing,
                   job_rebalance_reminder, job_refresh_prices, job_collect_prices,
                   job_digest_actualites, job_digest_tech, job_screener_reminder,
                   job_collect_fundamentals, job_collect_finra, job_short_signal_monthly,
-                  job_collect_edgar, job_qv_rebalance)
+                  job_collect_edgar, job_qv_rebalance, job_trend_regime)
 
 
 def create_scheduler(app):
@@ -103,6 +103,15 @@ def create_scheduler(app):
         CronTrigger(hour=10, minute=5, timezone=PARIS),
         id='digest_tech', name='Digest Tech & IA (matin)', replace_existing=True,
         misfire_grace_time=600,
+    )
+
+    # 7b) Régime de marché SPY + QQQ (sortie / rentrée) : après la publication des
+    # clôtures EOD par Tiingo (~17h30 ET), pour que le signal quotidien lise le jour même.
+    scheduler.add_job(
+        job_trend_regime,
+        CronTrigger(day_of_week='mon-fri', hour=18, minute=10, timezone=ET),
+        id='trend_regime', name='Régime de marché (sortie / rentrée)', replace_existing=True,
+        misfire_grace_time=1800,
     )
 
     # 8) Rappel screener trimestriel : dernier jour de mars, juin, sept, déc à 9h00 ET

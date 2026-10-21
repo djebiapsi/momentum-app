@@ -17,7 +17,7 @@ cp env-example.txt .env   # fill in API keys
 flask run                  # or: python app.py
 
 # Run tests
-python -m pytest test_options_service.py test_backtest_service.py test_membership.py -v
+python -m pytest test_options_service.py test_backtest_service.py test_membership.py test_crash_regime.py test_trend_regime.py -v
 
 # Run a single test
 python -m pytest test_options_service.py::TestBlackScholes::test_put_price_atm -v
@@ -57,7 +57,7 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `auth.py` | `@require_admin` decorator (checks `X-Admin-Token` via `current_app.config`) |
 | `services.py` | Service singletons registry + accessors (`get_momentum_service()`, …) and the `ibkr_service` instance |
 | `core.py` | Business logic shared by routes **and** jobs (long calc, momentum CSV, market monitor lifecycle, briefing payload) |
-| `routes/` | One Flask Blueprint per domain: `pages`, `settings`, `panel`, `momentum`, `short`, `options`, `ibkr`, `market`, `backtest`, `prices`, `push` |
+| `routes/` | One Flask Blueprint per domain: `pages`, `settings`, `panel`, `momentum`, `short`, `options`, `ibkr`, `market`, `backtest`, `prices`, `push`, `quality_value`, `regime` (`/api/regime`, `/api/regime/check`, `/api/regime/settings`) |
 | `jobs.py` | Scheduled task bodies (`app` injected by the scheduler) |
 | `scheduler.py` | `create_scheduler(app)` — builds the APScheduler and registers the crons |
 | `cache_utils.py` | `TTLCache` in-memory cache (spares the ~50 req/h Tiingo quota) |
@@ -82,6 +82,9 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `price_data_service.py` | yfinance background collector: SP500 + NDX100 daily (~6 y → `MarketPriceBar`) & monthly (~20 y → `MonthlyPriceBar`); incremental, index composition re-checked monthly via Wikipedia. Treated as a fragile best-effort source |
 | `flex_service.py` | IBKR Flex Web Service: NAV, transactions, dividends via Flex Queries (2-step async) |
 | `push_service.py` | Web Push (VAPID) notifications for the PWA; keys auto-generated and stored in `Settings` |
+| `trend_regime.py` | 4-state market regime on SPY (Goulding-Harvey-Mazzoleni: 12m × 1m momentum → BULL/CORRECTION/REBOUND/BEAR); cash only in BEAR; modes `monthly`/`daily`/`blend`; live pivot level; backtest options `trend_regime`/`trend_params`/`rebound_index` |
+| `crash_regime.py` | Post-crash leverage detector (sprint 2, not validated, off by default) |
+| `regime_service.py` | LIVE market regime: fresh SPY + QQQ closes (Tiingo → yfinance → DB, partial session dropped), per-index KPIs (pivot, state since, 24-month history), sleeve exposures. Settings `regime_scope` (sleeve/either/spy), `regime_mode` (blend/monthly/daily), `regime_bull_exposure`, `regime_alerts` |
 
 **Frontend (split out of the former monolithic `templates/index.html`):**
 
@@ -90,7 +93,7 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `templates/index.html` | HTML shell: `<head>`, `{% include %}` of page partials, `<link>`/`<script>` to assets |
 | `templates/partials/*.html` | One partial per page (`_dashboard`, `_short`, `_panel`, `_history`, `_settings`, `_options`, `_perf`, `_market`, `_backtest`) + `_modals`, `_nav` |
 | `static/css/app.css` | All styles |
-| `static/js/*.js` | Vanilla JS in load order: `core` → `dashboard` → `panel` → `short` → `options` → `perf` → `backtest` (classic scripts, shared global scope) |
+| `static/js/*.js` | Vanilla JS in load order: `core` → `regime` → `dashboard` → `panel` → `short` → `options` → `perf` → `backtest` → `quality_value` (classic scripts, shared global scope) |
 
 ### Database Models
 
@@ -110,7 +113,9 @@ SQLite in development (`instance/` folder), PostgreSQL in production. `config.py
 
 ### Strategy Logic
 
-**Long (12-1 Momentum)**: Momentum = `(Price[T-1m] - Price[T-12m]) / Price[T-12m] × 100`. Skips last month to avoid mean reversion. Ranked on the **full SP500+NDX100 universe** (~600 tickers, DB-only bulk calculation); recommends top N tickers.
+**Long (12-1 Momentum)**: Momentum = `(Price[T-1m] - Price[T-12m]) / Price[T-12m] × 100`. Skips last month to avoid mean reversion. Ranked on the **full SP500+NDX100 universe** (~600 tickers, DB-only bulk calculation); recommends top N tickers, inverse-volatility weights normalised to 100 %. **Volatility targeting is disabled** (`core._get_vol_scaling_settings` returns it off).
+
+**Market regime (sprint 3)**: each index (SPY, QQQ) is BULL / CORRECTION / REBOUND / BEAR from its 12-month × 1-month momentum (`trend_regime.py`, Goulding-Harvey-Mazzoleni 2023). Each stock follows its index's regime (Nasdaq-listed → QQQ, others → SPY). Sleeve exposure in "blend" mode = ½·(monthly ≠ BEAR) + ½·(daily ≠ BEAR) + 0.25 if monthly BULL → 0 / 50 / 100 / 125 %. A 0 % sleeve is removed from the top-N ranking; both at 0 % → all cash. Research and validation: `docs/` and the sprint-3 report artifact.
 
 **Short (63-5 Momentum)**: Momentum = `(Price[T-5] / Price[T-63]) - 1`. Targets stocks with Death Cross (Price < SMA50 < SMA200) via Finviz. Entry criteria: `perf_1m ≤ -8%`, `perf_3m ≤ -15%`.
 
@@ -138,6 +143,7 @@ VPS Hetzner (`root@95.216.198.241`), Docker Compose. Gunicorn 1 worker. **SSH** 
 | `job_market_monitor_offhours` | Every 15 min, 24/7 | VIX/futures off-hours (skips during US session); also watches IBKR connectivity and can restart the IB Gateway container |
 | `job_briefing('open'/'mid'/'close')` | 9h15 / 12h30 / 16h05 ET mon–fri | Briefing emails |
 | `job_rebalance_reminder` | 1st of month 8h00 ET | Runs momentum calc + sends rebalance email |
+| `job_trend_regime` | 18h10 ET mon–fri | Market regime SPY + QQQ (`core.check_regime_and_alert`): on any sleeve exposure change, recompute targets, log `MarketEvent` REGIME_*, email + push (urgent for cuts); month-end pre-alert. Informational, places no orders |
 | `job_refresh_prices` | 22h00 ET mon–fri | Refreshes price cache (benchmark + panel) |
 | `job_collect_prices` | 00h00 Europe/Paris | yfinance SP500/NDX100 incremental collection |
 | `job_digest_actualites` | 10h00 + 20h00 Europe/Paris | RSS news digest via LLM, sent to hard-coded recipients |

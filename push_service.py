@@ -80,10 +80,13 @@ def get_vapid_public_key() -> str | None:
 
 def send_push(subscription_info: dict, title: str, body: str,
               url: str = '/', icon: str = '/static/icons/icon-192.png',
-              tag: str = None, badge: str = '/static/icons/icon-192.png') -> bool:
+              tag: str = None, badge: str = '/static/icons/icon-192.png',
+              urgent: bool = False) -> bool:
     """
     Envoie une notification push à un seul abonné.
     subscription_info : {'endpoint': ..., 'keys': {'p256dh': ..., 'auth': ...}}
+    `urgent` : priorité haute (en-tête Urgency) + notification persistante
+    (requireInteraction côté service worker) — réservé aux alertes d'action.
     Retourne True si succès.
     """
     priv, _ = _get_or_create_vapid_keys()
@@ -101,6 +104,7 @@ def send_push(subscription_info: dict, title: str, body: str,
             'icon':  icon,
             'badge': badge,
             'tag':   tag or title,
+            'urgent': bool(urgent),
         })
         response = webpush(
             subscription_info=subscription_info,
@@ -108,6 +112,7 @@ def send_push(subscription_info: dict, title: str, body: str,
             vapid_private_key=vapid_obj,
             vapid_claims={'sub': VAPID_CLAIMS_SUB},
             ttl=86400,
+            headers={'Urgency': 'high'} if urgent else None,
         )
         return response.status_code in (200, 201, 202)
     except Exception as e:
@@ -135,7 +140,8 @@ def _remove_subscription_by_endpoint(endpoint: str):
         logger.warning('_remove_subscription: %s', e)
 
 
-def send_push_all(title: str, body: str, url: str = '/', tag: str = None) -> dict:
+def send_push_all(title: str, body: str, url: str = '/', tag: str = None,
+                  urgent: bool = False) -> dict:
     """
     Envoie la notification à tous les abonnés actifs.
     Retourne {'sent': N, 'failed': M, 'removed': K} (supprime les endpoints expirés).
@@ -145,7 +151,7 @@ def send_push_all(title: str, body: str, url: str = '/', tag: str = None) -> dic
     sent = failed = removed = 0
     for sub in subs:
         info = {'endpoint': sub.endpoint, 'keys': {'p256dh': sub.p256dh, 'auth': sub.auth}}
-        ok = send_push(info, title, body, url=url, tag=tag)
+        ok = send_push(info, title, body, url=url, tag=tag, urgent=urgent)
         if ok:
             sent += 1
         else:

@@ -1,59 +1,70 @@
         <!-- PAGE: Settings -->
         <div id="page-settings" class="page">
+            <div class="page-head">
+                <div>
+                    <div class="eyebrow">Réglages</div>
+                    <h1 class="page-title">Config</h1>
+                </div>
+            </div>
+
             <!-- Paramètres Long -->
-            <div class="section-title">Stratégie Long</div>
+            <div class="section-title">Stratégie momentum</div>
             <div class="card admin-only">
                 <div class="form-group">
-                    <label class="form-label">Nombre de positions</label>
+                    <label class="form-label" for="input-nb-top">Nombre de positions</label>
                     <input type="number" class="form-input" id="input-nb-top" min="1" max="50" value="5">
-                    <p class="form-hint">Actions sélectionnées pour investir</p>
+                    <p class="form-hint">Les N meilleures actions du momentum 12-1, pondérées par l'inverse de leur volatilité (100 % du capital, avant régime).</p>
                 </div>
-                
+
                 <div class="form-group">
-                    <label class="form-label">Date de référence</label>
+                    <label class="form-label" for="input-date-calcul">Date de référence</label>
                     <input type="date" class="form-input" id="input-date-calcul">
-                    <p class="form-hint">Vide = date du jour</p>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                        <input type="checkbox" id="input-vol-scaling" onchange="toggleVolScalingInputs()" style="width:18px;height:18px;">
-                        Volatility Scaling
-                    </label>
-                    <p class="form-hint">Mise à l'échelle des positions par la volatilité (Barroso &amp; Santa-Clara 2014). Désactivé = pondération inverse-vol normalisée à 100%.</p>
-                </div>
-
-                <div id="vol-scaling-params" style="display:none;">
-                    <div class="form-group">
-                        <label class="form-label">Volatilité cible (%)</label>
-                        <input type="number" class="form-input" id="input-vol-target" min="1" max="100" step="0.5" value="12">
-                        <p class="form-hint">Poids par action = Vol. cible / Vol. récente du titre</p>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Exposition maximale (%)</label>
-                        <input type="number" class="form-input" id="input-max-exposure" min="100" max="500" step="10" value="250">
-                        <p class="form-hint">Plafond d'exposition brute (levier). Sous le plafond, le reste demeure en cash.</p>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                        <input type="checkbox" id="input-portfolio-filter" onchange="togglePortfolioFilterInputs()" style="width:18px;height:18px;">
-                        Filtre portefeuille (anti-krach)
-                    </label>
-                    <p class="form-hint">Layer 2 : réduit l'exposition globale quand la volatilité du panier (corrélations) dépasse le seuil — désamorce le levier au moment du risque de krach.</p>
-                </div>
-
-                <div id="portfolio-filter-params" style="display:none;">
-                    <div class="form-group">
-                        <label class="form-label">Vol. seuil du panier (%)</label>
-                        <input type="number" class="form-input" id="input-portfolio-threshold" min="5" max="100" step="1" value="20">
-                        <p class="form-hint">Au-delà, facteur f = seuil / vol panier (&lt; 1) appliqué à toutes les positions.</p>
-                    </div>
+                    <p class="form-hint">Vide = aujourd'hui. Sert à rejouer un calcul passé.</p>
                 </div>
 
                 <button class="btn btn-primary btn-block" onclick="saveSettings()">
                     Enregistrer
+                </button>
+            </div>
+
+            <div class="section-title">Régime de marché</div>
+            <div class="card admin-only">
+                <p class="form-hint" style="margin:0 0 14px;">
+                    Le régime décide de l'exposition : cash quand l'indice est en BEAR (momentum 12 mois et dernier mois négatifs),
+                    levier en BULL. La volatilité cible n'est plus utilisée.
+                </p>
+                <div class="form-group">
+                    <label class="form-label" for="input-regime-scope">Indice(s) suivi(s)</label>
+                    <select class="form-input" id="input-regime-scope">
+                        <option value="sleeve">Par poche : actions Nasdaq → QQQ, autres → SPY (recommandé)</option>
+                        <option value="either">Sortir si le SPY ou le QQQ est en BEAR</option>
+                        <option value="spy">SPY seul pour tout le portefeuille</option>
+                    </select>
+                    <p class="form-hint">Par poche : si un seul indice est en BEAR, le top 5 se choisit dans l'autre poche.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="input-regime-mode">Vitesse de sortie</label>
+                    <select class="form-input" id="input-regime-mode">
+                        <option value="blend">Mixte : 50 % dès le signal quotidien, 100 % en fin de mois (recommandé)</option>
+                        <option value="monthly">Mensuelle : décision en fin de mois seulement</option>
+                        <option value="daily">Quotidienne : 100 % cash dès le premier jour en BEAR</option>
+                    </select>
+                    <p class="form-hint">Le mode quotidien coupe plus vite mais se fait piéger par les krachs éclair (1987). Testé dans l'onglet Backtest.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="input-regime-bull">Exposition en BULL (×)</label>
+                    <input type="number" class="form-input" id="input-regime-bull" min="1" max="1.5" step="0.05" value="1.25">
+                    <p class="form-hint">1,25 = 125 % investi quand la tendance 12 mois et le dernier mois sont positifs (nécessite la marge). 1 = jamais de levier.</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="input-regime-alerts" checked style="width:18px;height:18px;">
+                        M'alerter par email et notification à chaque changement d'exposition
+                    </label>
+                    <p class="form-hint">Contrôle chaque soir après la clôture de New York (18h10, soit 00h10 à Paris). Les baisses (BEAR) arrivent en notification prioritaire.</p>
+                </div>
+                <button class="btn btn-primary btn-block" onclick="saveRegimeSettings()">
+                    Enregistrer le régime
                 </button>
             </div>
 

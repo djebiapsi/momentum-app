@@ -47,7 +47,8 @@ self.addEventListener('push', event => {
         badge:   data.badge || '/static/icons/icon-192.png',
         tag:     data.tag   || 'momentum',
         data:    { url: data.url || '/' },
-        requireInteraction: false,
+        requireInteraction: !!data.urgent,
+        renotify: !!data.urgent,
         silent: false,
     };
     event.waitUntil(self.registration.showNotification(title, options));

@@ -94,13 +94,16 @@ async function loadBacktestDefaults() {
     const mc = document.getElementById('bt-margin-call');
     if (mc) mc.checked = a.margin_call_enabled !== false;
 
-    const c = d.config || {};
-    const layers = [];
-    if (c.vol_scaling) layers.push(`vol scaling (cible ${c.vol_target_pct}%, max ${c.max_exposure_pct}%)`);
-    if (c.portfolio_filter) layers.push(`frein anti-krach (seuil ${c.portfolio_vol_threshold_pct}%)`);
+    // Régime live pré-sélectionné : le backtest par défaut rejoue la stratégie réelle
+    const r = d.regime || {};
+    setVal('bt-trend-mode', r.trend_regime);
+    setVal('bt-regime-scope', r.regime_scope);
+    setVal('bt-trend-bull', r.trend_bull_exposure);
+    const scopeTxt = { sleeve: 'par poche (Nasdaq → QQQ, autres → SPY)', either: 'SPY ou QQQ', spy: 'SPY seul' };
+    const modeTxt = { blend: 'mixte', monthly: 'mensuel', daily: 'quotidien' };
     document.getElementById('bt-live-config').innerHTML =
-        `Config live appliquée : <b>top ${d.nb_top}</b>, pondération inverse-volatilité`
-        + (layers.length ? ' + ' + layers.join(' + ') : '')
+        `Config live : <b>top ${d.nb_top}</b>, pondération inverse-volatilité, régime <b>${modeTxt[r.trend_regime] || '—'}</b> `
+        + `${scopeTxt[r.regime_scope] || ''}, <b>${String(r.trend_bull_exposure ?? 1).replace('.', ',')}×</b> en BULL`
         + (d.tiingo_configured ? '' : ' <span style="color:var(--accent-short)">· clé Tiingo manquante</span>');
 }
 
@@ -129,6 +132,10 @@ async function runBacktest() {
         cash_yield_pct: numOrNull('bt-cash-yield'),
         dca_amount: parseFloat(document.getElementById('bt-dca')?.value) || 0,
         margin_call_enabled: document.getElementById('bt-margin-call')?.checked ?? true,
+        trend_regime: document.getElementById('bt-trend-mode')?.value || 'off',
+        trend_bull_exposure: numOrNull('bt-trend-bull') ?? 1,
+        rebound_index: document.getElementById('bt-rebound-index')?.checked ?? false,
+        regime_scope: document.getElementById('bt-regime-scope')?.value || 'spy',
     });
 
     // Lance en async — retourne job_id instantanément (pas de timeout gunicorn)
@@ -281,7 +288,8 @@ function _btRender(res) {
         `Hypothèses : coût <b>${a.tx_cost_bps}bps</b> · marge <b>${a.margin_rate_pct}%</b> · cash <b>${a.cash_yield_pct}%</b>`
         + ` · appel de marge <b>${a.margin_call_enabled ? 'ON' : 'OFF'}</b> (maintenance ${a.maintenance_margin_pct}%)`
         + (a.dca_amount > 0 ? ` · DCA <b>$${a.dca_amount}/mois</b>` : ''),
-    ].join('<br>');
+        _btTrendLine(m),
+    ].filter(Boolean).join('<br>');
 
     // Prépare la section Monte Carlo
     _mcDailyReturns = res.daily_returns || [];
@@ -743,4 +751,32 @@ async function optApply(volTarget, maxExposure) {
     } else {
         showToast(res?.error || 'Erreur', 'error');
     }
+}
+
+
+// Régime de tendance (trend_regime) : résumé des sorties / rentrées du backtest.
+function _btTrendLine(m) {
+    const t = m.sleeve_regime ? { enabled: true, mode: m.sleeve_regime.mode,
+        bull_exposure: m.sleeve_regime.bull_exposure, rebound_index: m.trend_regime?.rebound_index }
+        : m.trend_regime;
+    if (!t) return '';
+    const modes = { monthly: 'mensuel', daily: 'quotidien', blend: 'mixte ½ mensuel + ½ quotidien' };
+    const eps = m.trend_episodes || [];
+    const parts = [`Régime de marché : <b>${t.enabled ? (modes[t.mode] || t.mode) : 'off'}</b>`];
+    if (t.enabled) {
+        parts.push(`exposition BULL <b>${t.bull_exposure}×</b>`);
+        parts.push(`<b>${eps.length}</b> réduction(s) d'exposition · <b>${m.n_regime_cash_months ?? 0}</b> fin(s) de mois en cash`);
+    }
+    if (t.rebound_index) parts.push(`poche rebond : <b>${m.n_index_months ?? 0}</b> mois sur l'indice`);
+    const sl = m.sleeve_regime;
+    if (sl && sl.months) parts.push(`régime par poche (${sl.n_tickers} titres Nasdaq) : `
+        + `<b>${sl.months.les_deux}</b> mois les deux investis · <b>${sl.months.qqq_seul}</b> Nasdaq seul · `
+        + `<b>${sl.months.spy_seul}</b> hors Nasdaq seul · <b>${sl.months.cash}</b> cash`);
+    let html = parts.join(' · ');
+    if (eps.length) {
+        const last = eps.slice(-6).map(e =>
+            `${e.exit} → ${e.reentry || 'en cours'} (${e.days_out} j, min ${Math.round(e.min_exposure * 100)} %)`);
+        html += `<br><span style="font-size:11px">Dernières sorties : ${last.join(' · ')}</span>`;
+    }
+    return html;
 }

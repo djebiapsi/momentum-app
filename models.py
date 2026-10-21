@@ -118,6 +118,8 @@ class RecommendationDetail(db.Model):
     perf_recent_1m = db.Column(db.Float)       # Perf du mois exclu (mean-reversion)
     vol_annualisee = db.Column(db.Float)       # Volatilité annualisée (%)
     details_mensuels = db.Column(db.Text)      # Historique mensuel (JSON)
+    sleeve = db.Column(db.String(10))          # Poche du régime : 'nasdaq' | 'other'
+    regime_mult = db.Column(db.Float)          # Exposition de la poche (0 / 0,5 / 1 / 1,25)
 
     def to_dict(self):
         import json
@@ -136,6 +138,8 @@ class RecommendationDetail(db.Model):
             'perf_recent_1m': self.perf_recent_1m,
             'vol_annualisee': self.vol_annualisee,
             'details_mensuels': dm,
+            'sleeve': self.sleeve,
+            'regime_mult': self.regime_mult,
         }
 
 
@@ -874,6 +878,8 @@ def init_db(app, default_panel):
             'perf_recent_1m':   'FLOAT',
             'vol_annualisee':   'FLOAT',
             'details_mensuels': 'TEXT',
+            'sleeve':           'VARCHAR(10)',
+            'regime_mult':      'FLOAT',
         })
         _migrate_add_columns(app, 'recommendation_history', {
             'market_regime': 'TEXT',

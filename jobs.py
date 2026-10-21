@@ -498,3 +498,24 @@ def job_refresh_prices():
         except Exception as e:
             print(f"❌ job_refresh_prices: {e}")
 
+
+
+def job_trend_regime():
+    """
+    Cron quotidien (18h10 ET, lun-ven — après la publication EOD de Tiingo vers
+    17h30 ET, pour lire la clôture du jour) : contrôle du régime SPY + QQQ.
+    Toute variation d'exposition d'une poche (BEAR quotidien → 50 %, BEAR confirmé
+    en fin de mois → cash, retour, BULL → 125 %) recalcule les cibles et envoie
+    email + push (urgent pour les baisses). Préalerte les 3 dernières séances du
+    mois si une bascule officielle se prépare. Cf. core.check_regime_and_alert.
+    """
+    from core import check_regime_and_alert
+    with app.app_context():
+        try:
+            res = check_regime_and_alert()
+            if res.get('error'):
+                print(f"⚠️ Régime indisponible : {res['error']}")
+            else:
+                print(f"🧭 Régime {res['regime']['status']} — {len(res['events'])} évènement(s)")
+        except Exception as e:
+            print(f"❌ job_trend_regime: {e}")

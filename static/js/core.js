@@ -619,6 +619,7 @@
             if (pageName === 'options') loadSavedOptionRecommendations();
             if (pageName === 'settings') {
                 loadSettings();
+                loadRegimeSettings();
                 loadShortSettings();
                 loadIBKRStatus();
                 loadFlexStatus();
@@ -787,17 +788,15 @@
         async function loadLatest() {
             document.getElementById('invest-list').innerHTML = skelStocks(4);
             document.getElementById('sell-list').innerHTML = skelStocks(3);
-            const [data, regime] = await Promise.all([
-                api('/history/latest'),
-                api('/market-regime')
-            ]);
+            // Régime (SPY + QQQ) et dernières cibles en parallèle : la décision
+            // s'affiche dès que le régime répond, les cibles la complètent.
+            const [data] = await Promise.all([api('/history/latest'), loadRegime()]);
             const dlBtn = document.getElementById('btn-download-momentum');
             if (data && data.details) {
-                if (regime) data.market_regime = regime;
                 displayRecommendations(data);
-                if (dlBtn) dlBtn.style.display = data.details.length ? 'block' : 'none';
-            } else if (regime) {
-                displayRecommendations({ recommandations: [], market_regime: regime });
+                if (dlBtn) dlBtn.style.display = data.details.length ? 'flex' : 'none';
+            } else {
+                displayRecommendations({ recommandations: [] });
                 if (dlBtn) dlBtn.style.display = 'none';
             }
         }
@@ -825,15 +824,17 @@
         }
 
         async function loadMarketPage() {
-            await Promise.all([loadMarketPulse(), loadMarketEvents(), loadThresholds()]);
+            await Promise.all([loadRegime(), loadMarketPulse(), loadMarketEvents(), loadThresholds()]);
         }
 
         async function loadMarketPulse() {
             const data = await api('/market/pulse');
             if (!data) return;
+            // Indicateur SMA200 (information) : formulé sans BULL/BEAR pour ne pas
+            // contredire le régime 4 états, seul signal de décision.
             const reg = (data.regime && data.regime.regime) || '—';
             const regEl = document.getElementById('pulse-regime');
-            regEl.textContent = reg;
+            regEl.textContent = reg === 'BULL' ? 'Au-dessus' : reg === 'BEAR' ? 'En dessous' : '—';
             regEl.style.color = reg === 'BULL' ? '#22c55e' : (reg === 'BEAR' ? '#ef4444' : 'var(--text-primary)');
 
             const vixEl = document.getElementById('pulse-vix');
@@ -878,6 +879,8 @@
         async function loadMarketEvents() {
             const data = await api('/market/events?status=all');
             if (!data) return;
+            // Les bascules de régime ont leur propre journal (renderJournal)
+            data.events = (data.events || []).filter(e => !String(e.event_type || '').startsWith('REGIME_'));
             const open = data.events.filter(e => e.is_open);
             const closed = data.events.filter(e => !e.is_open);
             document.getElementById('market-open-events').innerHTML =

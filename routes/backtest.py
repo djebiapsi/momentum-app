@@ -39,10 +39,17 @@ _WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(__file__)), '_bt_w
 
 
 def _live_config():
-    """Lit la config live : nb_top + couches de risque (Settings), réutilise core."""
+    """Lit la config live : nb_top + couches de risque (volatilité désactivée) + régime."""
     nb_top = int(Settings.get('nb_top', current_app.config.get('DEFAULT_NB_TOP', 5)))
     vs = _get_vol_scaling_settings()
     return nb_top, vs
+
+
+def _live_regime_defaults():
+    from regime_service import get_regime_settings
+    cfg = get_regime_settings()
+    return {'trend_regime': cfg['regime_mode'], 'regime_scope': cfg['regime_scope'],
+            'trend_bull_exposure': cfg['regime_bull_exposure']}
 
 
 @bp.route('/api/backtest/defaults', methods=['GET'])
@@ -55,6 +62,7 @@ def backtest_defaults():
         'years_options': [1, 3, 5, 10, 20, 30],
         'nb_top': nb_top,
         'config': vs,
+        'regime': _live_regime_defaults(),
         'assumptions': {
             'tx_cost_bps': BacktestService.DEFAULT_TX_COST_BPS,
             'margin_rate_pct': BacktestService.DEFAULT_MARGIN_RATE_PCT,
@@ -116,6 +124,28 @@ def _parse_run_params(data):
                 crash_params[k] = int(v) if k == 'window_days' else v
         if raw.get('exit_on_vol') is not None:
             crash_params['exit_on_vol'] = bool(raw['exit_on_vol'])
+    # Régime de tendance 4 états (trend_regime) : sortie en cash en BEAR.
+    # 'off' | 'monthly' | 'daily' | 'blend' ; bull_exposure borné (levier en BULL).
+    trend_mode = (data.get('trend_regime') or 'off')
+    if trend_mode is True:
+        trend_mode = 'blend'
+    trend_mode = str(trend_mode).lower()
+    if trend_mode not in ('off', 'monthly', 'daily', 'blend'):
+        raise ValueError("trend_regime invalide (off, monthly, daily, blend)")
+    trend_params = None
+    if trend_mode != 'off':
+        bull_x = float(data.get('trend_bull_exposure') or 1.0)
+        if not 1.0 <= bull_x <= 1.5:
+            raise ValueError('trend_bull_exposure hors bornes (1,0–1,5)')
+        trend_params = {'mode': trend_mode, 'bull_exposure': bull_x}
+    rebound_index = bool(data.get('rebound_index', False))
+    # Indice(s) du régime : 'spy' (SPY seul), 'either' (SPY ou QQQ en BEAR → sortie),
+    # 'sleeve' (par poche : titres Nasdaq → QQQ, autres → SPY). Rétro-compat sleeve_regime.
+    scope = str(data.get('regime_scope') or ('sleeve' if data.get('sleeve_regime') else 'spy')).lower()
+    if scope not in ('spy', 'either', 'sleeve'):
+        raise ValueError("regime_scope invalide (spy, either, sleeve)")
+    sleeve_regime = trend_mode != 'off' and scope == 'sleeve'
+    regime_either = trend_mode != 'off' and scope == 'either'
     if dca_amount < 0 or dca_amount > 1_000_000:
         raise ValueError('apport DCA invalide (0 ≤ DCA ≤ 1 000 000)')
     for label, val in (('coût', tx_cost_bps), ('taux de marge', margin_rate_pct),
@@ -129,7 +159,10 @@ def _parse_run_params(data):
                 post_call_leverage=post_call_leverage,
                 dca_amount=dca_amount, margin_call_enabled=margin_call_enabled,
                 start_date=start_date, end_date=end_date,
-                crash_overlay=crash_overlay, crash_params=crash_params)
+                crash_overlay=crash_overlay, crash_params=crash_params,
+                trend_regime=trend_mode != 'off' and not sleeve_regime, trend_params=trend_params,
+                rebound_index=rebound_index, sleeve_regime=sleeve_regime,
+                regime_either=regime_either)
 
 
 @bp.route('/api/backtest/run', methods=['POST'])

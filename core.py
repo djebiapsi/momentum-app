@@ -43,19 +43,59 @@ def get_long_universe():
 
 
 def _get_vol_scaling_settings():
-    """Lit les réglages de volatility scaling (Long) depuis Settings + fallback config."""
-    vs = Settings.get('vol_scaling_enabled',
-                      str(current_app.config.get('DEFAULT_VOL_SCALING', False)).lower())
-    pf = Settings.get('portfolio_filter_enabled',
-                      str(current_app.config.get('DEFAULT_PORTFOLIO_FILTER', False)).lower())
+    """
+    Couches de volatilité du Long : DÉSACTIVÉES depuis le sprint 3.
+
+    L'étude 2007-2026 et 1926-2026 montre que la volatilité cible revient à un
+    levier quasi constant (−86 % en 2008) et ne protège pas des krachs. Le risque
+    est désormais géré par le régime de marché (regime_service) : pondération
+    inverse-volatilité normalisée à 100 %, puis × exposition de la poche.
+    Les anciens réglages Settings (vol_target, max_exposure…) sont ignorés.
+    """
     return {
-        'vol_scaling': str(vs).lower() == 'true',
-        'vol_target_pct': float(Settings.get('vol_target', current_app.config.get('DEFAULT_VOL_TARGET', 12))),
-        'max_exposure_pct': float(Settings.get('max_exposure', current_app.config.get('DEFAULT_MAX_EXPOSURE', 250))),
-        'portfolio_filter': str(pf).lower() == 'true',
-        'portfolio_vol_threshold_pct': float(Settings.get('portfolio_vol_threshold',
-                                            current_app.config.get('DEFAULT_PORTFOLIO_VOL_THRESHOLD', 20))),
+        'vol_scaling': False,
+        'vol_target_pct': 20.0,
+        'max_exposure_pct': 100.0,
+        'portfolio_filter': False,
+        'portfolio_vol_threshold_pct': 20.0,
     }
+
+
+def _live_regime_safe():
+    """Régime live (SPY + QQQ) ; None si les données sont indisponibles."""
+    try:
+        from regime_service import live_regime
+        reg = live_regime()
+        if reg.get('errors') and all(not v.get('state') for v in reg['indexes'].values()):
+            print(f"⚠️ Régime indisponible : {reg['errors']}")
+            return None
+        return reg
+    except Exception as e:
+        print(f"⚠️ Régime indisponible : {e}")
+        return None
+
+
+def regime_snapshot(reg):
+    """Version compacte du régime, stockée avec chaque calcul (sans les historiques)."""
+    if not reg:
+        return None
+    return {
+        'status': reg['status'], 'headline': reg['headline'], 'as_of': reg['as_of'],
+        'settings': reg['settings'],
+        'sleeves': reg['sleeves'],
+        'indexes': {k: {f: v.get(f) for f in ('symbol', 'state', 'daily_state', 'exposure',
+                                                 'as_of', 'pivot', 'pct_vs_pivot', 'price')}
+                    for k, v in reg['indexes'].items()},
+    }
+
+
+def _history_regime_json(recommandations):
+    """JSON stocké dans RecommendationHistory.market_regime : SMA200 + régime 4 états."""
+    base = dict(recommandations.get('market_regime') or {})
+    snap = regime_snapshot(recommandations.get('regime'))
+    if snap:
+        base['live_regime'] = snap
+    return json.dumps(base) if base else None
 
 
 # Nb de lignes du classement momentum persistées par calcul. Sur un univers de
@@ -83,6 +123,8 @@ def _persist_reco_details(history, recommandations, nb_top):
             perf_recent_1m=float(pr) if pr is not None else None,
             vol_annualisee=float(vol) if vol is not None else None,
             details_mensuels=json.dumps(dm) if dm else None,
+            sleeve=r.get('sleeve'),
+            regime_mult=r.get('regime_mult'),
         ))
 
 
@@ -116,13 +158,13 @@ def _run_long_calculation():
             raise RuntimeError(f"Calcul impossible — données manquantes : {detail}")
         raise RuntimeError("Calcul impossible — aucun résultat (panel vide ou toutes les sources de données indisponibles)")
 
-    recommandations = service.generer_recommandations(resultats, nb_top, **vs)
+    recommandations = service.generer_recommandations(resultats, nb_top, **vs,
+                                                      regime=_live_regime_safe())
 
-    regime = recommandations.get('market_regime')
     history = RecommendationHistory(
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
         nb_top=nb_top,
-        market_regime=json.dumps(regime) if regime else None,
+        market_regime=_history_regime_json(recommandations),
     )
     db.session.add(history)
     db.session.flush()
@@ -181,13 +223,13 @@ def compute_and_save_momentum():
         return None, None
 
     recommandations = service.generer_recommandations(resultats, nb_top,
-                                                      **_get_vol_scaling_settings())
+                                                      **_get_vol_scaling_settings(),
+                                                      regime=_live_regime_safe())
 
-    regime = recommandations.get('market_regime')
     history = RecommendationHistory(
         calculation_date=datetime.strptime(recommandations['date_calcul'], '%Y-%m-%d'),
         nb_top=nb_top,
-        market_regime=json.dumps(regime) if regime else None,
+        market_regime=_history_regime_json(recommandations),
     )
     db.session.add(history)
     db.session.flush()
@@ -718,3 +760,199 @@ def build_briefing_payload(session):
 # ROUTES - API MARCHÉ (pulse, évènements, seuils, déclencheurs de test)
 # =============================================================================
 
+
+
+# =============================================================================
+# RÉGIME DE MARCHÉ — détection des bascules et alertes (sprint 3)
+# =============================================================================
+
+REGIME_EVENT_PREFIX = 'REGIME_'
+REGIME_EMAIL_KINDS = ('ALL_CASH', 'CASH', 'REDUCE', 'REENTER', 'WATCH', 'LEVER_ON')
+
+
+def _latest_targets():
+    """Positions cibles du dernier calcul : {ticker: {'allocation', 'sleeve'}}."""
+    h = RecommendationHistory.query.order_by(RecommendationHistory.id.desc()).first()
+    if not h:
+        return {}, None
+    out = {d.ticker: {'allocation': d.allocation or 0.0, 'sleeve': d.sleeve}
+           for d in h.details if (d.allocation or 0) > 0}
+    return out, h
+
+
+def _regime_events(last, reg):
+    """
+    Compare l'exposition de chaque poche à la précédente et produit les
+    évènements à notifier. Une baisse est critique (vendre), une hausse est une
+    information (racheter au prochain rééquilibrage).
+    """
+    events = []
+    sleeves = reg['sleeves']
+    prev = (last or {}).get('sleeves', {})
+    same_signal = reg['settings']['regime_scope'] != 'sleeve'
+    changed = {}
+    for k, v in sleeves.items():
+        old, new = float(prev.get(k, 1.0)), float(v['exposure'])
+        if abs(old - new) > 1e-6:
+            changed[k] = (old, new)
+    if changed and all(float(v['exposure']) <= 0 for v in sleeves.values()):
+        events.append({'kind': 'ALL_CASH', 'severity': 'critical',
+                       'sleeves': list(changed), 'changes': changed})
+    else:
+        groups = [list(changed)] if (same_signal and changed) else [[k] for k in changed]
+        for keys in groups:
+            old, new = changed[keys[0]]
+            if new < old:
+                kind, sev = ('CASH' if new <= 0 else 'REDUCE'), 'critical'
+            elif old <= 0:
+                kind, sev = 'REENTER', 'info'
+            elif new > 1.0 >= old:
+                kind, sev = 'LEVER_ON', 'info'
+            else:
+                kind, sev = 'INCREASE', 'info'
+            events.append({'kind': kind, 'severity': sev, 'sleeves': keys,
+                           'changes': {k: changed[k] for k in keys}})
+    # Préalerte de fin de mois : le provisoire annonce un changement d'état officiel
+    watch_key = reg.get('next_decision')
+    if reg.get('month_end_watch') and (last or {}).get('watch_sent') != watch_key:
+        flips = {k: (v.get('state'), v.get('provisional_state'))
+                 for k, v in reg['indexes'].items() if v.get('month_end_watch')}
+        events.append({'kind': 'WATCH', 'severity': 'warning', 'sleeves': [], 'flips': flips})
+    return events
+
+
+def _pct(x):
+    return f"{round(x * 100):d} %"
+
+
+def _regime_message(ev, reg, targets_before, targets_after):
+    """Titre + texte (push) + ordres attendus (email) pour un évènement."""
+    sl = reg['sleeves']
+    names = ' + '.join(sl[k]['label'] for k in ev['sleeves']) if ev['sleeves'] else ''
+    orders = []
+    for t in sorted(set(targets_before) | set(targets_after)):
+        b = targets_before.get(t, {}).get('allocation', 0.0)
+        a = targets_after.get(t, {}).get('allocation', 0.0)
+        if abs(a - b) >= 0.5:
+            orders.append({'ticker': t, 'before': round(b, 1), 'after': round(a, 1),
+                           'action': 'VENDRE' if a < b else 'ACHETER'})
+    kind = ev['kind']
+    if kind == 'ALL_CASH':
+        title = '🚨 BEAR sur les deux marchés : tout en cash'
+        body = 'SPY et QQQ en BEAR. Vendre toutes les positions momentum à la prochaine séance.'
+    elif kind == 'CASH':
+        title = f"🚨 BEAR confirmé : poche {names} en cash"
+        body = (f"Fin de mois en BEAR. Vendre la poche {names} à la prochaine séance. "
+                f"Le top 5 se reporte sur l'autre poche si elle reste investie.")
+    elif kind == 'REDUCE':
+        old, new = ev['changes'][ev['sleeves'][0]]
+        title = f"⚠️ Alerte BEAR : réduire la poche {names} à {_pct(new)}"
+        body = (f"Signal quotidien en BEAR. Exposition {_pct(old)} → {_pct(new)} "
+                f"à la prochaine séance. Sortie totale si la fin de mois confirme.")
+    elif kind == 'REENTER':
+        new = ev['changes'][ev['sleeves'][0]][1]
+        title = f"🟢 Retour sur le marché : poche {names}"
+        body = f"Le régime s'est rétabli. Réinvestir la poche {names} ({_pct(new)})."
+    elif kind == 'LEVER_ON':
+        title = f"↗️ BULL confirmé : poche {names} à 125 %"
+        body = 'Tendance 12 mois et dernier mois positives : exposition portée à 125 %.'
+    elif kind == 'INCREASE':
+        old, new = ev['changes'][ev['sleeves'][0]]
+        title = f"↗️ Poche {names} : exposition {_pct(old)} → {_pct(new)}"
+        body = 'Le signal quotidien est sorti de BEAR.'
+    else:  # WATCH
+        parts = [f"{reg['indexes'][k]['symbol']} {a} → {b}" for k, (a, b) in ev['flips'].items()]
+        title = '⏳ Fin de mois : bascule de régime probable'
+        body = (f"Si le mois finissait aujourd'hui : {', '.join(parts)}. "
+                f"Décision à la clôture du {reg.get('next_decision')}.")
+    return title, body, orders
+
+
+def check_regime_and_alert(notify=True, recalc=True):
+    """
+    Contrôle quotidien du régime (cron 18h10 ET + bouton « Vérifier maintenant ») :
+      1. calcule le régime live (SPY, QQQ, poches) ;
+      2. compare l'exposition de chaque poche à la veille (Settings 'regime_last') ;
+      3. si elle change : recalcule les cibles momentum, journalise un MarketEvent
+         REGIME_* et envoie email + push (push urgent pour les baisses).
+    Retourne {'regime': …, 'events': […]}.
+    """
+    from regime_service import live_regime
+    reg = live_regime()
+    if all(not v.get('state') for v in reg['indexes'].values()):
+        return {'regime': reg, 'events': [], 'error': '; '.join(reg.get('errors') or [])}
+
+    raw = Settings.get('regime_last')
+    try:
+        last = json.loads(raw) if raw else None
+    except Exception:
+        last = None
+    events = _regime_events(last, reg) if last else []
+
+    state = {
+        'as_of': reg['as_of'],
+        'sleeves': {k: v['exposure'] for k, v in reg['sleeves'].items()},
+        'indexes': {k: {'state': v.get('state'), 'daily_state': v.get('daily_state')}
+                    for k, v in reg['indexes'].items()},
+        'watch_sent': (last or {}).get('watch_sent'),
+    }
+    if any(e['kind'] == 'WATCH' for e in events):
+        state['watch_sent'] = reg.get('next_decision')
+    Settings.set('regime_last', json.dumps(state))
+    if not last:
+        print(f"🧭 Régime initialisé : {reg['status']} {state['sleeves']}")
+        return {'regime': reg, 'events': [], 'initialized': True}
+
+    exposure_change = any(e['kind'] != 'WATCH' for e in events)
+    targets_before, _ = _latest_targets()
+    targets_after = targets_before
+    if exposure_change and recalc:
+        try:
+            compute_and_save_momentum()
+            targets_after, _ = _latest_targets()
+        except Exception as e:
+            print(f"⚠️ Recalcul après bascule de régime : {e}")
+
+    email_svc = get_email_service()
+    alerts_on = reg['settings'].get('regime_alerts', True)
+    out = []
+    for ev in events:
+        title, body, orders = _regime_message(ev, reg, targets_before, targets_after)
+        ev.update({'title': title, 'body': body, 'orders': orders})
+        out.append(ev)
+        try:
+            now = datetime.utcnow()
+            db.session.add(MarketEvent(
+                event_type=f"{REGIME_EVENT_PREFIX}{ev['kind']}",
+                severity='critical' if ev['severity'] == 'critical' else 'warning',
+                message=f"{title} — {body}",
+                started_at=now, ended_at=now, last_checked_at=now,
+                notified_open=bool(notify and alerts_on), notified_close=True))
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"⚠️ Journal régime : {e}")
+        if not (notify and alerts_on):
+            continue
+        urgent = ev['severity'] in ('critical', 'warning')
+        try:
+            import push_service
+            push_service.send_push_all(title=title, body=body, url='/',
+                                       tag=f"regime-{ev['kind'].lower()}", urgent=urgent)
+        except Exception as e:
+            print(f"❌ Push régime : {e}")
+        if email_svc.is_configured() and ev['kind'] in REGIME_EMAIL_KINDS:
+            try:
+                email_svc.envoyer_alerte_regime(reg, ev)
+            except Exception as e:
+                print(f"❌ Email régime : {e}")
+        print(f"🧭 Régime : {title}")
+    return {'regime': reg, 'events': out}
+
+
+def regime_journal(limit=30):
+    """Derniers évènements de régime (journal affiché dans la page Marché)."""
+    rows = (MarketEvent.query.filter(MarketEvent.event_type.like(f'{REGIME_EVENT_PREFIX}%'))
+            .order_by(MarketEvent.started_at.desc()).limit(limit).all())
+    return [{'kind': r.event_type[len(REGIME_EVENT_PREFIX):], 'severity': r.severity,
+             'message': r.message, 'at': r.started_at.isoformat() + 'Z'} for r in rows]
