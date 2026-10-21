@@ -28,12 +28,62 @@ const _regimeBandsPlugin = {
             const left = Math.max(area.left, Math.min(x0, x1));
             const right = Math.min(area.right, Math.max(x0, x1));
             if (right <= left) continue;
-            ctx.fillStyle = s.regime === 'bull' ? 'rgba(29,158,117,.10)' : 'rgba(216,90,48,.13)';
+            ctx.fillStyle = _btStateFill(s.regime);
             ctx.fillRect(left, area.top, right - left, area.bottom - area.top);
         }
         ctx.restore();
     },
 };
+
+function _btStateFill(regime) {
+    const cs = getComputedStyle(document.documentElement);
+    const key = { bull: '--st-bull-bg', correction: '--st-corr-bg', rebound: '--st-reb-bg', bear: '--st-bear-bg' }[regime];
+    return (key && cs.getPropertyValue(key).trim()) || 'rgba(128,128,128,.08)';
+}
+
+function _btTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = n => cs.getPropertyValue(n).trim();
+    return { text: v('--text-muted') || '#888', grid: v('--border-subtle') || 'rgba(128,128,128,.15)',
+             main: v('--accent-blue') || '#5b63f0', bench: v('--text-muted') || '#888', neg: v('--accent-short') || '#e23857' };
+}
+
+function btChartView(view) {
+    document.querySelectorAll('[data-btview]').forEach(b => b.classList.toggle('active', b.dataset.btview === view));
+    document.getElementById('bt-box-eq').hidden = view !== 'eq';
+    document.getElementById('bt-box-dd').hidden = view !== 'dd';
+}
+
+// Verdict en une phrase + écarts au benchmark
+function _btVerdict(res) {
+    const s = res.stats || {}, b = res.benchmark_stats || {}, m = res.meta || {};
+    const bn = m.benchmark || 'benchmark';
+    const pct = (v, d = 1) => v == null ? '—' : (v * 100).toFixed(d).replace('.', ',') + ' %';
+    const years = m.start && m.end ? ((new Date(m.end) - new Date(m.start)) / 31557600000) : null;
+    const per = years ? (years >= 1.5 ? `${Math.round(years)} ans` : `${Math.round(years * 12)} mois`) : 'la période';
+    const beat = s.cagr != null && b.cagr != null ? s.cagr - b.cagr : null;
+    let txt = `Sur ${per}, la stratégie aurait rapporté <b>${pct(s.cagr)}</b> par an contre <b>${pct(b.cagr)}</b> pour le ${bn}`;
+    if (s.max_drawdown != null && b.max_drawdown != null) {
+        txt += `, avec une pire perte de <b class="neg">${pct(s.max_drawdown, 0)}</b> (${bn} : ${pct(b.max_drawdown, 0)})`;
+    }
+    txt += '.';
+    document.getElementById('bt-verdict-text').innerHTML = txt;
+    const chips = [];
+    if (beat != null) chips.push(`<span class="chip ${beat >= 0 ? 'pos' : 'neg'}">${beat >= 0 ? '+' : ''}${(beat * 100).toFixed(1).replace('.', ',')} pt/an vs ${bn}</span>`);
+    if (m.start && m.end) chips.push(`<span class="chip">${m.start} → ${m.end}</span>`);
+    const t = m.trend_regime, sl = m.sleeve_regime;
+    if (sl) chips.push(`<span class="chip">régime par poche · ${sl.months?.cash ?? 0} mois en cash</span>`);
+    else if (t && t.enabled) chips.push(`<span class="chip">régime ${t.mode} · ${m.n_regime_cash_months ?? 0} mois en cash</span>`);
+    else chips.push('<span class="chip">sans régime (toujours investi)</span>');
+    document.getElementById('bt-verdict-chips').innerHTML = chips.join('');
+    // écarts dans les cartes
+    const sub = (id, html) => { const el = document.querySelector(`#${id} .perf-kpi-delta`); if (el) el.innerHTML = html; };
+    sub('bt-kpi-cagr', b.cagr != null ? `${bn} : ${pct(b.cagr)}` : '');
+    sub('bt-kpi-maxdd', b.max_drawdown != null ? `${bn} : ${pct(b.max_drawdown, 0)}` : '');
+    sub('bt-kpi-sharpe', b.sharpe != null ? `${bn} : ${b.sharpe.toFixed(2)}` : '');
+    sub('bt-kpi-vol', b.volatility != null ? `${bn} : ${pct(b.volatility)}` : '');
+    sub('bt-kpi-sortino', b.sortino != null ? `${bn} : ${b.sortino.toFixed(2)}` : '');
+}
 
 // État Monte Carlo
 let _mcDailyReturns = [];
@@ -202,13 +252,15 @@ function _btRender(res) {
     _btSetKpi('bt-kpi-sharpe', s.sharpe != null ? s.sharpe.toFixed(2) : '—');
     _btSetKpi('bt-kpi-sortino', s.sortino != null ? s.sortino.toFixed(2) : '—');
     _btSetKpi('bt-kpi-maxdd', _btFmtPct(s.max_drawdown));
-    _btSetKpi('bt-kpi-vol', _btFmtPct(s.volatility, 1));
+    _btSetKpi('bt-kpi-vol', s.volatility != null ? (s.volatility * 100).toFixed(1) + '%' : '—');
+    _btVerdict(res);
+    btChartView('eq');
 
     // Avertissements
     const warn = document.getElementById('bt-warnings');
     if (m.warnings && m.warnings.length) {
         warn.style.display = 'block';
-        warn.innerHTML = '⚠️ ' + m.warnings.join('<br>⚠️ ');
+        warn.innerHTML = m.warnings.map(w => `<p>${w.replace(/^⚠️\s*/, '')}</p>`).join('');
     } else { warn.style.display = 'none'; }
 
     // Courbe d'équité
@@ -216,9 +268,10 @@ function _btRender(res) {
     const bench = (res.benchmark_equity || []).map(p => ({ x: p.t, y: p.v }));
     const inv = (res.invested || []).map(p => ({ x: p.t, y: p.v }));
     const unit = btYears <= 3 ? 'month' : 'year';
+    const th = _btTheme();
     const eqDatasets = [
-        { label: 'Stratégie', data: eq, borderColor: '#7C5CFF', backgroundColor: 'rgba(124,92,255,.08)', fill: true, borderWidth: 1.5, tension: .25, pointRadius: 0 },
-        { label: m.benchmark || 'Benchmark', data: bench, borderColor: '#1D9E75', borderDash: [2, 3], borderWidth: 1, tension: .25, pointRadius: 0, fill: false },
+        { label: 'Stratégie', data: eq, borderColor: th.main, backgroundColor: 'transparent', fill: false, borderWidth: 2, tension: .2, pointRadius: 0 },
+        { label: m.benchmark || 'Benchmark', data: bench, borderColor: th.bench, borderDash: [3, 3], borderWidth: 1.5, tension: .2, pointRadius: 0, fill: false },
     ];
     if (inv.length) eqDatasets.push(
         { label: 'Capital investi (DCA)', data: inv, borderColor: '#888', borderDash: [4, 4], borderWidth: 1, tension: 0, pointRadius: 0, fill: false });
@@ -229,11 +282,12 @@ function _btRender(res) {
         data: { datasets: eqDatasets },
         plugins: [_regimeBandsPlugin],
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
+            plugins: { legend: { labels: { color: th.text, boxWidth: 12 } },
                 regimeBands: { segments: regimeSegments },
                 tooltip: { callbacks: { label: c => ` ${c.dataset.label}: $${Math.round(c.parsed.y).toLocaleString()}` } } },
-            scales: { x: { type: 'time', time: { unit }, grid: { color: BT_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
-                y: { type: 'logarithmic', grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' } } } }
+            scales: { x: { type: 'time', time: { unit }, grid: { display: false }, ticks: { color: th.text, maxTicksLimit: 7 } },
+                y: { type: 'logarithmic', grid: { color: th.grid }, border: { display: false },
+                     ticks: { color: th.text, maxTicksLimit: 6, callback: v => '$' + (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : (v / 1000).toFixed(0) + 'k') } } } }
     });
     // Légende des bandes de régime sous le graphe
     const regimeLegend = document.getElementById('bt-regime-legend');
@@ -246,11 +300,13 @@ function _btRender(res) {
     _btDestroy('drawdown');
     _btCharts.drawdown = new Chart(document.getElementById('bt-chart-drawdown'), {
         type: 'line',
-        data: { datasets: [{ label: 'Drawdown', data: dd, borderColor: '#D85A30', backgroundColor: 'rgba(216,90,48,.12)', fill: true, borderWidth: 1.5, tension: .25, pointRadius: 0 }]},
+        plugins: [_regimeBandsPlugin],
+        data: { datasets: [{ label: 'Drawdown', data: dd, borderColor: th.neg, backgroundColor: th.neg + '22', fill: true, borderWidth: 1.5, tension: .25, pointRadius: 0 }]},
         options: { responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.parsed.y.toFixed(1)}%` } } },
-            scales: { x: { type: 'time', time: { unit }, grid: { color: BT_GRID }, ticks: { color: '#888', maxTicksLimit: 5 } },
-                y: { max: 0, grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => v + '%' } } } }
+            plugins: { legend: { display: false }, regimeBands: { segments: regimeSegments },
+                       tooltip: { callbacks: { label: c => ` ${c.parsed.y.toFixed(1)}%` } } },
+            scales: { x: { type: 'time', time: { unit }, grid: { display: false }, ticks: { color: th.text, maxTicksLimit: 7 } },
+                y: { max: 0, grid: { color: th.grid }, border: { display: false }, ticks: { color: th.text, callback: v => v + '%' } } } }
     });
 
     // Heatmap mensuelle
@@ -336,10 +392,10 @@ function _btLeverage(lev, calls, unit) {
             { label: 'Appel de marge', data: pts, borderColor: '#D85A30', backgroundColor: '#D85A30', showLine: false, pointRadius: 5, pointStyle: 'triangle' },
         ]},
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
+            plugins: { legend: { labels: { color: _btTheme().text, boxWidth: 12 } },
                 tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(2) + '×' : '—'}` } } },
-            scales: { x: { type: 'time', time: { unit }, grid: { color: BT_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
-                y: { grid: { color: BT_GRID }, ticks: { color: '#888', callback: v => v + '×' } } } }
+            scales: { x: { type: 'time', time: { unit }, grid: { color: _btTheme().grid }, ticks: { color: _btTheme().text, maxTicksLimit: 7 } },
+                y: { grid: { color: _btTheme().grid }, ticks: { color: _btTheme().text, callback: v => v + '×' } } } }
     });
 }
 
@@ -614,12 +670,12 @@ function _mcRender(mc) {
             },
             scales: {
                 x: {
-                    grid: { color: BT_GRID },
-                    ticks: { color: '#888', maxTicksLimit: 8, callback: (v) => `J+${v}` },
+                    grid: { color: _btTheme().grid },
+                    ticks: { color: _btTheme().text, maxTicksLimit: 8, callback: (v) => `J+${v}` },
                 },
                 y: {
-                    grid: { color: BT_GRID },
-                    ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                    grid: { color: _btTheme().grid },
+                    ticks: { color: _btTheme().text, callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
                 },
             },
         },

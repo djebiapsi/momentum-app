@@ -519,3 +519,21 @@ def job_trend_regime():
                 print(f"🧭 Régime {res['regime']['status']} — {len(res['events'])} évènement(s)")
         except Exception as e:
             print(f"❌ job_trend_regime: {e}")
+
+
+def job_flex_sync():
+    """
+    Cron nocturne (06h30 Europe/Paris, mar-sam) : synchronise le relevé Flex IBKR
+    (NAV, transactions, dividendes, positions ouvertes) pour que la page Perf et
+    l'impact par position restent à jour sans action manuelle.
+    """
+    import perf_service as ps
+    with app.app_context():
+        try:
+            code, payload = ps.run_flex_sync(force=False)
+            if code == 200:
+                print(f"✅ Flex synchronisé : {payload.get('imported')}")
+            else:
+                print(f"⚠️ Flex non synchronisé ({code}) : {payload.get('error')}")
+        except Exception as e:
+            print(f"❌ job_flex_sync: {e}")

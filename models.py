@@ -337,11 +337,12 @@ class Transaction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.DateTime, nullable=False, index=True)
     ticker = db.Column(db.String(12), nullable=False, index=True)
-    type = db.Column(db.String(10), nullable=False)  # 'BUY', 'SELL'
-    quantity = db.Column(db.Float, nullable=False)
+    type = db.Column(db.String(10), nullable=False)  # 'BUY', 'SELL', 'ADJ' (opération sur titres)
+    quantity = db.Column(db.Float, nullable=False)   # ADJ : quantité signée
     price = db.Column(db.Float, nullable=False)
     amount = db.Column(db.Float)  # Montant total (qty * price + frais)
     currency = db.Column(db.String(3), default='USD')
+    ext_id = db.Column(db.String(64), index=True)   # identifiant d'exécution IBKR (ibExecID / tradeID)
     
     def to_dict(self):
         return {
@@ -883,6 +884,9 @@ def init_db(app, default_panel):
         })
         _migrate_add_columns(app, 'recommendation_history', {
             'market_regime': 'TEXT',
+        })
+        _migrate_add_columns(app, 'transactions', {
+            'ext_id': 'VARCHAR(64)',
         })
         # Migration: volume + low + high des barres de prix
         _migrate_add_columns(app, 'market_price_bars', {

@@ -85,22 +85,71 @@ def fetch_statement(token: str, query_id: str, timeout=120) -> str:
     raise FlexError("Flex : délai dépassé (rapport non généré)")
 
 
+def _parse_flex_datetime(s):
+    """Date + heure Flex ('20240115;093015', '2024-01-15, 09:30:15'…) → datetime (minuit si pas d'heure)."""
+    if not s:
+        return None
+    d = _parse_flex_date(s)
+    if d is None:
+        return None
+    rest = s.replace(',', ' ').replace(';', ' ').split()
+    hhmmss = rest[1] if len(rest) > 1 else ''
+    hhmmss = hhmmss.replace(':', '')
+    try:
+        if len(hhmmss) >= 6:
+            return datetime(d.year, d.month, d.day, int(hhmmss[0:2]), int(hhmmss[2:4]), int(hhmmss[4:6]))
+    except ValueError:
+        pass
+    return datetime(d.year, d.month, d.day)
+
+
+def _f(x, default=0.0):
+    try:
+        return float(x) if x not in (None, '') else default
+    except ValueError:
+        return default
+
+
+# Niveaux de détail des lignes <Trade> : on garde les exécutions réelles et on
+# ignore les lignes de synthèse (sinon les quantités sont comptées deux fois).
+_EXEC_LEVELS = ('EXECUTION',)
+_ORDER_LEVELS = ('ORDER',)
+_SUMMARY_LEVELS = ('SYMBOL_SUMMARY', 'ASSET_SUMMARY', 'CLOSED_LOT', 'WASH_SALE', 'SUMMARY')
+# Catégories d'actifs conservées (actions et ETF) ; options, forex, futures ignorés
+_EQUITY_CATEGORIES = ('STK', '')
+
+
 def parse_statement(xml_text: str) -> dict:
     """
     Parse le XML Flex en données structurées.
     Returns: {
         'nav': [{'date', 'nav', 'cash'}],
-        'trades': [{'date','ticker','type','quantity','price','amount','currency'}],
-        'dividends': [{'date','ticker','amount','currency'}],
+        'trades': [{'date', 'ts', 'ticker', 'type', 'quantity', 'price', 'amount', 'currency', 'ext_id'}],
+            type ∈ BUY | SELL | ADJ (opération sur titres : division, changement de
+            ticker, fusion — quantité signée, sans flux de trésorerie)
+        'dividends': [{'date','ticker','amount','currency'}],   # retenues à la source en négatif
         'cash_flows': [{'date','amount','description','currency'}],  # dépôts/retraits
+        'open_positions': [{'ticker','qty','mark_price','value','cost_basis','unrealized','report_date'}],
+        'from_date', 'to_date': fenêtre couverte par le relevé (None si absente),
         'account_id': str,
     }
+
+    Robustesse (corrige les positions « fantômes ») :
+      - seules les exécutions sont gardées ; si le rapport n'en contient pas, les
+        ordres ; jamais les lignes de synthèse (SYMBOL_SUMMARY, CLOSED_LOT…) ;
+      - chaque exécution porte son identifiant IBKR (ibExecID / tradeID) : deux
+        exécutions identiques (même quantité, même prix, même jour) restent deux
+        transactions ;
+      - les opérations sur titres (divisions, regroupements, changements de
+        ticker) deviennent des ajustements de quantité.
     """
     root = ET.fromstring(xml_text)
-    nav, trades, dividends, cash_flows = [], [], [], []
+    nav, dividends, cash_flows, open_positions = [], [], [], []
+    trades_by_level = {'exec': [], 'order': [], 'plain': []}
+    ca_rows = []
     account_id = None
+    from_date = to_date = None
 
-    # Chercher l'accountId dans plusieurs endroits possibles selon le format du rapport
     for el in root.iter():
         val = el.get('accountId')
         if val:
@@ -110,6 +159,11 @@ def parse_statement(xml_text: str) -> dict:
     for stmt in root.iter('FlexStatement'):
         if not account_id:
             account_id = stmt.get('accountId') or account_id
+        fd, td = _parse_flex_date(stmt.get('fromDate')), _parse_flex_date(stmt.get('toDate'))
+        if fd:
+            from_date = fd if from_date is None else min(from_date, fd)
+        if td:
+            to_date = td if to_date is None else max(to_date, td)
 
         # NAV + cash jour par jour (EquitySummaryByReportDateInBase)
         for row in stmt.iter('EquitySummaryByReportDateInBase'):
@@ -126,38 +180,75 @@ def parse_statement(xml_text: str) -> dict:
                 except ValueError:
                     pass
 
-        # Transactions (Trade / Order)
+        # Transactions (exécutions)
         for tr in stmt.iter('Trade'):
-            d = _parse_flex_date(tr.get('tradeDate') or tr.get('dateTime'))
-            sym = tr.get('symbol')
-            if not d or not sym:
+            cat = (tr.get('assetCategory') or '').upper()
+            if cat not in _EQUITY_CATEGORIES:
                 continue
-            try:
-                qty = float(tr.get('quantity') or 0)
-                price = float(tr.get('tradePrice') or 0)
-            except ValueError:
+            level = (tr.get('levelOfDetail') or '').upper()
+            if level in _SUMMARY_LEVELS:
+                continue
+            ts = _parse_flex_datetime(tr.get('dateTime') or tr.get('tradeDate'))
+            sym = tr.get('symbol')
+            if not ts or not sym:
+                continue
+            qty = _f(tr.get('quantity'))
+            price = _f(tr.get('tradePrice'))
+            if qty == 0:
                 continue
             buysell = (tr.get('buySell') or ('BUY' if qty >= 0 else 'SELL')).upper()
             amount = tr.get('netCash') or tr.get('proceeds')
-            try:
-                amount = float(amount) if amount else qty * price
-            except ValueError:
-                amount = qty * price
-            trades.append({
-                'date': d, 'ticker': sym, 'type': 'BUY' if 'BUY' in buysell else 'SELL',
+            amount = _f(amount, qty * price) if amount else qty * price
+            row = {
+                'date': ts.date(), 'ts': ts, 'ticker': sym,
+                'type': 'BUY' if 'BUY' in buysell else 'SELL',
                 'quantity': abs(qty), 'price': price, 'amount': amount,
                 'currency': tr.get('currency', 'USD'),
-            })
+                'ext_id': (tr.get('ibExecID') or tr.get('tradeID') or tr.get('transactionID') or None),
+            }
+            if level in _EXEC_LEVELS:
+                trades_by_level['exec'].append(row)
+            elif level in _ORDER_LEVELS:
+                trades_by_level['order'].append(row)
+            else:
+                trades_by_level['plain'].append(row)
 
-        # CashTransactions : dividendes ET dépôts/retraits
+        # Opérations sur titres : divisions, regroupements, changements de ticker…
+        for ca in stmt.iter('CorporateAction'):
+            cat = (ca.get('assetCategory') or '').upper()
+            if cat not in _EQUITY_CATEGORIES:
+                continue
+            level = (ca.get('levelOfDetail') or '').upper()
+            if level in _SUMMARY_LEVELS:
+                continue
+            ts = _parse_flex_datetime(ca.get('dateTime') or ca.get('reportDate'))
+            sym = ca.get('symbol')
+            qty = _f(ca.get('quantity'))
+            if not ts or not sym or qty == 0:
+                continue
+            proceeds = _f(ca.get('proceeds'))
+            ext = ca.get('transactionID') or ca.get('actionID')
+            base = {'date': ts.date(), 'ts': ts, 'ticker': sym, 'currency': ca.get('currency', 'USD'),
+                    'ext_id': f'CA-{ext}-{sym}' if ext else None}
+            if proceeds and qty < 0:
+                # Fusion / OPA payée en cash : équivalent d'une vente
+                ca_rows.append({**base, 'type': 'SELL', 'quantity': abs(qty),
+                                'price': abs(proceeds / qty), 'amount': proceeds})
+            else:
+                ca_rows.append({**base, 'type': 'ADJ', 'quantity': qty, 'price': 0.0, 'amount': 0.0})
+
+        # CashTransactions : dividendes (nets des retenues) ET dépôts/retraits
         for ct in stmt.iter('CashTransaction'):
             ttype = (ct.get('type') or '').lower()
             d = _parse_flex_date(ct.get('dateTime') or ct.get('settleDate') or ct.get('reportDate'))
             amount = ct.get('amount')
             if not d or not amount:
                 continue
+            level = (ct.get('levelOfDetail') or '').upper()
+            if level in _SUMMARY_LEVELS:
+                continue
 
-            if 'dividend' in ttype:
+            if 'dividend' in ttype or 'withholding' in ttype:
                 try:
                     dividends.append({
                         'date': d, 'ticker': ct.get('symbol') or '',
@@ -176,26 +267,55 @@ def parse_statement(xml_text: str) -> dict:
                 except ValueError:
                     pass
 
+        # Positions ouvertes à la date du relevé (vérité du courtier)
+        for op in stmt.iter('OpenPosition'):
+            cat = (op.get('assetCategory') or '').upper()
+            if cat not in _EQUITY_CATEGORIES:
+                continue
+            level = (op.get('levelOfDetail') or '').upper()
+            if level == 'LOT':
+                continue
+            sym = op.get('symbol')
+            qty = _f(op.get('position'))
+            if not sym or qty == 0:
+                continue
+            open_positions.append({
+                'ticker': sym, 'qty': qty,
+                'mark_price': _f(op.get('markPrice'), None),
+                'value': _f(op.get('positionValue'), None),
+                'cost_basis': _f(op.get('costBasisMoney'), None),
+                'unrealized': _f(op.get('fifoPnlUnrealized'), None),
+                'report_date': (_parse_flex_date(op.get('reportDate')) or to_date),
+            })
+
+    # Exécutions si présentes, sinon ordres, sinon lignes sans niveau ; + opérations sur titres
+    trades = (trades_by_level['exec'] or trades_by_level['order'] or trades_by_level['plain']) + ca_rows
+    trades = sorted(trades, key=lambda t: t['ts'])
+
     # Enrichir les lignes NAV avec le cash depuis CashReportCurrency si absent
-    # (EquitySummaryByReportDateInBase n'expose pas toujours le champ cash)
     cash_by_date = {}
     for row in root.iter('CashReportCurrency'):
         d = _parse_flex_date(row.get('reportDate') or row.get('toDate') or row.get('toDateLong'))
         end_cash = row.get('endingCash') or row.get('endingSettledCash')
         currency = (row.get('currency') or '').upper()
-        # Garder uniquement la devise de base (BASE ou USD) pour éviter les doublons
         if d and end_cash and currency in ('BASE', 'USD', ''):
             try:
                 cash_by_date[d] = float(end_cash)
             except ValueError:
                 pass
-
     for row in nav:
         if row.get('cash') is None and row['date'] in cash_by_date:
             row['cash'] = cash_by_date[row['date']]
 
+    if trades and from_date is None:
+        from_date = trades[0]['date']
+    if trades and to_date is None:
+        to_date = trades[-1]['date']
+
     return {'nav': nav, 'trades': trades, 'dividends': dividends,
-            'cash_flows': cash_flows, 'account_id': account_id}
+            'cash_flows': cash_flows, 'open_positions': open_positions,
+            'from_date': from_date, 'to_date': to_date,
+            'account_id': account_id}
 
 
 def fetch_and_parse(token: str, query_id: str) -> dict:

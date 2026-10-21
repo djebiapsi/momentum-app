@@ -290,11 +290,17 @@ def perf_dashboard():
     """
     Tableau de bord Performance. Paramètre ?range=1W|1M|3M|6M|1Y|3Y|5Y|YTD|ALL.
 
-    Source NAV : Flex UNIQUEMENT (PortfolioSnapshot). Pas de reconstruction.
-    Si Flex insuffisant pour la période → message clair, pas de mélange paper/live.
-    Positions actuelles (P&L, prix courants) : IBKR si connecté, sinon omises.
+    - NAV : Flex uniquement (PortfolioSnapshot), TWR Modified Dietz avec les
+      dépôts/retraits rattachés à la première NAV ≥ leur date (perf_service).
+    - Benchmark SPY aligné sur la première NAV de la période (même fenêtre).
+    - CAGR et Sharpe : annualisés seulement à partir de 3 mois de données.
+    - Positions : IBKR live si connecté, sinon positions ouvertes du dernier
+      relevé Flex (source et date renvoyées). Sans source : valeurs None, pas 0.
+    - P&L réalisé : somme des ventes de la période (cycle de vie des positions).
     """
     import pandas as pd
+    import perf_service as ps
+    from models import PortfolioSnapshot, Dividend, CashFlow, MarketPriceBar
     range_key = (request.args.get('range') or '1Y').upper()
 
     try:
@@ -303,226 +309,170 @@ def perf_dashboard():
             nb_jours = (_date.today() - _date(_date.today().year, 1, 1)).days + 1
         else:
             nb_jours = RANGE_TO_DAYS.get(range_key, 365)
+        cutoff = pd.Timestamp(datetime.now()).normalize() - pd.Timedelta(days=nb_jours)
 
-        cutoff = pd.Timestamp(datetime.now()) - pd.Timedelta(days=nb_jours)
-
-        def _tz_naive(s):
-            if getattr(s.index, 'tz', None) is not None:
-                s.index = s.index.tz_localize(None)
-            return s
-
-        # ── Source NAV : Flex UNIQUEMENT ─────────────────────────────────────
-        from models import PortfolioSnapshot, Dividend, CashFlow
-        all_snaps = (PortfolioSnapshot.query
-                     .order_by(PortfolioSnapshot.date.asc()).all())
+        all_snaps = PortfolioSnapshot.query.order_by(PortfolioSnapshot.date.asc()).all()
         snaps = [s for s in all_snaps if pd.Timestamp(s.date) >= cutoff]
-
         n_total = len(all_snaps)
         last_date = all_snaps[-1].date.isoformat() if all_snaps else None
-
+        flex_stats = {
+            'total_snapshots': n_total, 'snapshots_in_range': len(snaps),
+            'last_snapshot_date': last_date,
+            'snapshots_with_cash': sum(1 for s in all_snaps if s.cash is not None),
+            'last_sync': Settings.get('flex_last_sync') or None,
+        }
         if len(snaps) < 2:
             return jsonify({
-                'success': True, 'empty': True,
-                'nav_source': 'flex',
-                'message': (
-                    f'Données Flex insuffisantes pour la période "{range_key}" : '
-                    f'{len(snaps)} snapshot(s) sur {nb_jours} jours. '
-                    f'Total en base : {n_total}. Dernier : {last_date}. '
-                    f'Synchronisez Flex depuis les Paramètres → onglet IBKR.'
-                ),
-                'flex_stats': {
-                    'total_snapshots': n_total,
-                    'snapshots_in_range': len(snaps),
-                    'last_snapshot_date': last_date,
-                },
+                'success': True, 'empty': True, 'nav_source': 'flex', 'flex_stats': flex_stats,
+                'message': (f'Pas assez de relevés Flex sur la période « {range_key} » '
+                            f'({len(snaps)} jour(s) ; {n_total} en base, dernier le {last_date or "—"}). '
+                            f'Synchronise Flex ou choisis une période plus longue.'),
             })
 
         nav = pd.Series({pd.Timestamp(s.date): s.nav for s in snaps}).sort_index()
-        nav = _tz_naive(nav)
+        start = nav.index[0]
 
-        last_snap = snaps[-1]
-        cash_flex  = last_snap.cash    # None si pas encore extrait du XML
-        nav_total  = last_snap.nav     # total compte officiel (positions + cash)
+        # TWR : les flux postérieurs à la 1re NAV (celle-ci inclut déjà les apports passés)
+        flows = [(cf.date, cf.amount) for cf in
+                 CashFlow.query.filter(CashFlow.date > start.date()).all()]
+        twr, daily = ps.twr_from_nav(nav, flows)
+        m = ps.risk_metrics(twr, daily)
 
-        # Diagnostique : quel % des snapshots ont le cash renseigné ?
-        snaps_with_cash = sum(1 for s in all_snaps if s.cash is not None)
-
-        # ── Benchmark SPY ────────────────────────────────────────────────────
+        # Benchmark SPY sur la même fenêtre
+        bench_index, bench_total, bench_cagr = None, None, None
         svc = get_momentum_service()
-        bench_index = None
-        bench_cagr  = None
         if svc:
             try:
-                spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours)
+                spy_df, _ = svc._fetch_daily_adjusted('SPY', nb_jours + 10)
                 if spy_df is not None and not spy_df.empty:
-                    spy = _tz_naive(spy_df['adjClose'].copy())
-                    spy = spy[spy.index >= cutoff]
+                    spy = spy_df['adjClose'].copy()
+                    if getattr(spy.index, 'tz', None) is not None:
+                        spy.index = spy.index.tz_localize(None)
+                    spy = spy[(spy.index >= start) & (spy.index <= nav.index[-1])]   # même fenêtre que le compte
                     if len(spy) >= 2:
                         bench_index = spy / spy.iloc[0]
+                        bench_total = float(bench_index.iloc[-1] - 1)
                         bd = max(1, (bench_index.index[-1] - bench_index.index[0]).days)
-                        bench_cagr = float(bench_index.iloc[-1] ** (365.0 / bd) - 1)
+                        if bd >= ps.MIN_DAYS_ANNUALIZED:
+                            bench_cagr = float(bench_index.iloc[-1] ** (365.0 / bd) - 1)
             except Exception:
                 pass
 
-        # ── TWR via Modified Dietz : HPR_t = (NAV_t - NAV_{t-1} - CF_t) / NAV_{t-1}
-        # Soustrait exactement chaque dépôt/retrait du numérateur, quel que soit
-        # son montant — contrairement à l'ancienne heuristique (seuil 20%).
-        all_cf = CashFlow.query.filter(
-            CashFlow.date >= nav.index[0].date()
-        ).order_by(CashFlow.date).all()
-        cf_by_date: dict = {}
-        for cf in all_cf:
-            ts = pd.Timestamp(cf.date)
-            cf_by_date[ts] = cf_by_date.get(ts, 0.0) + cf.amount
-        cf_series = pd.Series(cf_by_date, dtype=float).reindex(nav.index).fillna(0.0)
+        def _fmt_index(series):
+            return [{'date': i.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 4)}
+                    for i, v in series.items()]
 
-        nav_prev  = nav.shift(1)
-        hpr       = (nav - nav_prev - cf_series) / nav_prev
-        # Garde-fou : exclut les valeurs manifestement aberrantes (erreur de données Flex,
-        # ex. snapshot à 0 ou jump × 100 non lié à un dépôt). N'impacte pas les vraies
-        # journées exceptionnelles car ±95% en une séance est physiquement impossible.
-        hpr       = hpr.fillna(0.0).clip(-0.95, 0.95)
+        daily_returns = [{'date': i.strftime('%Y-%m-%d'), 'return_pct': round(float(v) * 100, 2)}
+                         for i, v in twr.pct_change().dropna().items()]
+        monthly_returns = [{'year': i.year, 'month': i.month, 'return_pct': round(float(v) * 100, 2)}
+                           for i, v in ps.period_returns(twr, 'ME').items()]
+        weekly_returns = [{'year': i.isocalendar()[0], 'week': i.isocalendar()[1],
+                           'return_pct': round(float(v) * 100, 2), 'date': i.strftime('%Y-%m-%d')}
+                          for i, v in ps.period_returns(twr, 'W').items()]
 
-        twr_index = (1 + hpr).cumprod()
-        twr_index = twr_index / twr_index.iloc[0]
-
-        daily_ret = hpr.iloc[1:]  # exclure le premier NaN converti en 0
-        days      = max(1, (nav.index[-1] - nav.index[0]).days)
-        total_ret = float(twr_index.iloc[-1] - 1)
-        cagr      = float(twr_index.iloc[-1] ** (365.0 / days) - 1) if days >= 1 else 0.0
-        vol_ann   = float(daily_ret.std() * (252 ** 0.5)) if len(daily_ret) > 1 else 0.0
-        rf        = 0.04
-        sharpe    = float((cagr - rf) / vol_ann) if vol_ann > 1e-9 else 0.0
-        cummax    = twr_index.cummax()
-        drawdown  = (twr_index - cummax) / cummax
-        max_dd    = float(drawdown.min())
-
-        # ── Heatmaps ─────────────────────────────────────────────────────────
-        def _fmt_index(s):
-            return [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 4)}
-                    for idx, v in s.items()]
-
-        daily_rets_raw = twr_index.pct_change().dropna()
-        daily_returns  = [
-            {'date': idx.strftime('%Y-%m-%d'), 'return_pct': round(float(v) * 100, 2)}
-            for idx, v in daily_rets_raw.items()
-        ]
-        monthly = twr_index.resample('ME').last().pct_change().dropna()
-        monthly_returns = [
-            {'year': idx.year, 'month': idx.month, 'return_pct': round(float(v) * 100, 2)}
-            for idx, v in monthly.items()
-        ]
-        weekly = twr_index.resample('W').last().pct_change().dropna()
-        weekly_returns = [
-            {'year': idx.isocalendar()[0], 'week': idx.isocalendar()[1],
-             'return_pct': round(float(v) * 100, 2), 'date': idx.strftime('%Y-%m-%d')}
-            for idx, v in weekly.items()
-        ]
-
-        # ── Dividendes ───────────────────────────────────────────────────────
-        div_rows = Dividend.query.filter(Dividend.date >= cutoff.date()).all()
-        dividends_total = round(sum(d.amount for d in div_rows), 2)
-        dividends_by_ticker: dict = {}
+        # Dividendes nets (retenues à la source déduites) sur la période
+        div_rows = Dividend.query.filter(Dividend.date >= start.date()).all()
+        dividends_by_ticker = {}
         for d in div_rows:
             dividends_by_ticker[d.ticker] = round(dividends_by_ticker.get(d.ticker, 0) + d.amount, 2)
+        dividends_total = round(sum(d.amount for d in div_rows), 2)
 
-        # ── Flux de capitaux ─────────────────────────────────────────────────
-        cf_rows = CashFlow.query.filter(CashFlow.date >= cutoff.date()).order_by(CashFlow.date).all()
-        cash_flow_list = [cf.to_dict() for cf in cf_rows]
-        cf_monthly: dict = {}
+        cf_rows = CashFlow.query.filter(CashFlow.date >= start.date()).order_by(CashFlow.date).all()
+        cf_monthly = {}
         for cf in cf_rows:
-            key = cf.date.strftime('%Y-%m')
-            cf_monthly[key] = round((cf_monthly.get(key) or 0) + cf.amount, 2)
-        cf_monthly_list = [{'month': k, 'amount': v} for k, v in sorted(cf_monthly.items())]
+            k = cf.date.strftime('%Y-%m')
+            cf_monthly[k] = round(cf_monthly.get(k, 0) + cf.amount, 2)
 
-        # ── Positions + cash live : IBKR si connecté (optionnel) ────────────
-        positions       = []
-        positions_value = 0.0
-        ibkr_connected  = False
-        cash_ibkr       = None
+        # Positions : IBKR live, sinon dernier relevé Flex
+        positions, positions_value, cash_live = [], None, None
+        positions_source, positions_as_of = None, None
         try:
             if ibkr_service.ensure_connected():
-                stats_ibkr      = ibkr_service.get_portfolio_stats()
-                positions       = stats_ibkr.get('positions', [])
-                positions_value = stats_ibkr.get('total_value', 0.0)
-                cash_ibkr       = ibkr_service.get_cash_balance()
-                ibkr_connected  = True
+                st = ibkr_service.get_portfolio_stats()
+                positions = st.get('positions', [])
+                positions_value = st.get('total_value', 0.0)
+                cash_live = ibkr_service.get_cash_balance()
+                positions_source, positions_as_of = 'ibkr', datetime.now().date().isoformat()
         except Exception as e:
-            current_app.logger.warning('perf_dashboard: positions IBKR non disponibles: %s', e)
+            current_app.logger.warning('perf_dashboard: IBKR indisponible: %s', e)
+        if positions_source is None:
+            actual, src, as_of = ps.actual_positions(None)
+            if actual:
+                positions = [{'ticker': tk, 'qty': v['qty'], 'market_price': v.get('price'),
+                              'market_value': v.get('value'),
+                              'avg_cost': (v['cost_basis'] / v['qty']) if v.get('cost_basis') and v['qty'] else None,
+                              'unrealized_pnl': v.get('unrealized')} for tk, v in actual.items()]
+                positions_value = sum(p['market_value'] or 0 for p in positions)
+                positions_source, positions_as_of = src, as_of
 
-        # Cash : priorité IBKR live (compte courant), sinon dernier snapshot Flex
-        cash_display = cash_ibkr if cash_ibkr is not None else cash_flex
+        last_snap = snaps[-1]
+        cash = cash_live if cash_live is not None else last_snap.cash
+        if positions_source == 'ibkr' and cash is not None:
+            total_value = positions_value + cash
+        else:
+            total_value = last_snap.nav
+        ref = total_value if total_value and total_value > 0 else None
+        for p in positions:
+            p['allocation_pct_nav'] = round((p.get('market_value') or 0) / ref * 100, 2) if ref else None
 
-        # NAV live = positions + cash IBKR si disponible, sinon dernier snapshot Flex
-        nav_live = (positions_value + cash_display) if (ibkr_connected and cash_display is not None) else nav_total
+        has_pos = positions_source is not None
+        allocs = sorted((p.get('allocation_pct_nav') or 0 for p in positions), reverse=True)
+        best = max(positions, key=lambda p: p.get('unrealized_pnl') or 0) if positions else None
+        worst = min(positions, key=lambda p: p.get('unrealized_pnl') or 0) if positions else None
 
-        # Recalculer les allocations sur la NAV live (cash inclus)
-        ref_nav = nav_live if nav_live and nav_live > 0 else nav_total
-        if ref_nav and ref_nav > 0:
-            for p in positions:
-                mv = p.get('market_value') or 0
-                p['allocation_pct_nav'] = round(mv / ref_nav * 100, 2)
-
-        cash_pct_of_nav = round(cash_display / ref_nav * 100, 1) if (cash_display and ref_nav) else None
-
-        top5_alloc  = sum(sorted([p.get('allocation_pct_nav', p.get('allocation_pct', 0))
-                                  for p in positions], reverse=True)[:5])
-        best_pos    = max(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None) if positions else None
-        worst_pos   = min(positions, key=lambda p: p.get('unrealized_pnl', 0), default=None) if positions else None
-        winners     = [p for p in positions if (p.get('unrealized_pnl') or 0) > 0]
+        # P&L réalisé sur la période (ventes datées dans la fenêtre)
+        realized = None
+        try:
+            _, _, events, _ = ps.position_lifecycles(ps.load_transactions())
+            realized = round(sum(pnl for d, _, pnl in events if d >= start.date()), 2)
+        except Exception as e:
+            current_app.logger.warning('perf_dashboard: P&L réalisé indisponible: %s', e)
 
         flex_account_id = Settings.get('flex_account_id', '')
-        is_paper = bool(flex_account_id and flex_account_id.upper().startswith('DU'))
-
+        pct = lambda x: round(x * 100, 2) if x is not None else None
         return jsonify({
-            'success': True,
-            'range': range_key,
-            'nav_source': 'flex',
-            'ibkr_connected': ibkr_connected,
+            'success': True, 'range': range_key, 'nav_source': 'flex',
+            'ibkr_connected': positions_source == 'ibkr',
+            'positions_source': positions_source, 'positions_as_of': positions_as_of,
             'flex_account_id': flex_account_id,
-            'is_paper': is_paper,
-            'flex_stats': {
-                'total_snapshots': n_total,
-                'snapshots_in_range': len(snaps),
-                'last_snapshot_date': last_date,
-                'snapshots_with_cash': snaps_with_cash,
-            },
+            'is_paper': bool(flex_account_id and flex_account_id.upper().startswith('DU')),
+            'flex_stats': flex_stats,
+            'period': {'start': start.strftime('%Y-%m-%d'), 'end': nav.index[-1].strftime('%Y-%m-%d'),
+                       'days': m['days'], 'annualized': m['cagr'] is not None},
             'kpis': {
-                'total_value':    round(nav_live if nav_live else nav_total, 2),
-                'positions_value': round(positions_value, 2),
-                'cash':           round(cash_display, 2) if cash_display is not None else None,
-                'cash_pct':       cash_pct_of_nav,
-                'cash_source':    'ibkr' if cash_ibkr is not None else ('flex' if cash_flex is not None else None),
-                'total_return_pct': round(total_ret * 100, 2),
-                'cagr_pct':       round(cagr * 100, 2),
-                'bench_cagr_pct': round(bench_cagr * 100, 2) if bench_cagr is not None else None,
-                'cagr_vs_bench_pct': round((cagr - bench_cagr) * 100, 2) if bench_cagr is not None else None,
-                'sharpe':         round(sharpe, 2),
-                'vol_annual_pct': round(vol_ann * 100, 2),
-                'max_drawdown_pct': round(max_dd * 100, 2),
-                'unrealized_pnl': sum(p.get('unrealized_pnl') or 0 for p in positions),
-                'realized_pnl':   None,
-                'positions_count': len(positions),
-                'winners_count':  len(winners),
-                'top5_concentration_pct': round(top5_alloc, 1),
-                'best_position':  {'ticker': best_pos['ticker'],
-                                   'pnl': round(best_pos['unrealized_pnl'], 2)} if best_pos else None,
-                'worst_position': {'ticker': worst_pos['ticker'],
-                                   'pnl': round(worst_pos['unrealized_pnl'], 2)} if worst_pos else None,
+                'total_value': round(total_value, 2) if total_value is not None else None,
+                'positions_value': round(positions_value, 2) if positions_value is not None else None,
+                'cash': round(cash, 2) if cash is not None else None,
+                'cash_pct': round(cash / ref * 100, 1) if (cash is not None and ref) else None,
+                'cash_source': 'ibkr' if cash_live is not None else ('flex' if last_snap.cash is not None else None),
+                'total_return_pct': pct(m['total']),
+                'bench_total_pct': pct(bench_total),
+                'excess_total_pct': pct(m['total'] - bench_total) if bench_total is not None else None,
+                'cagr_pct': pct(m['cagr']),
+                'bench_cagr_pct': pct(bench_cagr),
+                'cagr_vs_bench_pct': pct(m['cagr'] - bench_cagr) if (m['cagr'] is not None and bench_cagr is not None) else None,
+                'sharpe': round(m['sharpe'], 2) if m['sharpe'] is not None else None,
+                'vol_annual_pct': pct(m['vol']),
+                'max_drawdown_pct': pct(m['max_dd']),
+                'unrealized_pnl': round(sum(p.get('unrealized_pnl') or 0 for p in positions), 2) if has_pos else None,
+                'realized_pnl': realized,
+                'positions_count': len(positions) if has_pos else None,
+                'winners_count': sum(1 for p in positions if (p.get('unrealized_pnl') or 0) > 0) if has_pos else None,
+                'top5_concentration_pct': round(sum(allocs[:5]), 1) if has_pos and ref else None,
+                'best_position': {'ticker': best['ticker'], 'pnl': round(best.get('unrealized_pnl') or 0, 2)} if best else None,
+                'worst_position': {'ticker': worst['ticker'], 'pnl': round(worst.get('unrealized_pnl') or 0, 2)} if worst else None,
                 'dividends_total': dividends_total,
             },
-            'timeseries': {
-                'portfolio':  _fmt_index(twr_index),
-                'benchmark':  _fmt_index(bench_index) if bench_index is not None else [],
-            },
-            'drawdown': [{'date': idx.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
-                         for idx, v in drawdown.items()],
-            'daily_returns':    daily_returns,
-            'monthly_returns':  monthly_returns,
-            'weekly_returns':   weekly_returns,
-            'positions':        positions,
-            'cash_flows':       cash_flow_list,
-            'cash_flows_monthly': cf_monthly_list,
+            'timeseries': {'portfolio': _fmt_index(twr),
+                           'benchmark': _fmt_index(bench_index) if bench_index is not None else []},
+            'drawdown': [{'date': i.strftime('%Y-%m-%d'), 'value': round(float(v) * 100, 2)}
+                         for i, v in m['drawdown'].items()],
+            'daily_returns': daily_returns,
+            'monthly_returns': monthly_returns,
+            'weekly_returns': weekly_returns,
+            'positions': positions,
+            'cash_flows': [cf.to_dict() for cf in cf_rows],
+            'cash_flows_monthly': [{'month': k, 'amount': v} for k, v in sorted(cf_monthly.items())],
             'dividends_by_ticker': [{'ticker': t, 'amount': a}
                                     for t, a in sorted(dividends_by_ticker.items(), key=lambda x: -x[1])],
         })
@@ -581,21 +531,23 @@ def perf_positions_timeline():
             for t in txs:
                 if t.ticker != tk:
                     continue
-                q = (t.quantity or 0.0) * (1.0 if t.type == 'BUY' else -1.0)
+                if t.type == 'ADJ':
+                    q = t.quantity or 0.0                       # quantité déjà signée
+                else:
+                    q = (t.quantity or 0.0) * (1.0 if t.type == 'BUY' else -1.0)
                 ts = pd.Timestamp(t.date).normalize()
                 ev[ts] = ev.get(ts, 0.0) + q
             signed[tk] = pd.Series(ev, dtype=float).sort_index().cumsum()
 
         # ── Ancrage sur les quantités actuelles IBKR si disponible ──────────
+        # Ancrage : positions réelles (IBKR live, sinon dernier relevé Flex)
+        import perf_service as ps
         current_qty = {}
         anchor = 'heuristic'
-        try:
-            if ibkr_service.ensure_connected():
-                for p in ibkr_service.get_positions():
-                    current_qty[p['ticker']] = p.get('qty') or 0.0
-                anchor = 'ibkr'
-        except Exception as e:
-            current_app.logger.warning('positions-timeline: IBKR indisponible: %s', e)
+        actual, src, _ = ps.actual_positions(ibkr_service)
+        if actual is not None:
+            current_qty = {tk: v['qty'] for tk, v in actual.items()}
+            anchor = src
 
         first_tx = min(s.index[0] for s in signed.values())
         start = first_tx if range_key == 'ALL' else max(cutoff, first_tx)
@@ -622,7 +574,7 @@ def perf_positions_timeline():
         for tk in tickers:
             cum = signed[tk]
             cum_now = float(cum.iloc[-1])
-            if anchor == 'ibkr':
+            if anchor in ('ibkr', 'flex'):
                 h0 = current_qty.get(tk, 0.0) - cum_now
             else:
                 h0 = max(0.0, -float(cum.min()))
@@ -684,144 +636,40 @@ def perf_positions_timeline():
 @require_admin
 def perf_positions_pnl():
     """
-    Impact de chaque action sur le portefeuille : pour chaque ticker jamais
-    détenu, reconstruit (coût moyen, chronologique) le cycle de vie de la
-    position à partir des transactions + dividendes.
+    Impact de chaque action sur le portefeuille (cycle de vie complet, coût
+    moyen, ordre chronologique) — perf_service.position_lifecycles.
 
-    Champs renvoyés par position :
-    - statut (ouverte/soldée), dates d'ouverture/fermeture, durée de détention ;
-    - nb d'achats / ventes et nb de prises de bénéfice (ventes partielles) ;
-    - capital investi, encaissé, dividendes perçus ;
-    - P&L réalisé, latent (positions ouvertes), total et performance %.
-
-    Les positions ouvertes AVANT le début de l'historique Flex (ventes sans
-    achat correspondant, ex. AAPL/TSLA) sont marquées `unknown_cost` : le coût
-    d'acquisition est inconnu, la performance % n'est alors pas calculée.
+    La reconstruction depuis les transactions Flex est RÉCONCILIÉE avec les
+    positions réellement détenues (IBKR live, sinon dernier relevé Flex) :
+      - reconstruite ouverte mais plus détenue → soldée (`reconciled`
+        'missing_exit', P&L incomplet) : c'était le bug des positions fantômes ;
+      - détenue sans historique → ouverte, coût inconnu ('missing_entry') ;
+      - quantité différente (division non suivie) → quantité du courtier ('qty_mismatch').
     """
-    from datetime import datetime as _dt
-    from models import Transaction, Dividend, MarketPriceBar
+    import perf_service as ps
+    from models import Dividend, MarketPriceBar
 
     try:
-        txs = (Transaction.query
-               .filter(~Transaction.ticker.like('%.%'))
-               .order_by(Transaction.date.asc()).all())
-        if not txs:
+        txs = ps.load_transactions()
+        actual, source, as_of = ps.actual_positions(ibkr_service)
+        if not txs and not actual:
             return jsonify({'success': True, 'positions': [],
-                            'message': 'Aucune transaction. Synchronisez Flex.'})
-
-        tickers = sorted({t.ticker for t in txs})
-
-        # Dividendes cumulés par ticker
+                            'message': 'Aucune transaction. Synchronise Flex.'})
         divs = {}
         for d in Dividend.query.all():
             divs[d.ticker] = divs.get(d.ticker, 0.0) + (d.amount or 0.0)
-
-        # Prix courant : IBKR live si connecté, sinon dernière barre connue
-        live_price = {}
-        try:
-            if ibkr_service.ensure_connected():
-                for p in ibkr_service.get_positions():
-                    if p.get('current_price'):
-                        live_price[p['ticker']] = p['current_price']
-        except Exception:
-            pass
-        last_bar = {}
+        tickers = sorted({t['ticker'] for t in txs} | set(actual or {}))
+        prices = {}
         for tk in tickers:
-            if tk in live_price:
+            if actual and tk in actual and actual[tk].get('price'):
                 continue
-            row = (MarketPriceBar.query
-                   .filter(MarketPriceBar.ticker == tk)
+            row = (MarketPriceBar.query.filter(MarketPriceBar.ticker == tk)
                    .order_by(MarketPriceBar.bar_date.desc()).first())
             if row:
-                last_bar[tk] = row.close if row.close else row.adj_close
-
-        out = []
-        for tk in tickers:
-            rows = [t for t in txs if t.ticker == tk]
-            q = cost = realized = invested = proceeds = 0.0
-            buys = sells = profit_takings = 0
-            open_date = close_date = None
-            unknown_cost = False
-
-            for t in rows:
-                amt = t.amount or 0.0
-                if t.type == 'BUY':
-                    buys += 1
-                    spend = abs(amt) if amt else (t.quantity or 0) * (t.price or 0)
-                    invested += spend
-                    if q <= 1e-9:
-                        open_date = t.date          # (ré)ouverture
-                        close_date = None
-                    q += (t.quantity or 0)
-                    cost += spend
-                else:  # SELL
-                    sells += 1
-                    recv = abs(amt) if amt else (t.quantity or 0) * (t.price or 0)
-                    proceeds += recv
-                    qty = t.quantity or 0
-                    if q > 1e-9:
-                        avg = cost / q
-                        sold = min(qty, q)
-                        # proceeds proportionnels à la part couverte par un coût connu
-                        realized += recv * (sold / qty if qty else 1) - avg * sold
-                        cost -= avg * sold
-                        q -= sold
-                        if qty - sold > 1e-9:       # vente au-delà du stock connu
-                            unknown_cost = True
-                            q = 0.0; cost = 0.0
-                    else:
-                        unknown_cost = True          # vente sans achat connu (pré-historique)
-                    if q <= 1e-9:
-                        close_date = t.date
-                        q = 0.0; cost = 0.0
-                    else:                            # vente partielle, position encore ouverte
-                        profit_takings += 1
-
-            is_open = q > 1e-9
-            price = live_price.get(tk) or last_bar.get(tk)
-            market_value = round(q * price, 2) if (is_open and price) else 0.0
-            unrealized = round(market_value - cost, 2) if (is_open and price) else 0.0
-            dividends = round(divs.get(tk, 0.0), 2)
-            total_pnl = round(realized + unrealized + dividends, 2)
-            perf_pct = round(total_pnl / invested * 100, 2) if (invested > 1e-6 and not unknown_cost) else None
-
-            o = open_date.date() if hasattr(open_date, 'date') else open_date
-            c = close_date.date() if hasattr(close_date, 'date') else close_date
-            end_ref = c if (not is_open and c) else _dt.now().date()
-            holding_days = (end_ref - o).days if o else None
-
-            out.append({
-                'ticker': tk,
-                'status': 'open' if is_open else 'closed',
-                'open_date': o.isoformat() if o else None,
-                'close_date': c.isoformat() if (not is_open and c) else None,
-                'holding_days': holding_days,
-                'buys': buys, 'sells': sells, 'profit_takings': profit_takings,
-                'invested': round(invested, 2),
-                'proceeds': round(proceeds, 2),
-                'dividends': dividends,
-                'remaining_qty': round(q, 4) if is_open else 0.0,
-                'current_price': round(price, 2) if (is_open and price) else None,
-                'market_value': market_value,
-                'realized_pnl': round(realized, 2),
-                'unrealized_pnl': unrealized,
-                'total_pnl': total_pnl,
-                'perf_pct': perf_pct,
-                'unknown_cost': unknown_cost,
-            })
-
-        # Tri : impact total décroissant
-        out.sort(key=lambda p: p['total_pnl'], reverse=True)
-
-        totals = {
-            'realized_pnl': round(sum(p['realized_pnl'] for p in out), 2),
-            'unrealized_pnl': round(sum(p['unrealized_pnl'] for p in out), 2),
-            'dividends': round(sum(p['dividends'] for p in out), 2),
-            'total_pnl': round(sum(p['total_pnl'] for p in out), 2),
-            'open_count': sum(1 for p in out if p['status'] == 'open'),
-            'closed_count': sum(1 for p in out if p['status'] == 'closed'),
-        }
-        return jsonify({'success': True, 'positions': out, 'totals': totals})
+                prices[tk] = row.close if row.close else row.adj_close
+        positions, totals, _, recon = ps.position_lifecycles(txs, divs, prices, actual)
+        return jsonify({'success': True, 'positions': positions, 'totals': totals,
+                        'reconciliation': {'source': source, 'as_of': as_of, 'fixes': recon}})
     except Exception as e:
         current_app.logger.exception('Erreur dans perf_positions_pnl')
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -976,164 +824,15 @@ def flex_purge_outliers():
 @require_admin
 def flex_sync():
     """
-    Récupère le rapport Flex et importe NAV / transactions / dividendes en base.
-    Données officielles IBKR (exactes).
+    Importe le relevé Flex (NAV, transactions exécution par exécution, dividendes
+    nets, dépôts/retraits, positions ouvertes). La fenêtre du relevé remplace les
+    données existantes (cf. perf_service.import_flex). ?force=true contourne les
+    garde-fous compte paper / NAV incohérente.
     """
-    from models import db, PortfolioSnapshot, Transaction, Dividend, CashFlow
-
-    enc_token = Settings.get('flex_token_enc')
-    query_id = Settings.get('flex_query_id')
-    if not enc_token or not query_id:
-        return jsonify({'success': False, 'error': 'Flex non configuré (token + query_id)'}), 400
-
-    try:
-        token = decrypt_credential(enc_token, current_app.config.get('SECRET_KEY', ''))
-    except Exception:
-        return jsonify({'success': False, 'error': 'Déchiffrement du token impossible'}), 500
-
-    try:
-        parsed = flex_service.fetch_and_parse(token, query_id)
-    except Exception as e:
-        Settings.set('flex_last_error', str(e)[:300])
-        return jsonify({'success': False, 'error': f'Flex : {e}'}), 502
-
-    # Garde : détection changement de compte / mélange paper-live
+    import perf_service as ps
     data = request.get_json(silent=True) or {}
-    force = bool(data.get('force', False))
-    new_account_id = (parsed.get('account_id') or '').strip()
-    stored_account_id = (Settings.get('flex_account_id') or '').strip()
-    is_paper_new = new_account_id.upper().startswith('DU')
-
-    # Bloquer si le rapport est manifestement paper (DU...) et qu'on n'est pas en force
-    if is_paper_new and not force:
-        Settings.set('flex_last_error', f'Compte paper détecté ({new_account_id}). Utilisez force=true pour confirmer.')
-        return jsonify({
-            'success': False,
-            'error': f'Le rapport Flex appartient à un compte PAPER ({new_account_id}). Vérifiez que votre Flex Query pointe sur votre compte LIVE.',
-            'account_id': new_account_id,
-            'is_paper': True,
-            'force_available': True,
-        }), 409
-
-    # Avertir si le compte change (sans bloquer, pour permettre une migration)
-    account_changed = (stored_account_id and new_account_id and stored_account_id != new_account_id)
-
-    # Détection heuristique : NAV incompatible avec l'historique existant (×10)
-    nav_inconsistency = None
-    if not force and parsed.get('nav'):
-        from models import PortfolioSnapshot as _PS
-        existing_navs = [s.nav for s in _PS.query.all()]
-        if existing_navs:
-            median_existing = sorted(existing_navs)[len(existing_navs) // 2]
-            new_navs = [r['nav'] for r in parsed['nav']]
-            median_new = sorted(new_navs)[len(new_navs) // 2]
-            if median_existing > 0 and (median_new / median_existing > 10 or median_new / median_existing < 0.1):
-                nav_inconsistency = {
-                    'median_existing': round(median_existing, 2),
-                    'median_new': round(median_new, 2),
-                    'ratio': round(median_new / median_existing, 2),
-                }
-                return jsonify({
-                    'success': False,
-                    'error': (
-                        f'Incohérence NAV détectée : médiane existante {median_existing:.0f}$ vs '
-                        f'médiane rapport {median_new:.0f}$ (ratio {nav_inconsistency["ratio"]}×). '
-                        f'Le rapport semble pointer sur un autre compte. Passez force=true pour importer quand même.'
-                    ),
-                    'account_id': new_account_id,
-                    'nav_inconsistency': nav_inconsistency,
-                    'force_available': True,
-                }), 409
-
-    nav_n = trade_n = div_n = cf_n = 0
-
-    # Toutes les lectures d'existence d'abord, puis les écritures — et on désactive
-    # l'autoflush pour éviter qu'une query déclenche un flush prématuré (cause de
-    # l'erreur de contrainte unique vue lors d'un import partiel).
-    existing_snap = {s.date: s for s in PortfolioSnapshot.query.all()}
-    existing_tx = {(t.date.date() if hasattr(t.date, 'date') else t.date, t.ticker,
-                    round(t.quantity, 4), round(t.price, 4))
-                   for t in Transaction.query.all()}
-    existing_div = {(d.date, d.ticker, round(d.amount, 2)) for d in Dividend.query.all()}
-    existing_cf = {(cf.date, round(cf.amount, 2)) for cf in CashFlow.query.all()}
-
-    with db.session.no_autoflush:
-        # NAV + cash → PortfolioSnapshot. parsed['nav'] peut contenir plusieurs lignes
-        # pour une même date → on déduplique (dernière valeur) avant insertion.
-        nav_by_date = {}
-        for row in parsed['nav']:
-            nav_by_date[row['date']] = row  # garde toute la ligne (nav + cash)
-        for d, row in nav_by_date.items():
-            if d in existing_snap:
-                existing_snap[d].nav = row['nav']
-                if row.get('cash') is not None:
-                    existing_snap[d].cash = row['cash']
-            else:
-                db.session.add(PortfolioSnapshot(
-                    date=d, nav=row['nav'], cash=row.get('cash')))
-                existing_snap[d] = True
-                nav_n += 1
-
-        # Transactions (dédup par date+ticker+qty+price)
-        for tr in parsed['trades']:
-            key = (tr['date'], tr['ticker'], round(tr['quantity'], 4), round(tr['price'], 4))
-            if key in existing_tx:
-                continue
-            existing_tx.add(key)
-            db.session.add(Transaction(
-                date=datetime.combine(tr['date'], datetime.min.time()),
-                ticker=tr['ticker'], type=tr['type'], quantity=tr['quantity'],
-                price=tr['price'], amount=tr['amount'], currency=tr['currency'],
-            ))
-            trade_n += 1
-
-        # Dividendes (dédup par date+ticker+amount)
-        for dv in parsed['dividends']:
-            key = (dv['date'], dv['ticker'], round(dv['amount'], 2))
-            if key in existing_div:
-                continue
-            existing_div.add(key)
-            db.session.add(Dividend(date=dv['date'], ticker=dv['ticker'],
-                                    amount=dv['amount'], currency=dv['currency']))
-            div_n += 1
-
-        # Flux de capitaux / dépôts / retraits (dédup par date+amount)
-        for cf in parsed.get('cash_flows', []):
-            key = (cf['date'], round(cf['amount'], 2))
-            if key in existing_cf:
-                continue
-            existing_cf.add(key)
-            db.session.add(CashFlow(
-                date=cf['date'], amount=cf['amount'],
-                description=cf.get('description', ''), currency=cf.get('currency', 'USD'),
-            ))
-            cf_n += 1
-
-    db.session.commit()
-    Settings.set('flex_last_sync', datetime.now().isoformat())
-    Settings.set('flex_last_error', '')
-
-    # Persister l'account_id pour détecter paper vs live sans refetch
-    account_id = new_account_id
-    if account_id:
-        Settings.set('flex_account_id', account_id)
-
-    is_paper = account_id.upper().startswith('DU')
-
-    return jsonify({
-        'success': True,
-        'account_id': account_id,
-        'is_paper': is_paper,
-        'account_changed': account_changed,
-        'imported': {'snapshots': nav_n, 'transactions': trade_n,
-                     'dividends': div_n, 'cash_flows': cf_n},
-        'totals': {
-            'snapshots': PortfolioSnapshot.query.count(),
-            'transactions': Transaction.query.count(),
-            'dividends': Dividend.query.count(),
-            'cash_flows': CashFlow.query.count(),
-        },
-    })
+    code, payload = ps.run_flex_sync(force=bool(data.get('force', False)))
+    return jsonify(payload), code
 
 
 @bp.route('/api/ibkr/rebalance', methods=['POST'])
