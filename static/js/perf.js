@@ -1,29 +1,51 @@
         // =================================================================
-        // PERFORMANCE DASHBOARD v3.0 (IBKR / Flex)
+        // PERFORMANCE (compte IBKR, relevés Flex)
+        // Ordre de lecture : combien vaut le compte et combien il a gagné face
+        // au S&P → avec quel risque → ce que je détiens → d'où vient le P&L.
         // =================================================================
 
-        function fmtPct(v, d=2) { return v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(d) + '%'; }
+        function fmtPct(v, d = 2) { return v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(d) + '%'; }
         function fmtUsd(v) {
             if (v == null) return '—';
-            return (v >= 0 ? '+$' : '-$') + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+            return (v >= 0 ? '+$' : '-$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         }
         function fmtDollar(v) {
             if (v == null) return '—';
-            return '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+            return '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         }
+        function _frDate(iso, withYear = true) {
+            if (!iso) return '—';
+            const d = new Date(iso.length <= 10 ? iso + 'T12:00:00' : iso);
+            return d.toLocaleDateString('fr-FR', withYear ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' });
+        }
+        function _signClass(v) { return v == null ? '' : v >= 0 ? 'pos' : 'neg'; }
 
         let perfRange = '1Y';
+        let _perfData = null;
+        let _pnlData = null;
+        let _pnlMode = 'open';
         const _perfCharts = {};
-        const PERF_GRID = 'rgba(255,255,255,.05)';
+        const RANGE_LABELS = { '1W': '1 semaine', '1M': '1 mois', '3M': '3 mois', '6M': '6 mois', 'YTD': 'depuis le 1er janvier', '1Y': '1 an', '3Y': '3 ans', '5Y': '5 ans', 'ALL': 'tout l\'historique' };
+
+        // Couleurs des graphiques tirées du thème (lisibles en clair et en sombre)
+        function _chartTheme() {
+            const cs = getComputedStyle(document.documentElement);
+            const v = n => cs.getPropertyValue(n).trim();
+            return { text: v('--text-muted') || '#888', grid: v('--border-subtle') || 'rgba(128,128,128,.15)',
+                     main: v('--accent-blue') || '#5b63f0', bench: v('--text-muted') || '#888',
+                     neg: v('--accent-short') || '#e23857', pos: v('--accent-long') || '#0aa06a' };
+        }
+        // Compatibilité avec les graphiques secondaires
+        let PERF_GRID = 'rgba(128,128,128,.15)';
 
         function _destroyChart(key) { if (_perfCharts[key]) { _perfCharts[key].destroy(); delete _perfCharts[key]; } }
 
         function _initPerfPills() {
-            document.querySelectorAll('#page-perf .perf-pill').forEach(pill => {
+            document.querySelectorAll('#perf-range .perf-pill').forEach(pill => {
                 if (pill._bound) return;
                 pill._bound = true;
                 pill.addEventListener('click', () => {
-                    document.querySelectorAll('#page-perf .perf-pill').forEach(p => p.classList.remove('active'));
+                    document.querySelectorAll('#perf-range .perf-pill').forEach(p => p.classList.remove('active'));
                     pill.classList.add('active');
                     perfRange = pill.dataset.range;
                     loadPerfData();
@@ -31,276 +53,276 @@
             });
         }
 
+        function perfChartView(view) {
+            document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+            document.getElementById('box-growth').hidden = view !== 'growth';
+            document.getElementById('box-dd').hidden = view !== 'dd';
+        }
+
+        async function syncFlexFromPerf() {
+            const btn = document.getElementById('btn-perf-sync');
+            if (btn) { btn.disabled = true; btn.textContent = 'Synchronisation…'; }
+            const data = await api('/flex/sync', { method: 'POST' });
+            if (btn) { btn.disabled = false; btn.textContent = 'Synchroniser Flex'; }
+            if (!data) return;
+            if (data.success) {
+                const i = data.imported || {};
+                showToast(`Flex synchronisé : ${i.transactions ?? 0} transactions, ${i.snapshots ?? 0} nouveaux jours`);
+                loadPerfData();
+            } else {
+                showToast(data.error || 'Synchronisation Flex impossible', 'error');
+            }
+        }
+
+        function _renderSources(data) {
+            const fs = data.flex_stats || {};
+            const parts = [];
+            parts.push(`NAV Flex jusqu'au <b>${_frDate(fs.last_snapshot_date)}</b>`);
+            if (data.positions_source === 'ibkr') parts.push('positions <b>IBKR en direct</b>');
+            else if (data.positions_source === 'flex') parts.push(`positions du relevé Flex du <b>${_frDate(data.positions_as_of)}</b> (IBKR déconnecté)`);
+            else parts.push('<span class="neg">positions indisponibles</span> (IBKR déconnecté, aucun relevé Flex)');
+            if (fs.last_sync) parts.push(`dernière synchro ${_frDate(fs.last_sync.slice(0, 10), false)}`);
+            document.getElementById('perf-date-info').innerHTML = parts.join(' · ');
+        }
+
         async function loadPerfData() {
             _initPerfPills();
-            document.getElementById('perf-date-info').textContent = 'Chargement…';
+            const info = document.getElementById('perf-date-info');
+            info.textContent = 'Chargement…';
 
             const data = await api(`/perf/dashboard?range=${perfRange}`);
             if (!data || !data.success) {
-                document.getElementById('perf-date-info').textContent = data?.error || 'Connexion IBKR requise';
+                info.textContent = data?.error || 'Données de performance indisponibles';
                 return;
             }
             if (data.empty) {
-                document.getElementById('perf-date-info').textContent = data.message || 'Données insuffisantes';
+                info.textContent = data.message || 'Données insuffisantes';
+                document.getElementById('perf-sentence').textContent = 'Pas assez de relevés sur cette période.';
+                _loadPositionsPnl();
                 return;
             }
-
+            _perfData = data;
             const k = data.kpis;
-            const fs = data.flex_stats || {};
-            const cashInfo = fs.snapshots_with_cash != null
-                ? ` · ${fs.snapshots_with_cash}/${fs.total_snapshots} snaps avec cash`
-                : '';
-            const acctInfo = data.flex_account_id ? ` · ${data.flex_account_id}` : '';
-            const src = `Flex (${fs.snapshots_in_range || '?'} jours${cashInfo}${acctInfo})`;
-            document.getElementById('perf-date-info').textContent = `${perfRange} · ${src}`;
+            _renderSources(data);
 
-            // ---- Bandeau paper account ----
-            let paperBanner = document.getElementById('perf-paper-banner');
+            const paper = document.getElementById('perf-paper-banner');
             if (data.is_paper) {
-                if (!paperBanner) {
-                    paperBanner = document.createElement('div');
-                    paperBanner.id = 'perf-paper-banner';
-                    paperBanner.style.cssText = 'background:#7c2d12;color:#fca5a5;padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:12px;display:flex;align-items:center;gap:8px;';
-                    const dashboard = document.querySelector('.perf-dashboard');
-                    if (dashboard) dashboard.insertBefore(paperBanner, dashboard.firstChild);
-                }
-                paperBanner.innerHTML = '<b>⚠ Données PAPER</b> — Le Flex est configuré sur votre compte paper IBKR (<code>' + data.flex_account_id + '</code>). Les chiffres ne reflètent pas votre compte réel. Créez une Flex Query sur votre compte LIVE et resynchronisez depuis les Paramètres.';
-            } else if (paperBanner) {
-                paperBanner.remove();
-            }
-            document.getElementById('perf-last-update-v2').textContent = 'Mis à jour à ' + new Date().toLocaleTimeString('fr-FR');
-
-            // ---- KPIs Performance ----
-            const setKpi = (id, val, delta, deltaPos) => {
-                const card = document.getElementById(id);
-                if (!card) return;
-                card.querySelector('.perf-kpi-value').textContent = val;
-                const d = card.querySelector('.perf-kpi-delta');
-                if (d) {
-                    d.textContent = delta || '';
-                    d.style.color = delta ? (deltaPos ? 'var(--accent-long)' : '#f87171') : '';
-                }
-            };
-
-            setKpi('kpi-total-value',
-                '$' + (k.total_value || 0).toLocaleString('en-US', {maximumFractionDigits:0}),
-                fmtPct(k.total_return_pct) + ' période (TWR)',
-                (k.total_return_pct || 0) >= 0);
-
-            setKpi('kpi-cagr', fmtPct(k.cagr_pct),
-                k.cagr_vs_bench_pct != null ? fmtPct(k.cagr_vs_bench_pct) + ' vs S&P' : '',
-                (k.cagr_vs_bench_pct || 0) >= 0);
-
-            document.querySelector('#kpi-sharpe .perf-kpi-value').textContent =
-                k.sharpe != null ? k.sharpe.toFixed(2) : '—';
-
-            const ddEl = document.querySelector('#kpi-max-drawdown .perf-kpi-value');
-            ddEl.textContent = fmtPct(k.max_drawdown_pct);
-            ddEl.style.color = '#f87171';
-
-            const ugEl = document.querySelector('#kpi-unrealized-gains .perf-kpi-value');
-            ugEl.textContent = fmtUsd(k.unrealized_pnl);
-            ugEl.style.color = (k.unrealized_pnl || 0) >= 0 ? 'var(--accent-long)' : '#f87171';
-            const ugD = document.querySelector('#kpi-unrealized-gains .perf-kpi-delta');
-            if (ugD && k.realized_pnl != null) {
-                ugD.textContent = `réalisé : ${fmtUsd(k.realized_pnl)}`;
-                ugD.style.color = k.realized_pnl >= 0 ? 'var(--accent-long)' : '#f87171';
-            }
-
-            const cashEl = document.querySelector('#kpi-cash .perf-kpi-value');
-            if (k.cash != null) {
-                cashEl.textContent = fmtDollar(k.cash)
-                    + (k.cash_pct != null ? ` · ${k.cash_pct}%` : '');
+                paper.innerHTML = `<b>Données d'un compte PAPER</b> (${data.flex_account_id}) : la Flex Query pointe sur le compte de simulation. Crée-la sur le compte LIVE puis resynchronise.`;
+                paper.hidden = false;
             } else {
-                cashEl.textContent = '—';
+                paper.hidden = true;
             }
 
-            document.querySelector('#kpi-vol .perf-kpi-value').textContent =
-                k.vol_annual_pct != null ? k.vol_annual_pct.toFixed(1) + '%' : '—';
-
-            document.querySelector('#kpi-dividends .perf-kpi-value').textContent =
-                '$' + (k.dividends_total || 0).toLocaleString('en-US', {maximumFractionDigits:0});
-
-            // ---- KPIs Composition ----
-            setKpi('kpi-nb-positions',
-                k.positions_count ?? '—',
-                k.winners_count != null ? `${k.winners_count} gagnantes` : '',
-                true);
-
-            setKpi('kpi-concentration',
-                k.top5_concentration_pct != null ? k.top5_concentration_pct + '%' : '—', '', null);
-
-            if (k.best_position) {
-                setKpi('kpi-best-pos', k.best_position.ticker,
-                    fmtUsd(k.best_position.pnl), true);
+            // 1. Résumé
+            document.getElementById('perf-total-value').textContent =
+                k.total_value != null ? '$' + k.total_value.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+            const per = RANGE_LABELS[perfRange] || perfRange;
+            let sentence = `Sur ${per} : <b class="${_signClass(k.total_return_pct)}">${fmtPct(k.total_return_pct, 1)}</b>`;
+            if (k.bench_total_pct != null) {
+                sentence += ` contre <b>${fmtPct(k.bench_total_pct, 1)}</b> pour le S&amp;P 500`;
+                if (k.excess_total_pct != null) {
+                    sentence += k.excess_total_pct >= 0
+                        ? `, soit <b class="pos">${fmtPct(k.excess_total_pct, 1)}</b> d'avance.`
+                        : `, soit <b class="neg">${fmtPct(k.excess_total_pct, 1)}</b> de retard.`;
+                }
+            } else {
+                sentence += '.';
             }
-            if (k.worst_position) {
-                setKpi('kpi-worst-pos', k.worst_position.ticker,
-                    fmtUsd(k.worst_position.pnl), false);
-            }
+            document.getElementById('perf-sentence').innerHTML = sentence;
+            const chips = [];
+            if (data.period) chips.push(`du ${_frDate(data.period.start)} au ${_frDate(data.period.end)}`);
+            if (k.max_drawdown_pct != null) chips.push(`pire perte ${fmtPct(k.max_drawdown_pct, 1)}`);
+            document.getElementById('perf-hero-chips').innerHTML = chips.map(c => `<span class="chip">${c}</span>`).join('');
 
-            // ---- Courbe d'évolution (base 100) ----
+            // 2. Chiffres clés
+            const set = (id, html, cls) => { const el = document.getElementById(id); if (el) { el.innerHTML = html; el.className = cls || ''; } };
+            const annual = data.period?.annualized;
+            set('k-total', fmtPct(k.total_return_pct), _signClass(k.total_return_pct));
+            set('k-bench', fmtPct(k.bench_total_pct));
+            set('k-cagr', annual ? fmtPct(k.cagr_pct) + (k.cagr_vs_bench_pct != null ? ` <small>(${fmtPct(k.cagr_vs_bench_pct, 1)} vs S&amp;P)</small>` : '')
+                : '<small>à partir de 3 mois</small>', annual ? _signClass(k.cagr_pct) : 'muted');
+            set('k-div', k.dividends_total != null ? fmtDollar(k.dividends_total) : '—');
+            set('k-dd', fmtPct(k.max_drawdown_pct), 'neg');
+            set('k-vol', k.vol_annual_pct != null ? k.vol_annual_pct.toFixed(1) + ' %' : '—');
+            set('k-sharpe', k.sharpe != null ? k.sharpe.toFixed(2) : '<small>à partir de 3 mois</small>', k.sharpe != null ? '' : 'muted');
+            set('k-conc', k.top5_concentration_pct != null ? k.top5_concentration_pct + ' %' : '—');
+            set('k-pos', k.positions_count != null ? `${k.positions_count}${k.winners_count != null ? ` <small>· ${k.winners_count} en gain</small>` : ''}` : '—');
+            set('k-cash', k.cash != null ? fmtDollar(k.cash) + (k.cash_pct != null ? ` <small>· ${k.cash_pct} %</small>` : '') : '—', k.cash != null && k.cash < 0 ? 'neg' : '');
+            set('k-unreal', fmtUsd(k.unrealized_pnl), _signClass(k.unrealized_pnl));
+            set('k-real', fmtUsd(k.realized_pnl), _signClass(k.realized_pnl));
+
+            // 3. Graphiques
+            _renderEvolution(data);
+            // 4. Positions détenues
+            _renderPositionsTable(data.positions || [], data);
+            // 6. Rendements par période
+            const useDaily = ['1W', '1M'].includes(perfRange);
+            const useWeekly = ['3M', '6M', 'YTD'].includes(perfRange);
+            document.getElementById('perf-heatmap-title').textContent =
+                'Rendements ' + (useDaily ? 'quotidiens' : useWeekly ? 'hebdomadaires' : 'mensuels');
+            if (useDaily) _renderHeatmapDaily(data.daily_returns || []);
+            else if (useWeekly) _renderHeatmapWeekly(data.weekly_returns || []);
+            else _renderHeatmap(data.monthly_returns || []);
+            // 7. Détails
+            _renderCashFlows(data.cash_flows_monthly || [], data.cash_flows || []);
+            _loadPositionsTimeline();
+            _loadPositionsPnl();
+            document.getElementById('perf-last-update-v2').textContent = 'Mis à jour à ' + new Date().toLocaleTimeString('fr-FR');
+        }
+
+        function _renderEvolution(data) {
+            const th = _chartTheme();
+            PERF_GRID = th.grid;
+            const unit = _timeUnit(perfRange);
             const portPts = (data.timeseries?.portfolio || []).map(p => ({ x: p.date, y: p.value }));
             const benchPts = (data.timeseries?.benchmark || []).map(p => ({ x: p.date, y: p.value }));
-            const unit = _timeUnit(perfRange);
+            const axes = (yCb) => ({
+                x: { type: 'time', time: { unit }, grid: { display: false }, ticks: { color: th.text, maxTicksLimit: 6 } },
+                y: { grid: { color: th.grid }, border: { display: false }, ticks: { color: th.text, callback: yCb } },
+            });
             _destroyChart('evolution');
             _perfCharts.evolution = new Chart(document.getElementById('chart-evolution'), {
                 type: 'line',
                 data: { datasets: [
-                    { label:'Portefeuille', data:portPts, borderColor:'#378ADD', backgroundColor:'rgba(55,138,221,.08)',
-                      fill:true, borderWidth:1.5, tension:.3, pointRadius:0 },
-                    { label:'S&P 500', data:benchPts, borderColor:'#1D9E75', borderDash:[2,3],
-                      borderWidth:1, tension:.3, pointRadius:0, fill:false },
+                    { label: 'Mon compte', data: portPts, borderColor: th.main, backgroundColor: th.main + '14',
+                      fill: true, borderWidth: 2, tension: .25, pointRadius: 0 },
+                    { label: 'S&P 500', data: benchPts, borderColor: th.bench, borderDash: [3, 3],
+                      borderWidth: 1.5, tension: .25, pointRadius: 0, fill: false },
                 ]},
-                options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-                    plugins:{ legend:{labels:{color:'#aaa',boxWidth:12}},
-                        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.y.toFixed(1)}`}} },
-                    scales:{ x:{type:'time',time:{unit},grid:{color:PERF_GRID},ticks:{color:'#888',maxTicksLimit:6}},
-                             y:{grid:{color:PERF_GRID},ticks:{color:'#888',callback:v=>v.toFixed(0)},
-                                title:{display:true,text:'Base 100',color:'#555',font:{size:9}}} } }
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { labels: { color: th.text, boxWidth: 12 } },
+                        tooltip: { callbacks: { label: c => ` ${c.dataset.label} : ${(c.parsed.y - 100) >= 0 ? '+' : ''}${(c.parsed.y - 100).toFixed(1)} %` } } },
+                    scales: axes(v => v.toFixed(0)) }
             });
-
-            // ---- Performance relative ----
-            const portRet = portPts.map(p => ({ x: p.x, y: p.y - 100 }));
-            const benchRet = benchPts.map(p => ({ x: p.x, y: p.y - 100 }));
-            _destroyChart('relperf');
-            _perfCharts.relperf = new Chart(document.getElementById('chart-relative-perf'), {
-                type:'line',
-                data:{ datasets:[
-                    { label:'Portefeuille', data:portRet, borderColor:'#534AB7', borderWidth:1.5, tension:.3, pointRadius:0 },
-                    { label:'S&P 500', data:benchRet, borderColor:'#1D9E75', borderWidth:1, tension:.3, pointRadius:0 },
-                ]},
-                options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-                    plugins:{ legend:{labels:{color:'#aaa',boxWidth:12}},
-                        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.y>=0?'+':''}${c.parsed.y.toFixed(1)}%`}} },
-                    scales:{ x:{type:'time',time:{unit},grid:{color:PERF_GRID},ticks:{color:'#888',maxTicksLimit:5}},
-                             y:{grid:{color:PERF_GRID},ticks:{color:'#888',callback:v=>v+'%'}} } }
-            });
-
-            // ---- Drawdown ----
             const ddPts = (data.drawdown || []).map(p => ({ x: p.date, y: p.value }));
             _destroyChart('ddv2');
             _perfCharts.ddv2 = new Chart(document.getElementById('chart-drawdown-v2'), {
-                type:'line',
-                data:{ datasets:[{ label:'Drawdown', data:ddPts, borderColor:'#D85A30',
-                    backgroundColor:'rgba(216,90,48,.12)', fill:true, borderWidth:1.5, tension:.3, pointRadius:0 }]},
-                options:{ responsive:true, maintainAspectRatio:false,
-                    plugins:{ legend:{display:false},
-                        tooltip:{callbacks:{label:c=>` ${c.parsed.y.toFixed(1)}%`}} },
-                    scales:{ x:{type:'time',time:{unit},grid:{color:PERF_GRID},ticks:{color:'#888',maxTicksLimit:5}},
-                             y:{max:0,grid:{color:PERF_GRID},ticks:{color:'#888',callback:v=>v+'%'}} } }
+                type: 'line',
+                data: { datasets: [{ label: 'Drawdown', data: ddPts, borderColor: th.neg,
+                    backgroundColor: th.neg + '22', fill: true, borderWidth: 1.5, tension: .25, pointRadius: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.parsed.y.toFixed(1)} %` } } },
+                    scales: { ...axes(v => v + ' %'), y: { max: 0, grid: { color: th.grid }, border: { display: false }, ticks: { color: th.text, callback: v => v + ' %' } } } }
             });
-
-            // ---- Donut composition ----
-            const positions = data.positions || [];
-            _renderComposition(positions, k.cash_pct);
-
-            // ---- Heatmap : journalière ≤1M, hebdomadaire ≤1Y, mensuelle sinon ----
-            const useDaily = ['1W','1M'].includes(perfRange);
-            const useWeekly = ['3M','6M','1Y','YTD'].includes(perfRange);
-            document.getElementById('perf-heatmap-title').textContent =
-                'Heatmap rendements ' + (useDaily ? 'journaliers' : useWeekly ? 'hebdomadaires' : 'mensuels');
-            if (useDaily) {
-                _renderHeatmapDaily(data.daily_returns || []);
-            } else if (useWeekly) {
-                _renderHeatmapWeekly(data.weekly_returns || []);
-            } else {
-                _renderHeatmap(data.monthly_returns || []);
-            }
-
-            // ---- Flux de capitaux (dépôts) ----
-            _renderCashFlows(data.cash_flows_monthly || [], data.cash_flows || []);
-
-            // ---- Heatmap journalière permanente ----
-            _renderHeatmapDailyFixed(data.daily_returns || []);
-
-            // ---- P&L par position ----
-            const pnlSorted = [...positions]
-                .map(p => ({ t: p.ticker, v: (p.unrealized_pnl || 0) }))
-                .sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
-            _destroyChart('pnlpos');
-            _perfCharts.pnlpos = new Chart(document.getElementById('chart-pnl-by-pos'), {
-                type:'bar',
-                data:{ labels:pnlSorted.map(p=>p.t), datasets:[{
-                    data:pnlSorted.map(p=>parseFloat(p.v.toFixed(2))),
-                    backgroundColor:pnlSorted.map(p=>p.v>=0?'rgba(34,197,94,.75)':'rgba(239,68,68,.75)'),
-                    borderRadius:3
-                }]},
-                options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
-                    plugins:{ legend:{display:false},
-                        tooltip:{callbacks:{label:c=>` $${c.parsed.x.toLocaleString()}`}} },
-                    scales:{ x:{grid:{color:PERF_GRID},ticks:{color:'#888',callback:v=>'$'+(v>=0?'':'-')+Math.abs(v/1000).toFixed(0)+'k'}},
-                             y:{grid:{display:false},ticks:{color:'#ccc',font:{family:'IBM Plex Mono',size:11}}} } }
-            });
-
-            // ---- Tableau positions ----
-            _renderPositionsTable(positions);
-
-            // ---- Évolution par position (aires empilées) ----
-            _loadPositionsTimeline();
-
-            // ---- Impact par position (cycle de vie) ----
-            _loadPositionsPnl();
         }
 
-        // --- Impact par position (cycle de vie complet) ------------------
-        async function _loadPositionsPnl() {
-            const body      = document.getElementById('perf-pnl-lifecycle-body');
-            const emptyEl   = document.getElementById('pnl-lifecycle-empty');
-            const summaryEl = document.getElementById('pnl-lifecycle-summary');
+        // --- Positions détenues ------------------------------------------
+        function _renderPositionsTable(positions, data) {
+            const body = document.getElementById('perf-positions-body');
+            const empty = document.getElementById('perf-positions-empty');
+            const src = document.getElementById('positions-source');
             if (!body) return;
-
-            const data = await api('/perf/positions-pnl');
-            if (!data || !data.success || !(data.positions || []).length) {
+            if (src) src.textContent = data.positions_source === 'ibkr' ? 'IBKR en direct'
+                : data.positions_source === 'flex' ? `relevé Flex du ${_frDate(data.positions_as_of)}` : 'source indisponible';
+            if (!positions.length) {
                 body.innerHTML = '';
-                if (summaryEl) summaryEl.innerHTML = '';
-                if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = data?.message || 'Aucune position à afficher.'; }
+                empty.textContent = data.positions_source ? 'Aucune position : le compte est en cash.'
+                    : 'Positions indisponibles : IBKR est déconnecté et aucun relevé Flex ne contient les positions ouvertes. Ajoute la section « Open Positions » à ta Flex Query puis synchronise.';
+                empty.hidden = false;
                 return;
             }
-            if (emptyEl) emptyEl.style.display = 'none';
+            empty.hidden = true;
+            const alloc = p => p.allocation_pct_nav ?? 0;
+            const sorted = [...positions].sort((a, b) => alloc(b) - alloc(a));
+            const maxAlloc = Math.max(1, ...sorted.map(alloc));
+            body.innerHTML = sorted.map(p => {
+                const price = p.market_price ?? (p.market_value && p.qty ? p.market_value / p.qty : null);
+                const costTotal = p.avg_cost != null && p.qty ? p.avg_cost * p.qty : null;
+                const ret = costTotal && p.unrealized_pnl != null ? p.unrealized_pnl / costTotal * 100 : null;
+                return `<tr>
+                    <td class="tk">${p.ticker}</td>
+                    <td class="num muted">${p.qty != null ? (+p.qty).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '—'}</td>
+                    <td class="num muted">${p.avg_cost != null ? '$' + p.avg_cost.toFixed(2) : '—'}</td>
+                    <td class="num">${price != null ? '$' + price.toFixed(2) : '—'}</td>
+                    <td class="num">${fmtDollar(p.market_value)}</td>
+                    <td class="col-alloc"><div class="mini-bar"><span style="width:${(alloc(p) / maxAlloc * 100).toFixed(0)}%"></span></div><small>${alloc(p).toFixed(1)} %</small></td>
+                    <td class="num ${_signClass(p.unrealized_pnl)}">${fmtUsd(p.unrealized_pnl)}</td>
+                    <td class="num ${_signClass(ret)}">${ret != null ? fmtPct(ret, 1) : '—'}</td>
+                </tr>`;
+            }).join('');
+        }
 
-            const pnlCol = v => v == null ? '' : v >= 0 ? 'color:var(--accent-long)' : 'color:var(--accent-short)';
-            const dt = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(2, 4) : '—';
-            const dur = d => d == null ? '—' : d >= 365 ? (d / 365).toFixed(1) + ' an' + (d >= 730 ? 's' : '') : d + ' j';
+        // --- Impact par position (cycle de vie complet, réconcilié) -------
+        const RECON_LABELS = {
+            missing_exit: 'soldée chez le courtier mais une vente manque dans l\'historique : P&L incomplet',
+            missing_entry: 'détenue sans achat dans l\'historique : coût repris du courtier',
+            qty_mismatch: 'quantité corrigée sur celle du courtier (division d\'action probable)',
+        };
 
-            // ── Bandeau de synthèse ──
-            const t = data.totals || {};
-            if (summaryEl) {
-                const chip = (lbl, val, col) =>
-                    `<span><span style="color:var(--text-muted);">${lbl} :</span> <b style="${col || 'color:var(--text-primary)'}">${val}</b></span>`;
-                summaryEl.innerHTML =
-                    chip('Positions', `${t.open_count || 0} ouvertes · ${t.closed_count || 0} soldées`)
-                    + chip('Réalisé', fmtUsd(t.realized_pnl), pnlCol(t.realized_pnl))
-                    + chip('Latent', fmtUsd(t.unrealized_pnl), pnlCol(t.unrealized_pnl))
-                    + chip('Dividendes', '$' + (t.dividends || 0).toLocaleString('en-US', {maximumFractionDigits:0}))
-                    + chip('P&L total', fmtUsd(t.total_pnl), pnlCol(t.total_pnl));
+        function pnlFilter(mode) {
+            _pnlMode = mode;
+            document.querySelectorAll('[data-pnl]').forEach(b => b.classList.toggle('active', b.dataset.pnl === mode));
+            _renderPnlRows();
+        }
+
+        async function _loadPositionsPnl() {
+            const body = document.getElementById('perf-pnl-lifecycle-body');
+            const emptyEl = document.getElementById('pnl-lifecycle-empty');
+            const summaryEl = document.getElementById('pnl-lifecycle-summary');
+            if (!body) return;
+            const data = await api('/perf/positions-pnl');
+            if (!data || !data.success || !(data.positions || []).length) {
+                _pnlData = null;
+                body.innerHTML = '';
+                summaryEl.innerHTML = '';
+                emptyEl.textContent = data?.error || data?.message || 'Aucune position à afficher. Synchronise Flex.';
+                emptyEl.hidden = false;
+                return;
             }
+            emptyEl.hidden = true;
+            _pnlData = data;
+            const t = data.totals || {};
+            document.getElementById('pnl-count-open').textContent = t.open_count ?? '';
+            document.getElementById('pnl-count-closed').textContent = t.closed_count ?? '';
+            const item = (lbl, val, cls) => `<div><span>${lbl}</span><b class="${cls || ''}">${val}</b></div>`;
+            summaryEl.innerHTML =
+                item('P&L total', fmtUsd(t.total_pnl), _signClass(t.total_pnl))
+                + item('Réalisé', fmtUsd(t.realized_pnl), _signClass(t.realized_pnl))
+                + item('Latent', fmtUsd(t.unrealized_pnl), _signClass(t.unrealized_pnl))
+                + item('Dividendes nets', fmtDollar(t.dividends));
 
-            // ── Lignes ──
-            body.innerHTML = data.positions.map(p => {
+            const rec = data.reconciliation || {};
+            const reconEl = document.getElementById('pnl-recon');
+            if (rec.fixes && rec.fixes.length) {
+                const srcTxt = rec.source === 'ibkr' ? 'les positions IBKR en direct' : `le relevé Flex du ${_frDate(rec.as_of)}`;
+                reconEl.innerHTML = `<b>${rec.fixes.length} écart(s) corrigé(s)</b> en confrontant l'historique à ${srcTxt} : `
+                    + rec.fixes.map(f => `<b>${f.ticker}</b> (${RECON_LABELS[f.fix] || f.fix})`).join(' · ');
+                reconEl.hidden = false;
+            } else if (!rec.source) {
+                reconEl.innerHTML = 'Statuts reconstruits depuis l\'historique seul : IBKR est déconnecté et aucun relevé Flex ne contient les positions ouvertes. Une position peut apparaître ouverte à tort.';
+                reconEl.hidden = false;
+            } else {
+                reconEl.hidden = true;
+            }
+            _renderPnlRows();
+        }
+
+        function _renderPnlRows() {
+            const body = document.getElementById('perf-pnl-lifecycle-body');
+            if (!body || !_pnlData) return;
+            const dur = d => d == null ? '—' : d >= 365 ? (d / 365).toFixed(1).replace('.', ',') + ' an' + (d >= 730 ? 's' : '') : d + ' j';
+            const rows = _pnlData.positions.filter(p => _pnlMode === 'all' || p.status === _pnlMode);
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="10" class="muted center">Aucune position ${_pnlMode === 'open' ? 'ouverte' : 'soldée'}.</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map(p => {
                 const isOpen = p.status === 'open';
-                const badge = isOpen
-                    ? '<span style="background:rgba(29,158,117,.18);color:var(--accent-long);padding:2px 7px;border-radius:10px;font-size:10px;">● Ouverte</span>'
-                    : '<span style="background:rgba(150,150,150,.15);color:var(--text-muted);padding:2px 7px;border-radius:10px;font-size:10px;">Soldée</span>';
-                const periode = isOpen
-                    ? `${dt(p.open_date)} → <span style="color:var(--accent-long);">en cours</span>`
-                    : `${dt(p.open_date)} → ${dt(p.close_date)}`;
-                const mvts = `${p.buys}a / ${p.sells}v` + (p.profit_takings ? ` <span title="${p.profit_takings} prise(s) de bénéfice">🎯${p.profit_takings}</span>` : '');
-                const warn = p.unknown_cost ? ' <span title="Position ouverte avant le début de l\'historique : coût d\'acquisition inconnu">⚠</span>' : '';
-                const perf = p.perf_pct == null ? '—'
-                    : `<b>${fmtPct(p.perf_pct)}</b>`;
-                return `<tr style="border-top:1px solid var(--border);text-align:right;">
-                    <td style="text-align:left;padding:6px 10px;font-weight:600;color:var(--text-primary);">${p.ticker}${warn}</td>
-                    <td style="text-align:left;padding:6px 8px;">${badge}</td>
-                    <td style="text-align:left;padding:6px 8px;color:var(--text-muted);">${periode}</td>
-                    <td style="padding:6px 8px;color:var(--text-muted);">${dur(p.holding_days)}</td>
-                    <td style="padding:6px 8px;color:var(--text-muted);">${mvts}</td>
-                    <td style="padding:6px 8px;color:var(--text-primary);">$${(p.invested || 0).toLocaleString('en-US', {maximumFractionDigits:0})}</td>
-                    <td style="padding:6px 8px;${pnlCol(p.realized_pnl)}">${p.realized_pnl ? fmtUsd(p.realized_pnl) : '—'}</td>
-                    <td style="padding:6px 8px;${pnlCol(p.unrealized_pnl)}">${isOpen ? fmtUsd(p.unrealized_pnl) : '—'}</td>
-                    <td style="padding:6px 8px;color:var(--text-muted);">${p.dividends ? '$' + p.dividends.toFixed(0) : '—'}</td>
-                    <td style="padding:6px 8px;font-weight:600;${pnlCol(p.total_pnl)}">${fmtUsd(p.total_pnl)}</td>
-                    <td style="padding:6px 8px;${pnlCol(p.perf_pct)}">${perf}</td>
+                const periode = `${_frDate(p.open_date)} → ${isOpen ? '<span class="pos">en cours</span>' : _frDate(p.close_date)}`;
+                const flags = [];
+                if (p.reconciled) flags.push(`<span class="flag" title="${RECON_LABELS[p.reconciled] || ''}">corrigée</span>`);
+                if (p.unknown_cost && !p.reconciled) flags.push('<span class="flag" title="Achat antérieur au début de l\'historique : coût inconnu">coût inconnu</span>');
+                return `<tr class="${isOpen ? '' : 'row-closed'}">
+                    <td class="tk">${p.ticker} ${flags.join(' ')}</td>
+                    <td class="muted">${periode}</td>
+                    <td class="num muted">${dur(p.holding_days)}</td>
+                    <td class="num muted">${p.buys} / ${p.sells}${p.profit_takings ? ` <small title="ventes partielles">(${p.profit_takings} partielle${p.profit_takings > 1 ? 's' : ''})</small>` : ''}</td>
+                    <td class="num">${fmtDollar(p.invested)}</td>
+                    <td class="num ${_signClass(p.realized_pnl)}">${p.realized_pnl ? fmtUsd(p.realized_pnl) : '—'}</td>
+                    <td class="num ${_signClass(p.unrealized_pnl)}">${isOpen ? fmtUsd(p.unrealized_pnl) : '—'}</td>
+                    <td class="num muted">${p.dividends ? fmtDollar(p.dividends) : '—'}</td>
+                    <td class="num strong ${_signClass(p.total_pnl)}">${fmtUsd(p.total_pnl)}${p.incomplete ? ' <small title="Une vente manque dans l\'historique">*</small>' : ''}</td>
+                    <td class="num ${_signClass(p.perf_pct)}">${p.perf_pct == null ? '—' : fmtPct(p.perf_pct, 1)}</td>
                 </tr>`;
             }).join('');
         }
@@ -325,8 +347,8 @@
             if (emptyEl)   emptyEl.style.display   = 'none';
             if (contentEl) contentEl.style.display = '';
             if (subtitle) {
-                const src = data.anchor === 'ibkr' ? 'ancré sur positions IBKR' : 'reconstruit (transactions)';
-                subtitle.textContent = ` · valeur de marché ${src}, entrées & sorties incluses`;
+                const src = data.anchor === 'ibkr' ? 'ancrée sur IBKR' : data.anchor === 'flex' ? 'ancrée sur le relevé Flex' : 'reconstruite depuis les transactions';
+                subtitle.textContent = `valeur de marché ${src}`;
             }
 
             const datasets = data.series.map((s, i) => {
@@ -350,7 +372,7 @@
                 options: { responsive: true, maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: { labels: { color: '#aaa', boxWidth: 12, font: { family: 'IBM Plex Mono', size: 11 } } },
+                        legend: { labels: { color: _chartTheme().text, boxWidth: 12, font: { family: 'IBM Plex Mono', size: 11 } } },
                         tooltip: {
                             itemSort: (a, b) => b.parsed.y - a.parsed.y,
                             filter: it => it.parsed.y > 0.5,
@@ -363,88 +385,13 @@
                     },
                     scales: {
                         x: { type: 'time', time: { unit }, stacked: true,
-                             grid: { color: PERF_GRID }, ticks: { color: '#888', maxTicksLimit: 7 } },
+                             grid: { color: PERF_GRID }, ticks: { color: _chartTheme().text, maxTicksLimit: 7 } },
                         y: { stacked: true, grid: { color: PERF_GRID },
-                             ticks: { color: '#888', callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
-                             title: { display: true, text: 'Valeur de marché', color: '#555', font: { size: 9 } } },
+                             ticks: { color: _chartTheme().text, callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+                             title: { display: true, text: 'Valeur de marché', color: _chartTheme().text, font: { size: 9 } } },
                     },
                 },
             });
-        }
-
-        // --- Donut composition -------------------------------------------
-        function _renderComposition(positions, cashPct) {
-            if (!positions.length) return;
-            // Utiliser allocation_pct_nav si disponible (% du total NAV incl. cash)
-            const getAlloc = p => p.allocation_pct_nav ?? p.allocation_pct ?? 0;
-            const sorted = [...positions].sort((a,b)=>getAlloc(b)-getAlloc(a));
-            // Regrouper les petites positions (<2%) en "Autres"
-            const THRESHOLD = 2;
-            const main = sorted.filter(p => getAlloc(p) >= THRESHOLD);
-            const others = sorted.filter(p => getAlloc(p) < THRESHOLD);
-            const labels = main.map(p => p.ticker);
-            const values = main.map(p => getAlloc(p));
-            if (others.length) {
-                labels.push('Autres (' + others.length + ')');
-                values.push(others.reduce((s,p)=>s+getAlloc(p),0));
-            }
-            // Ajouter le cash comme slice dédiée
-            if (cashPct != null && cashPct > 0) {
-                labels.push('Cash');
-                values.push(cashPct);
-            }
-            const PALETTE = ['#7C5CFF','#378ADD','#1D9E75','#E0A030','#D85A30',
-                             '#534AB7','#3BBFA3','#E87040','#9B59B6','#2ECC71',
-                             '#E74C3C','#F39C12','#1ABC9C','#3498DB','#8E44AD'];
-            // Le cash est toujours gris clair pour le distinguer
-            const bgColors = labels.map((lbl, i) =>
-                lbl === 'Cash' ? 'rgba(150,150,150,0.7)' : PALETTE[i % PALETTE.length]);
-            _destroyChart('composition');
-            _perfCharts.composition = new Chart(document.getElementById('chart-composition'), {
-                type:'doughnut',
-                data:{ labels, datasets:[{
-                    data:values,
-                    backgroundColor:bgColors,
-                    borderColor:'#111', borderWidth:2, hoverOffset:6
-                }]},
-                options:{ responsive:true, maintainAspectRatio:false, cutout:'60%',
-                    plugins:{ legend:{position:'right',labels:{color:'#ccc',boxWidth:12,font:{family:'IBM Plex Mono',size:11},
-                        generateLabels:chart=>{
-                            const ds=chart.data;
-                            return ds.labels.map((lbl,i)=>({
-                                text:`${lbl} ${ds.datasets[0].data[i].toFixed(1)}%`,
-                                fillStyle:ds.datasets[0].backgroundColor[i],
-                                strokeStyle:'#111', lineWidth:1, hidden:false, index:i
-                            }));
-                        }}},
-                        tooltip:{callbacks:{label:c=>` ${c.label}: ${c.parsed.toFixed(1)}%`}} } }
-            });
-        }
-
-        // --- Tableau positions -------------------------------------------
-        function _renderPositionsTable(positions) {
-            const sorted = [...positions].sort((a,b)=>(b.allocation_pct||0)-(a.allocation_pct||0));
-            const body = document.getElementById('perf-positions-body');
-            if (!body) return;
-            const pnlColor = v => v == null ? '' : v >= 0 ? 'color:var(--accent-long)' : 'color:var(--accent-short)';
-            body.innerHTML = sorted.map(p => {
-                const mv = p.market_value != null ? '$'+(Math.abs(p.market_value)).toLocaleString('en-US',{maximumFractionDigits:0}) : '—';
-                const pnl = p.unrealized_pnl != null ? fmtUsd(p.unrealized_pnl) : '—';
-                const ret = p.return_pct != null ? fmtPct(p.return_pct) : '—';
-                const cost = p.avg_cost != null ? '$'+p.avg_cost.toFixed(2) : '—';
-                const price = p.current_price != null ? '$'+p.current_price.toFixed(2)
-                              : (p.market_value && p.qty ? '$'+(p.market_value/p.qty).toFixed(2) : '—');
-                return `<tr style="border-top:1px solid var(--border);text-align:right;">
-                    <td style="text-align:left;padding:5px 10px;font-weight:600;color:var(--text-primary);">${p.ticker}</td>
-                    <td style="padding:5px 8px;color:var(--text-muted);">${p.qty != null ? p.qty.toFixed(2) : '—'}</td>
-                    <td style="padding:5px 8px;color:var(--text-muted);">${cost}</td>
-                    <td style="padding:5px 8px;color:var(--text-primary);">${price}</td>
-                    <td style="padding:5px 8px;color:var(--text-primary);">${mv}</td>
-                    <td style="padding:5px 8px;color:var(--text-primary);">${(p.allocation_pct||0).toFixed(1)}%</td>
-                    <td style="padding:5px 8px;${pnlColor(p.unrealized_pnl)}">${pnl}</td>
-                    <td style="padding:5px 8px;${pnlColor(p.return_pct)}">${ret}</td>
-                </tr>`;
-            }).join('');
         }
 
         // --- Heatmap mensuelle -------------------------------------------
@@ -611,15 +558,15 @@
                     },
                 ]},
                 options: { responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#aaa', boxWidth: 12 } },
+                    plugins: { legend: { labels: { color: _chartTheme().text, boxWidth: 12 } },
                         tooltip: { callbacks: { label: c =>
                             ` ${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}$${Math.abs(c.parsed.y).toLocaleString()}`
                         }} },
                     scales: {
-                        x:  { grid: { color: PERF_GRID }, ticks: { color: '#888' } },
-                        y:  { grid: { color: PERF_GRID }, ticks: { color: '#888',
+                        x:  { grid: { color: PERF_GRID }, ticks: { color: _chartTheme().text } },
+                        y:  { grid: { color: PERF_GRID }, ticks: { color: _chartTheme().text,
                               callback: v => (v >= 0 ? '+' : '') + '$' + Math.abs(v / 1000).toFixed(0) + 'k' },
-                              title: { display: true, text: 'Flux mensuel', color: '#555', font: { size: 9 } } },
+                              title: { display: true, text: 'Flux mensuel', color: _chartTheme().text, font: { size: 9 } } },
                         y2: { position: 'right', grid: { drawOnChartArea: false },
                               ticks: { color: '#7C5CFF',
                                 callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
@@ -652,69 +599,3 @@
             }
         }
 
-        // --- Heatmap journalière permanente (derniers 90 jours) ----------
-        function _renderHeatmapDailyFixed(daily) {
-            const cont     = document.getElementById('container-heatmap-daily');
-            const subtitle = document.getElementById('heatmap-daily-subtitle');
-            if (!cont) return;
-            if (!daily.length) {
-                cont.innerHTML = '<div class="empty-state">Données insuffisantes</div>';
-                return;
-            }
-            // Limiter aux 90 derniers jours de bourse (≈ 18 semaines)
-            const MAX_DAYS = 90;
-            const slice = daily.slice(-MAX_DAYS);
-            if (subtitle) subtitle.textContent = ` · ${slice.length} derniers jours de bourse`;
-
-            const DAYS_FR = ['L','M','M','J','V'];
-            const byWeek = {};
-            let maxAbs = 0;
-            slice.forEach(d => {
-                const dt  = new Date(d.date);
-                const dow = dt.getDay();
-                if (dow === 0 || dow === 6) return;
-                const monday = new Date(dt);
-                monday.setDate(dt.getDate() - (dow - 1));
-                const wk = monday.toISOString().slice(0, 10);
-                byWeek[wk] = byWeek[wk] || {};
-                byWeek[wk][dow] = d;
-                maxAbs = Math.max(maxAbs, Math.abs(d.return_pct));
-            });
-
-            const weeks = Object.keys(byWeek).sort();
-            const cell = (d) => {
-                if (!d) return `<td style="width:36px;height:26px;background:var(--bg-secondary);border-radius:3px;"></td>`;
-                const v  = d.return_pct;
-                const op = Math.max(0.12, Math.min(0.9, Math.abs(v) / (maxAbs || 1)));
-                const col = v >= 0 ? `rgba(29,158,117,${op})` : `rgba(216,90,48,${op})`;
-                return `<td title="${d.date} · ${v >= 0 ? '+' : ''}${v.toFixed(2)}%"
-                            style="width:36px;height:26px;background:${col};border-radius:3px;
-                                   text-align:center;font-size:9px;color:#fff;padding:2px;cursor:default;">
-                            ${v >= 0 ? '+' : ''}${v.toFixed(0)}</td>`;
-            };
-
-            let html = `<table style="border-collapse:separate;border-spacing:2px;font-size:10px;width:100%;">
-                <thead><tr>
-                    <th style="width:56px;"></th>
-                    ${DAYS_FR.map(d => `<th style="color:var(--text-muted);font-weight:400;text-align:center;padding-bottom:4px;">${d}</th>`).join('')}
-                    <th style="width:48px;color:var(--text-muted);font-weight:400;text-align:right;padding:0 4px;">Sem.</th>
-                </tr></thead><tbody>`;
-
-            weeks.forEach(wk => {
-                const row = byWeek[wk];
-                const weekRet = [1,2,3,4,5].reduce((acc, dow) => {
-                    return row[dow] ? acc * (1 + row[dow].return_pct / 100) : acc;
-                }, 1) - 1;
-                const wr = (weekRet * 100).toFixed(1);
-                const wrColor = weekRet >= 0 ? 'var(--accent-long)' : 'var(--accent-short)';
-                // Date de début de semaine (lundi) → label "dd/mm"
-                const label = wk.slice(8, 10) + '/' + wk.slice(5, 7);
-                html += `<tr>
-                    <td style="color:var(--text-muted);padding-right:6px;white-space:nowrap;font-size:10px;">${label}</td>
-                    ${[1,2,3,4,5].map(dow => cell(row[dow])).join('')}
-                    <td style="font-size:9px;color:${wrColor};text-align:right;padding:0 4px;">${weekRet>=0?'+':''}${wr}%</td>
-                </tr>`;
-            });
-            html += '</tbody></table>';
-            cont.innerHTML = html;
-        }

@@ -1,259 +1,150 @@
-        <!-- PAGE: Performance -->
+        <!-- PAGE: Performance — combien je gagne, d'où ça vient, avec quel risque -->
         <div id="page-perf" class="page">
             <div class="page-head">
                 <div>
-                    <div class="eyebrow">Suivi du compte IBKR</div>
+                    <div class="eyebrow">Compte IBKR · relevés Flex</div>
                     <h1 class="page-title">Performance</h1>
                 </div>
-                <p class="page-meta" id="perf-date-info">Chargement des données...</p>
-            </div>
-
-            <div class="perf-dashboard">
-
-                <!-- Range Selector -->
-                <div class="perf-range-selector">
-                    <button class="perf-pill" data-range="1W">1S</button>
+                <div class="seg" id="perf-range" role="group" aria-label="Période">
                     <button class="perf-pill" data-range="1M">1M</button>
                     <button class="perf-pill" data-range="3M">3M</button>
-                    <button class="perf-pill" data-range="6M">6M</button>
-                    <button class="perf-pill active" data-range="1Y">1A</button>
                     <button class="perf-pill" data-range="YTD">YTD</button>
+                    <button class="perf-pill active" data-range="1Y">1A</button>
                     <button class="perf-pill" data-range="3Y">3A</button>
                     <button class="perf-pill" data-range="ALL">Tout</button>
                 </div>
-
-                <!-- KPI Strip — performance -->
-                <div class="perf-kpi-strip">
-                    <div class="perf-kpi-card" id="kpi-total-value">
-                        <div class="perf-kpi-label">Valeur totale</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div class="perf-kpi-delta">—</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-cagr">
-                        <div class="perf-kpi-label">CAGR</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div class="perf-kpi-delta">—</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-sharpe">
-                        <div class="perf-kpi-label">Sharpe</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">rendement/risque</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-max-drawdown">
-                        <div class="perf-kpi-label">Max drawdown</div>
-                        <div class="perf-kpi-value text-red">—</div>
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">période</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-unrealized-gains">
-                        <div class="perf-kpi-label">P&L latent</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div class="perf-kpi-delta">—</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-cash">
-                        <div class="perf-kpi-label">Cash</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">liquidités</div>
-                    </div>
-                </div>
-
-                <!-- KPI Strip — composition -->
-                <div class="perf-kpi-strip" style="margin-top:0;">
-                    <div class="perf-kpi-card" id="kpi-nb-positions">
-                        <div class="perf-kpi-label">Positions</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div class="perf-kpi-delta">—</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-concentration">
-                        <div class="perf-kpi-label">Concentration top 5</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">% du portefeuille</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-best-pos">
-                        <div class="perf-kpi-label">Meilleure position</div>
-                        <div class="perf-kpi-value" style="color:var(--accent-long);">—</div>
-                        <div class="perf-kpi-delta">—</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-worst-pos">
-                        <div class="perf-kpi-label">Pire position</div>
-                        <div class="perf-kpi-value" style="color:var(--accent-short);">—</div>
-                        <div class="perf-kpi-delta">—</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-vol">
-                        <div class="perf-kpi-label">Volatilité</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">annualisée</div>
-                    </div>
-                    <div class="perf-kpi-card" id="kpi-dividends">
-                        <div class="perf-kpi-label">Dividendes</div>
-                        <div class="perf-kpi-value">—</div>
-                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">période</div>
-                    </div>
-                </div>
-
-                <!-- Courbe d'évolution (base 100) -->
-                <div class="perf-chart-row full">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Évolution du portefeuille vs S&P 500
-                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · base 100 (Modified Dietz, dépôts exclus)</span>
-                        </div>
-                        <div class="perf-chart-container">
-                            <canvas id="chart-evolution"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Évolution par position (aires empilées) -->
-                <div class="perf-chart-row full">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Évolution par position
-                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="positions-timeline-subtitle"> · valeur de marché reconstruite, entrées &amp; sorties incluses</span>
-                        </div>
-                        <div id="positions-timeline-empty" style="display:none;padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">
-                            Aucune position à afficher sur cette période.
-                        </div>
-                        <div class="perf-chart-container" id="positions-timeline-content" style="min-height:380px;">
-                            <canvas id="chart-positions-timeline"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Perf relative + Drawdown -->
-                <div class="perf-chart-row split">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Performance relative vs S&P 500</div>
-                        <div class="perf-chart-container">
-                            <canvas id="chart-relative-perf"></canvas>
-                        </div>
-                    </div>
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Drawdown (TWR)</div>
-                        <div class="perf-chart-container">
-                            <canvas id="chart-drawdown-v2"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Composition : Donut + Heatmap adaptative -->
-                <div class="perf-chart-row split">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Composition du portefeuille</div>
-                        <div class="perf-chart-container">
-                            <canvas id="chart-composition"></canvas>
-                        </div>
-                    </div>
-                    <div class="perf-chart-card">
-                        <div id="perf-heatmap-title" class="perf-chart-title">Heatmap rendements</div>
-                        <div class="perf-chart-container" id="container-heatmap">
-                            <div class="empty-state">Données insuffisantes</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Heatmap journalière permanente -->
-                <div class="perf-chart-row full">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Rendements journaliers
-                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;" id="heatmap-daily-subtitle"> · 90 derniers jours</span>
-                        </div>
-                        <div style="overflow-y:auto;max-height:320px;padding:4px 0;" id="container-heatmap-daily">
-                            <div class="empty-state">Données insuffisantes</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Dépôts & capital investi -->
-                <div class="perf-chart-row full" id="card-cashflows">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Capital investi &amp; dépôts
-                            <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · apports (+) / retraits (−) et cumul</span>
-                        </div>
-                        <div id="cashflows-empty" style="display:none;padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">
-                            Aucun dépôt ou retrait enregistré sur cette période.<br>
-                            <span style="font-size:11px;">Synchronisez Flex pour importer les flux de capitaux.</span>
-                        </div>
-                        <div id="cashflows-content">
-                            <div class="perf-chart-container" style="min-height:180px;">
-                                <canvas id="chart-cashflows"></canvas>
-                            </div>
-                            <div id="cashflows-events" style="margin-top:12px;padding:0 4px;"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- P&L par position -->
-                <div class="perf-chart-row full">
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">P&L latent par position</div>
-                        <div class="perf-chart-container" style="min-height:380px;">
-                            <canvas id="chart-pnl-by-pos"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tableau positions -->
-                <div class="perf-chart-card">
-                    <div class="perf-chart-title">Détail des positions</div>
-                    <div style="overflow-x:auto;">
-                        <table id="perf-positions-table" style="width:100%;border-collapse:collapse;font-size:12px;font-family:'IBM Plex Mono';">
-                            <thead>
-                                <tr style="color:var(--text-muted);text-align:right;border-bottom:1px solid var(--border);">
-                                    <th style="text-align:left;padding:6px 10px;">Ticker</th>
-                                    <th style="padding:6px 8px;">Qté</th>
-                                    <th style="padding:6px 8px;">Prix moy.</th>
-                                    <th style="padding:6px 8px;">Cours</th>
-                                    <th style="padding:6px 8px;">Val. marché</th>
-                                    <th style="padding:6px 8px;">Alloc.</th>
-                                    <th style="padding:6px 8px;">P&L latent</th>
-                                    <th style="padding:6px 8px;">Rend.</th>
-                                </tr>
-                            </thead>
-                            <tbody id="perf-positions-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Impact par position (cycle de vie complet) -->
-                <div class="perf-chart-card">
-                    <div class="perf-chart-title">Impact par position
-                        <span style="font-size:10px;color:var(--text-muted);font-weight:400;"> · cycle de vie complet (ouvertes + soldées), P&L réalisé + latent + dividendes</span>
-                    </div>
-                    <div id="pnl-lifecycle-summary" style="display:flex;flex-wrap:wrap;gap:16px;margin:6px 4px 12px;font-size:12px;color:var(--text-muted);"></div>
-                    <div id="pnl-lifecycle-empty" style="display:none;padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">
-                        Aucune transaction. Synchronisez Flex depuis les Paramètres.
-                    </div>
-                    <div style="overflow-x:auto;">
-                        <table id="perf-pnl-lifecycle-table" style="width:100%;border-collapse:collapse;font-size:12px;font-family:'IBM Plex Mono';white-space:nowrap;">
-                            <thead>
-                                <tr style="color:var(--text-muted);text-align:right;border-bottom:1px solid var(--border);">
-                                    <th style="text-align:left;padding:6px 10px;">Ticker</th>
-                                    <th style="text-align:left;padding:6px 8px;">Statut</th>
-                                    <th style="text-align:left;padding:6px 8px;">Période</th>
-                                    <th style="padding:6px 8px;">Durée</th>
-                                    <th style="padding:6px 8px;">Mvts</th>
-                                    <th style="padding:6px 8px;">Investi</th>
-                                    <th style="padding:6px 8px;">Réalisé</th>
-                                    <th style="padding:6px 8px;">Latent</th>
-                                    <th style="padding:6px 8px;">Div.</th>
-                                    <th style="padding:6px 8px;">P&L total</th>
-                                    <th style="padding:6px 8px;">Perf</th>
-                                </tr>
-                            </thead>
-                            <tbody id="perf-pnl-lifecycle-body"></tbody>
-                        </table>
-                    </div>
-                    <p style="font-size:10px;color:var(--text-muted);margin:8px 4px 0;">
-                        « Mvts » = nb d'achats / ventes · 🎯 = prises de bénéfice (ventes partielles).
-                        ⚠ = position ouverte avant le début de l'historique : coût d'acquisition inconnu, performance non calculée.
-                    </p>
-                </div>
-
-                <!-- Actualiser -->
-                <div style="text-align:center;margin-top:10px;">
-                    <button class="btn btn-secondary btn-sm" onclick="loadPerfData()">
-                        🔄 Actualiser les données live
-                    </button>
-                    <p id="perf-last-update-v2" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></p>
-                </div>
-
             </div>
+
+            <!-- État des sources : ce que l'on regarde et de quand ça date -->
+            <div class="source-bar" id="perf-sources">
+                <span id="perf-date-info">Chargement…</span>
+                <button class="btn btn-ghost btn-sm admin-only" id="btn-perf-sync" onclick="syncFlexFromPerf()">Synchroniser Flex</button>
+            </div>
+            <div class="notice notice-danger" id="perf-paper-banner" hidden></div>
+
+            <!-- 1. Résumé : la réponse en une phrase -->
+            <section class="perf-hero" id="perf-hero">
+                <div class="perf-hero-main">
+                    <div class="kpi-label">Valeur du compte</div>
+                    <div class="perf-hero-value" id="perf-total-value">—</div>
+                    <p class="perf-hero-sentence" id="perf-sentence">—</p>
+                </div>
+                <div class="perf-hero-chips" id="perf-hero-chips"></div>
+            </section>
+
+            <!-- 2. Chiffres clés, groupés par question -->
+            <div class="kpi-groups">
+                <div class="kpi-group">
+                    <div class="kpi-group-title">Rendement</div>
+                    <div class="kpi-row"><span>Sur la période</span><b id="k-total">—</b></div>
+                    <div class="kpi-row"><span>S&amp;P 500, même période</span><b id="k-bench">—</b></div>
+                    <div class="kpi-row"><span>Annualisé (CAGR)</span><b id="k-cagr">—</b></div>
+                    <div class="kpi-row"><span>Dividendes nets</span><b id="k-div">—</b></div>
+                </div>
+                <div class="kpi-group">
+                    <div class="kpi-group-title">Risque</div>
+                    <div class="kpi-row"><span>Pire perte (drawdown)</span><b id="k-dd">—</b></div>
+                    <div class="kpi-row"><span>Volatilité annualisée</span><b id="k-vol">—</b></div>
+                    <div class="kpi-row"><span>Sharpe
+                        <i class="tip" tabindex="0" data-tip="Rendement au-delà du taux sans risque (4 %) par unité de volatilité. Calculé à partir de 3 mois de données.">i</i></span><b id="k-sharpe">—</b></div>
+                    <div class="kpi-row"><span>Concentration top 5</span><b id="k-conc">—</b></div>
+                </div>
+                <div class="kpi-group">
+                    <div class="kpi-group-title">Portefeuille</div>
+                    <div class="kpi-row"><span>Positions</span><b id="k-pos">—</b></div>
+                    <div class="kpi-row"><span>Cash</span><b id="k-cash">—</b></div>
+                    <div class="kpi-row"><span>P&amp;L latent</span><b id="k-unreal">—</b></div>
+                    <div class="kpi-row"><span>P&amp;L réalisé (période)</span><b id="k-real">—</b></div>
+                </div>
+            </div>
+
+            <!-- 3. Évolution -->
+            <div class="card chart-card">
+                <div class="card-header">
+                    <span class="card-title-lg">Évolution comparée au S&amp;P 500</span>
+                    <div class="seg seg-sm" role="group" aria-label="Vue du graphique">
+                        <button class="seg-btn active" data-view="growth" onclick="perfChartView('growth')">Croissance</button>
+                        <button class="seg-btn" data-view="dd" onclick="perfChartView('dd')">Drawdown</button>
+                    </div>
+                </div>
+                <div class="chart-box" id="box-growth"><canvas id="chart-evolution"></canvas></div>
+                <div class="chart-box" id="box-dd" hidden><canvas id="chart-drawdown-v2"></canvas></div>
+                <p class="chart-note">Rendement pondéré dans le temps (TWR) : les dépôts et retraits sont neutralisés. Base 100 au début de la période.</p>
+            </div>
+
+            <!-- 4. Positions détenues -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title-lg">Positions détenues</span>
+                    <span class="card-aside" id="positions-source">—</span>
+                </div>
+                <div class="table-wrap">
+                    <table class="data-table" id="perf-positions-table">
+                        <thead><tr>
+                            <th>Ticker</th><th class="num">Quantité</th><th class="num">Prix de revient</th>
+                            <th class="num">Cours</th><th class="num">Valeur</th><th class="col-alloc">Poids</th>
+                            <th class="num">P&amp;L latent</th><th class="num">Rendement</th>
+                        </tr></thead>
+                        <tbody id="perf-positions-body"></tbody>
+                    </table>
+                </div>
+                <div class="empty-state" id="perf-positions-empty" hidden></div>
+            </div>
+
+            <!-- 5. Impact par position (cycle de vie) -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title-lg">Impact par position</span>
+                    <div class="seg seg-sm" role="group" aria-label="Filtre">
+                        <button class="seg-btn active" data-pnl="open" onclick="pnlFilter('open')">Ouvertes <span id="pnl-count-open"></span></button>
+                        <button class="seg-btn" data-pnl="closed" onclick="pnlFilter('closed')">Soldées <span id="pnl-count-closed"></span></button>
+                        <button class="seg-btn" data-pnl="all" onclick="pnlFilter('all')">Toutes</button>
+                    </div>
+                </div>
+                <div class="pnl-summary" id="pnl-lifecycle-summary"></div>
+                <div class="notice notice-info" id="pnl-recon" hidden></div>
+                <div class="table-wrap">
+                    <table class="data-table" id="perf-pnl-lifecycle-table">
+                        <thead><tr>
+                            <th>Ticker</th><th>Période</th><th class="num">Durée</th><th class="num">Achats / ventes</th>
+                            <th class="num">Investi</th><th class="num">Réalisé</th><th class="num">Latent</th>
+                            <th class="num">Dividendes</th><th class="num">Total</th><th class="num">Rendement</th>
+                        </tr></thead>
+                        <tbody id="perf-pnl-lifecycle-body"></tbody>
+                    </table>
+                </div>
+                <div class="empty-state" id="pnl-lifecycle-empty" hidden></div>
+            </div>
+
+            <!-- 6. Rendements par période -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title-lg" id="perf-heatmap-title">Rendements</span>
+                </div>
+                <div id="container-heatmap"></div>
+            </div>
+
+            <!-- 7. Détails repliés -->
+            <details class="card fold">
+                <summary class="fold-summary">
+                    <span class="card-title-lg">Évolution par position</span>
+                    <span class="card-aside" id="positions-timeline-subtitle"></span>
+                </summary>
+                <div class="empty-state" id="positions-timeline-empty" style="display:none;"></div>
+                <div id="positions-timeline-content"><div class="chart-box chart-box-lg"><canvas id="chart-positions-timeline"></canvas></div></div>
+            </details>
+
+            <details class="card fold" id="card-cashflows">
+                <summary class="fold-summary">
+                    <span class="card-title-lg">Dépôts et retraits</span>
+                    <span class="card-aside">neutralisés dans le rendement</span>
+                </summary>
+                <div class="empty-state" id="cashflows-empty" style="display:none;">Aucun dépôt ni retrait sur la période.</div>
+                <div id="cashflows-content">
+                    <div class="chart-box"><canvas id="chart-cashflows"></canvas></div>
+                    <div id="cashflows-events"></div>
+                </div>
+            </details>
+
+            <p class="page-meta" style="margin-top:12px;" id="perf-last-update-v2"></p>
         </div>

@@ -17,7 +17,7 @@ cp env-example.txt .env   # fill in API keys
 flask run                  # or: python app.py
 
 # Run tests
-python -m pytest test_options_service.py test_backtest_service.py test_membership.py test_crash_regime.py test_trend_regime.py -v
+python -m pytest test_options_service.py test_backtest_service.py test_membership.py test_crash_regime.py test_trend_regime.py test_regime_service.py test_perf_service.py -v
 
 # Run a single test
 python -m pytest test_options_service.py::TestBlackScholes::test_put_price_atm -v
@@ -80,7 +80,8 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `market_monitor_service.py` | Real-time market alert monitoring (price alerts, VIX, futures) |
 | `ibkr_service.py` | IBKR TWS API client (asyncio thread); port 4001 paper / 4003 live via socat |
 | `price_data_service.py` | yfinance background collector: SP500 + NDX100 daily (~6 y → `MarketPriceBar`) & monthly (~20 y → `MonthlyPriceBar`); incremental, index composition re-checked monthly via Wikipedia. Treated as a fragile best-effort source |
-| `flex_service.py` | IBKR Flex Web Service: NAV, transactions, dividends via Flex Queries (2-step async) |
+| `flex_service.py` | IBKR Flex Web Service (2-step async). Parser keeps EXECUTION-level trades only (ext_id = ibExecID), corporate actions as `ADJ` rows, net dividends (withholding tax), deposits, open positions, statement window |
+| `perf_service.py` | Perf page logic: `import_flex` (replaces the statement window — fixes fills lost by the old date/qty/price dedup), `position_lifecycles` (chronological average-cost lifecycle reconciled with actual positions: IBKR live, else last Flex `OpenPosition`), TWR with cash flows aligned to the next NAV date, CAGR/Sharpe only from 3 months, `run_flex_sync` |
 | `push_service.py` | Web Push (VAPID) notifications for the PWA; keys auto-generated and stored in `Settings` |
 | `trend_regime.py` | 4-state market regime on SPY (Goulding-Harvey-Mazzoleni: 12m × 1m momentum → BULL/CORRECTION/REBOUND/BEAR); cash only in BEAR; modes `monthly`/`daily`/`blend`; live pivot level; backtest options `trend_regime`/`trend_params`/`rebound_index` |
 | `crash_regime.py` | Post-crash leverage detector (sprint 2, not validated, off by default) |
@@ -107,7 +108,7 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 
 **Prices**: `MarketPriceBar` (daily bars, IBKR + yfinance via `source` column — read by the backtest), `MonthlyPriceBar` (long monthly history for momentum), `IndexConstituent` (SP500/NDX100 membership)
 
-**Portfolio/IBKR**: `PortfolioSnapshot`, `Transaction`, `Dividend`, `CashFlow` (Flex imports), `MarketEvent` (monitor alerts), `PushSubscription` (Web Push subscribers)
+**Portfolio/IBKR**: `PortfolioSnapshot`, `Transaction` (BUY/SELL/ADJ, `ext_id`), `Dividend` (net), `CashFlow` (Flex imports; open positions in `Settings.flex_open_positions`), `MarketEvent` (monitor alerts), `PushSubscription` (Web Push subscribers)
 
 SQLite in development (`instance/` folder), PostgreSQL in production. `config.py` patches `postgres://` → `postgresql://` for SQLAlchemy compatibility.
 
@@ -144,6 +145,7 @@ VPS Hetzner (`root@95.216.198.241`), Docker Compose. Gunicorn 1 worker. **SSH** 
 | `job_briefing('open'/'mid'/'close')` | 9h15 / 12h30 / 16h05 ET mon–fri | Briefing emails |
 | `job_rebalance_reminder` | 1st of month 8h00 ET | Runs momentum calc + sends rebalance email |
 | `job_trend_regime` | 18h10 ET mon–fri | Market regime SPY + QQQ (`core.check_regime_and_alert`): on any sleeve exposure change, recompute targets, log `MarketEvent` REGIME_*, email + push (urgent for cuts); month-end pre-alert. Informational, places no orders |
+| `job_flex_sync` | 06h30 Europe/Paris tue–sat | Nightly IBKR Flex sync (`perf_service.run_flex_sync`) so Perf and position impact stay current |
 | `job_refresh_prices` | 22h00 ET mon–fri | Refreshes price cache (benchmark + panel) |
 | `job_collect_prices` | 00h00 Europe/Paris | yfinance SP500/NDX100 incremental collection |
 | `job_digest_actualites` | 10h00 + 20h00 Europe/Paris | RSS news digest via LLM, sent to hard-coded recipients |

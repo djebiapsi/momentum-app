@@ -1495,32 +1495,26 @@ class BacktestService:
     @staticmethod
     def _regime_segments(bench_close, dates):
         """
-        Segments bull/bear du marché sur la plage de la courbe d'équité.
-        Définition alignée sur le live (get_market_regime) : BULL si le benchmark est
-        au-dessus de sa SMA200, BEAR sinon. Retourne une liste compacte de segments
-        contigus : [{'regime': 'bull'|'bear', 'start': 'YYYY-MM-DD', 'end': ...}].
+        Segments d'état du marché sur la plage de la courbe d'équité, alignés sur
+        le signal de décision de l'app : régime 4 états MENSUEL du benchmark
+        (trend_regime, momentum 12 mois × 1 mois), l'état d'une fin de mois étant
+        tenu le mois suivant. Retourne [{'regime': 'bull'|'correction'|'rebound'|
+        'bear', 'start': 'YYYY-MM-DD', 'end': ...}].
         """
         if bench_close is None or len(bench_close) == 0 or len(dates) == 0:
             return []
         try:
-            sma200 = bench_close.rolling(200, min_periods=200).mean()
-            reg = pd.Series(np.where(bench_close > sma200, 'bull', 'bear'),
-                            index=bench_close.index)
-            reg = reg[sma200.notna()]                       # ignore le warmup SMA200
+            import trend_regime as tr
+            st = tr._held_states(tr._clean(bench_close), 'monthly').dropna()
             d0, d1 = dates.min(), dates.max()
-            reg = reg[(reg.index >= d0) & (reg.index <= d1)]
-            if reg.empty:
+            st = st[(st.index >= d0) & (st.index <= d1)]
+            if st.empty:
                 return []
-            # Compresser les jours consécutifs de même régime en segments
-            groups = (reg != reg.shift()).cumsum()
-            segments = []
-            for _, grp in reg.groupby(groups):
-                segments.append({
-                    'regime': str(grp.iloc[0]),
-                    'start': grp.index[0].strftime('%Y-%m-%d'),
-                    'end': grp.index[-1].strftime('%Y-%m-%d'),
-                })
-            return segments
+            groups = (st != st.shift()).cumsum()
+            return [{'regime': str(g.iloc[0]).lower(),
+                     'start': g.index[0].strftime('%Y-%m-%d'),
+                     'end': g.index[-1].strftime('%Y-%m-%d')}
+                    for _, g in st.groupby(groups)]
         except Exception as e:
             logger.warning('_regime_segments : %s', e)
             return []

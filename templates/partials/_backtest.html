@@ -1,303 +1,215 @@
-        <!-- PAGE: Backtest -->
+        <!-- PAGE: Backtest — « qu'aurait donné ma stratégie ? » puis le détail -->
         <div id="page-backtest" class="page">
             <div class="page-head">
                 <div>
                     <div class="eyebrow">Validation historique · SP500 + Nasdaq-100</div>
                     <h1 class="page-title">Backtest</h1>
                 </div>
-                <p class="page-meta">Rejoue la stratégie live, jour par jour, coûts et marge inclus</p>
+                <p class="page-meta">Rejoue la stratégie jour par jour, coûts, marge et régime inclus</p>
             </div>
 
-            <div class="perf-dashboard">
-
-                <!-- Formulaire -->
-                <div class="perf-chart-card" style="margin-bottom:16px;">
-                    <div class="perf-chart-title">Paramètres</div>
-                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:6px 2px;">
-                        <div>
-                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Capital initial ($)</label>
-                            <input id="bt-capital" type="number" value="10000" min="100" step="100"
-                                   style="width:120px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+            <!-- 1. La question : quelle période, quel capital -->
+            <section class="card bt-form">
+                <div class="bt-form-row">
+                    <div class="field">
+                        <label class="field-label">Période</label>
+                        <div class="seg" id="bt-years" role="group" aria-label="Période">
+                            <button class="perf-pill" data-years="1">1 an</button>
+                            <button class="perf-pill" data-years="3">3 ans</button>
+                            <button class="perf-pill active" data-years="5">5 ans</button>
+                            <button class="perf-pill" data-years="10">10 ans</button>
+                            <button class="perf-pill" data-years="20">20 ans</button>
                         </div>
-                        <div>
-                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Période</label>
-                            <div class="perf-range-selector" id="bt-years" style="margin:0;">
-                                <button class="perf-pill" data-years="1">1 an</button>
-                                <button class="perf-pill" data-years="3">3 ans</button>
-                                <button class="perf-pill active" data-years="5">5 ans</button>
-                                <button class="perf-pill" data-years="10">10 ans</button>
-                                <button class="perf-pill" data-years="20">20 ans</button>
-                                <button class="perf-pill" data-years="30">30 ans</button>
-                            </div>
-                        </div>
-                        <div>
-                            <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Benchmark</label>
-                            <select id="bt-benchmark"
-                                    style="padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);">
-                                <option value="SPY">S&P 500 (SPY)</option>
-                                <option value="QQQ">Nasdaq 100 (QQQ)</option>
-                            </select>
-                        </div>
-                        <button id="bt-run-btn" class="btn btn-primary" onclick="runBacktest()" style="height:38px;">
-                            Lancer le backtest
-                        </button>
                     </div>
+                    <div class="field">
+                        <label class="field-label" for="bt-capital">Capital initial ($)</label>
+                        <input id="bt-capital" class="form-input mono" type="number" value="10000" min="100" step="100">
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="bt-benchmark">Comparer à</label>
+                        <select id="bt-benchmark" class="form-input">
+                            <option value="SPY">S&amp;P 500 (SPY)</option>
+                            <option value="QQQ">Nasdaq-100 (QQQ)</option>
+                        </select>
+                    </div>
+                    <button id="bt-run-btn" class="btn btn-primary bt-run" onclick="runBacktest()">Lancer le backtest</button>
+                </div>
+                <p class="bt-config" id="bt-live-config">—</p>
 
-                    <!-- Hypothèses de réalisme -->
-                    <details id="bt-assumptions" style="margin-top:14px;">
-                        <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);user-select:none;">
-                            ⚙️ Hypothèses de réalisme (coûts, levier, DCA, appel de marge)
-                        </summary>
-                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:12px 2px 2px;">
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Coût transaction (bps, aller)</label>
-                                <input id="bt-tx-cost" type="number" min="0" max="100" step="0.5"
-                                       style="width:110px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
-                            </div>
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Taux d'emprunt marge (%/an)</label>
-                                <input id="bt-margin-rate" type="number" min="0" max="100" step="0.25"
-                                       style="width:110px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
-                            </div>
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Rémunération cash (%/an)</label>
-                                <input id="bt-cash-yield" type="number" min="0" max="100" step="0.25"
-                                       style="width:110px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
-                            </div>
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Apport mensuel DCA ($)</label>
-                                <input id="bt-dca" type="number" min="0" step="50" value="0" placeholder="0 = aucun"
-                                       style="width:120px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
-                            </div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);height:38px;cursor:pointer;">
-                                <input id="bt-margin-call" type="checkbox" checked style="width:16px;height:16px;">
-                                Appels de marge (liquidation forcée)
-                            </label>
-                        </div>
-                        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
-                            Maintenance Reg T 25 % · appel évalué sur clôture · TWR pour les ratios, MWR (XIRR) pour l'investisseur DCA.
-                        </div>
-                    </details>
-
-                    <!-- Régime de tendance : quand sortir / rentrer (trend_regime) -->
-                    <details id="bt-trend" style="margin-top:10px;" open>
-                        <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);user-select:none;">
-                            Régime de marché : sortie en cash et rentrée (4 états)
-                        </summary>
-                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:12px 2px 2px;">
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Signal de sortie</label>
-                                <select id="bt-trend-mode"
-                                        style="padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);">
+                <!-- Options avancées : la stratégie testée et les hypothèses -->
+                <details class="bt-advanced" id="bt-trend">
+                    <summary>Modifier la stratégie testée et les hypothèses</summary>
+                    <div class="bt-adv-grid">
+                        <div class="bt-adv-col">
+                            <div class="field-group-title">Régime de marché</div>
+                            <div class="field">
+                                <label class="field-label" for="bt-trend-mode">Signal de sortie</label>
+                                <select id="bt-trend-mode" class="form-input">
                                     <option value="off">Aucun (toujours investi)</option>
-                                    <option value="blend">Mixte ½ mensuel + ½ quotidien (config live)</option>
-                                    <option value="monthly">Mensuel (fin de mois)</option>
-                                    <option value="daily">Quotidien</option>
+                                    <option value="blend">Mixte : 50 % au signal quotidien, 100 % en fin de mois</option>
+                                    <option value="monthly">Mensuel : fin de mois seulement</option>
+                                    <option value="daily">Quotidien : 100 % cash dès le 1er jour</option>
                                 </select>
                             </div>
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;" for="bt-regime-scope">Indice(s) suivi(s)</label>
-                                <select id="bt-regime-scope"
-                                        style="padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);">
+                            <div class="field">
+                                <label class="field-label" for="bt-regime-scope">Indice(s) suivi(s)</label>
+                                <select id="bt-regime-scope" class="form-input">
                                     <option value="sleeve">Par poche : Nasdaq → QQQ, autres → SPY</option>
-                                    <option value="either">SPY ou QQQ en BEAR → sortie</option>
+                                    <option value="either">Sortir si le SPY ou le QQQ est en BEAR</option>
                                     <option value="spy">SPY seul</option>
                                 </select>
                             </div>
-                            <div>
-                                <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Exposition en BULL (×)</label>
-                                <input id="bt-trend-bull" type="number" min="1" max="1.5" step="0.05" value="1"
-                                       style="width:90px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
+                            <div class="field">
+                                <label class="field-label" for="bt-trend-bull">Exposition en BULL (×)</label>
+                                <input id="bt-trend-bull" class="form-input mono" type="number" min="1" max="1.5" step="0.05" value="1">
                             </div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);height:38px;cursor:pointer;">
-                                <input id="bt-rebound-index" type="checkbox" style="width:16px;height:16px;">
-                                Poche rebond : indice au lieu des gagnants après 24 mois de baisse (exploratoire)
+                            <label class="check">
+                                <input id="bt-rebound-index" type="checkbox">
+                                Poche rebond : l'indice au lieu des gagnants après 24 mois de baisse (exploratoire)
                             </label>
-
                         </div>
-                        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.6;">
-                            États du SPY : momentum 12 mois × 1 mois. Cash seulement en BEAR (les deux négatifs) ;
-                            rentrée dès que le dernier mois redevient positif (REBOUND). Le mode mixte coupe à 50 %
-                            sur le signal quotidien et à 0 % quand le mensuel confirme.
+                        <div class="bt-adv-col" id="bt-assumptions">
+                            <div class="field-group-title">Hypothèses de réalisme</div>
+                            <div class="field-pair">
+                                <div class="field">
+                                    <label class="field-label" for="bt-tx-cost">Coût par ordre (pb)</label>
+                                    <input id="bt-tx-cost" class="form-input mono" type="number" min="0" max="100" step="0.5">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="bt-margin-rate">Taux de marge (%/an)</label>
+                                    <input id="bt-margin-rate" class="form-input mono" type="number" min="0" max="100" step="0.25">
+                                </div>
+                            </div>
+                            <div class="field-pair">
+                                <div class="field">
+                                    <label class="field-label" for="bt-cash-yield">Rémunération du cash (%/an)</label>
+                                    <input id="bt-cash-yield" class="form-input mono" type="number" min="0" max="100" step="0.25">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="bt-dca">Apport mensuel ($)</label>
+                                    <input id="bt-dca" class="form-input mono" type="number" min="0" step="50" value="0" placeholder="0 = aucun">
+                                </div>
+                            </div>
+                            <label class="check">
+                                <input id="bt-margin-call" type="checkbox" checked>
+                                Simuler les appels de marge (liquidation forcée, maintenance 25 %)
+                            </label>
                         </div>
-                    </details>
+                    </div>
+                </details>
+            </section>
 
-                    <div id="bt-live-config" style="font-size:12px;color:var(--text-muted);margin-top:10px;">—</div>
+            <div class="notice notice-warn" id="bt-warnings" style="display:none;"></div>
+            <div class="bt-status" id="bt-status" style="display:none;"></div>
+
+            <!-- 2. Le verdict -->
+            <div id="bt-results" style="display:none;">
+                <section class="verdict-card" id="bt-verdict">
+                    <p class="verdict-text" id="bt-verdict-text">—</p>
+                    <div class="verdict-chips" id="bt-verdict-chips"></div>
+                </section>
+
+                <div class="kpi-grid kpi-grid-6">
+                    <div class="kpi" id="bt-kpi-final"><div class="kpi-label">Valeur finale</div><div class="kpi-value perf-kpi-value">—</div><div class="kpi-sub perf-kpi-delta">—</div></div>
+                    <div class="kpi" id="bt-kpi-cagr"><div class="kpi-label">Rendement annuel</div><div class="kpi-value perf-kpi-value">—</div><div class="kpi-sub perf-kpi-delta"></div></div>
+                    <div class="kpi" id="bt-kpi-maxdd"><div class="kpi-label">Pire perte</div><div class="kpi-value perf-kpi-value neg">—</div><div class="kpi-sub perf-kpi-delta"></div></div>
+                    <div class="kpi" id="bt-kpi-sharpe"><div class="kpi-label">Sharpe</div><div class="kpi-value perf-kpi-value">—</div><div class="kpi-sub perf-kpi-delta"></div></div>
+                    <div class="kpi" id="bt-kpi-vol"><div class="kpi-label">Volatilité</div><div class="kpi-value perf-kpi-value">—</div><div class="kpi-sub perf-kpi-delta"></div></div>
+                    <div class="kpi" id="bt-kpi-sortino"><div class="kpi-label">Sortino</div><div class="kpi-value perf-kpi-value">—</div><div class="kpi-sub perf-kpi-delta"></div></div>
                 </div>
 
-                <!-- Avertissements -->
-                <div id="bt-warnings" style="display:none;margin-bottom:16px;padding:10px 14px;border-radius:10px;
-                     background:rgba(216,90,48,.08);border:1px solid rgba(216,90,48,.25);font-size:12px;color:var(--text-muted);"></div>
-
-                <!-- État / progression -->
-                <div id="bt-status" style="display:none;text-align:center;padding:30px;color:var(--text-muted);"></div>
-
-                <!-- Résultats -->
-                <div id="bt-results" style="display:none;">
-                    <!-- KPI -->
-                    <div class="perf-kpi-strip">
-                        <div class="perf-kpi-card" id="bt-kpi-final">
-                            <div class="perf-kpi-label">Valeur finale</div>
-                            <div class="perf-kpi-value">—</div>
-                            <div class="perf-kpi-delta">—</div>
-                        </div>
-                        <div class="perf-kpi-card" id="bt-kpi-cagr">
-                            <div class="perf-kpi-label">CAGR</div>
-                            <div class="perf-kpi-value">—</div>
-                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">annualisé composé</div>
-                        </div>
-                        <div class="perf-kpi-card" id="bt-kpi-sharpe">
-                            <div class="perf-kpi-label">Sharpe</div>
-                            <div class="perf-kpi-value">—</div>
-                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">rendement/risque</div>
-                        </div>
-                        <div class="perf-kpi-card" id="bt-kpi-sortino">
-                            <div class="perf-kpi-label">Sortino</div>
-                            <div class="perf-kpi-value">—</div>
-                        </div>
-                        <div class="perf-kpi-card" id="bt-kpi-maxdd">
-                            <div class="perf-kpi-label">Max drawdown</div>
-                            <div class="perf-kpi-value text-red">—</div>
-                        </div>
-                        <div class="perf-kpi-card" id="bt-kpi-vol">
-                            <div class="perf-kpi-label">Volatilité</div>
-                            <div class="perf-kpi-value">—</div>
-                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">annualisée</div>
+                <!-- 3. La courbe, colorée par état du marché -->
+                <div class="card chart-card">
+                    <div class="card-header">
+                        <span class="card-title-lg">Valeur du portefeuille</span>
+                        <div class="seg seg-sm" role="group" aria-label="Vue du graphique">
+                            <button class="seg-btn active" data-btview="eq" onclick="btChartView('eq')">Croissance</button>
+                            <button class="seg-btn" data-btview="dd" onclick="btChartView('dd')">Drawdown</button>
                         </div>
                     </div>
-
-                    <!-- Courbe d'équité -->
-                    <div class="perf-chart-row full">
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Courbe d'équité (intérêt composé) vs benchmark</div>
-                            <div class="perf-chart-container">
-                                <canvas id="bt-chart-equity"></canvas>
-                            </div>
-                            <div id="bt-regime-legend" style="display:none;gap:16px;justify-content:center;align-items:center;margin-top:8px;font-size:11px;color:var(--text-muted);">
-                                <span style="display:inline-flex;align-items:center;gap:5px;">
-                                    <span style="width:14px;height:10px;background:rgba(29,158,117,.35);border-radius:2px;display:inline-block;"></span>
-                                    Marché haussier (benchmark &gt; SMA200)
-                                </span>
-                                <span style="display:inline-flex;align-items:center;gap:5px;">
-                                    <span style="width:14px;height:10px;background:rgba(216,90,48,.4);border-radius:2px;display:inline-block;"></span>
-                                    Marché baissier (benchmark &lt; SMA200)
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Monte Carlo -->
-                    <div class="perf-chart-row full" id="bt-mc-section" style="display:none;">
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">🎲 Monte Carlo — distribution des portefeuilles futurs possibles</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px;">
-                                <div>
-                                    <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Horizon</label>
-                                    <div class="perf-range-selector" id="mc-horizon" style="margin:0;">
-                                        <button class="perf-pill" data-days="126">6 mois</button>
-                                        <button class="perf-pill active" data-days="252">1 an</button>
-                                        <button class="perf-pill" data-days="504">2 ans</button>
-                                        <button class="perf-pill" data-days="756">3 ans</button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label style="display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;">Simulations</label>
-                                    <input id="mc-n-sim" type="number" value="1000" min="100" max="5000" step="100"
-                                           style="width:90px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:'IBM Plex Mono';">
-                                </div>
-                                <button id="mc-run-btn" class="btn btn-secondary" onclick="runMonteCarlo()" style="height:38px;">
-                                    Lancer Monte Carlo
-                                </button>
-                            </div>
-                            <div id="mc-status" style="display:none;text-align:center;padding:14px;color:var(--text-muted);font-size:13px;"></div>
-                            <div id="mc-results" style="display:none;">
-                                <div id="mc-kpi" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;"></div>
-                                <div class="perf-chart-container">
-                                    <canvas id="bt-chart-mc"></canvas>
-                                </div>
-                                <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.6;">
-                                    Bootstrap par rééchantillonnage aléatoire des rendements journaliers TWR historiques.
-                                    Bandes : <span style="color:rgba(124,92,255,.9);">■</span> p5–p95 ·
-                                    <span style="color:rgba(124,92,255,.6);">■</span> p25–p75 ·
-                                    <span style="color:#7C5CFF;">—</span> médiane (p50).
-                                    <b>Pas de prédiction</b> : suppose que le régime historique se répète.
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Drawdown + Heatmap -->
-                    <div class="perf-chart-row split">
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Drawdown</div>
-                            <div class="perf-chart-container">
-                                <canvas id="bt-chart-drawdown"></canvas>
-                            </div>
-                        </div>
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Heatmap rendements mensuels</div>
-                            <div class="perf-chart-container" id="bt-container-heatmap">
-                                <div class="empty-state">—</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Levier dans le temps (affiché si stratégie à levier) -->
-                    <div class="perf-chart-row full" id="bt-row-leverage" style="display:none;">
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Exposition brute (levier) dans le temps · ▲ = appel de marge</div>
-                            <div class="perf-chart-container">
-                                <canvas id="bt-chart-leverage"></canvas>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Coûts/frictions + DCA -->
-                    <div class="perf-chart-row split">
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Frictions & coûts réels</div>
-                            <div id="bt-costs" style="font-size:12px;color:var(--text-muted);line-height:1.9;"></div>
-                        </div>
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title" id="bt-dca-title">Investisseur (DCA)</div>
-                            <div id="bt-dca-block" style="font-size:12px;color:var(--text-muted);line-height:1.9;"></div>
-                        </div>
-                    </div>
-
-                    <!-- Appels de marge (affiché si ≥ 1) -->
-                    <div class="perf-chart-card" id="bt-card-margin" style="display:none;margin-bottom:16px;
-                         border:1px solid rgba(216,90,48,.35);background:rgba(216,90,48,.05);">
-                        <div class="perf-chart-title" style="color:var(--accent-short);">🛑 Appels de marge (liquidations forcées)</div>
-                        <div id="bt-margin-calls" style="font-size:12px;color:var(--text-muted);"></div>
-                    </div>
-
-                    <!-- Rendements annuels + Top drawdowns -->
-                    <div class="perf-chart-row split">
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Rendements annuels · stratégie vs benchmark</div>
-                            <div id="bt-yearly" style="font-size:12px;color:var(--text-muted);"></div>
-                        </div>
-                        <div class="perf-chart-card">
-                            <div class="perf-chart-title">Pires drawdowns (TWR)</div>
-                            <div id="bt-dd-periods" style="font-size:12px;color:var(--text-muted);"></div>
-                        </div>
-                    </div>
-
-                    <!-- Grille de stats étendue -->
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Statistiques détaillées (stratégie vs benchmark)</div>
-                        <div id="bt-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
-                             gap:10px 18px;font-size:12px;margin-top:6px;"></div>
-                    </div>
-
-                    <!-- Méta -->
-                    <div class="perf-chart-card">
-                        <div class="perf-chart-title">Détails & hypothèses</div>
-                        <div id="bt-meta" style="font-size:12px;color:var(--text-muted);line-height:1.8;"></div>
+                    <div class="chart-box chart-box-lg" id="bt-box-eq"><canvas id="bt-chart-equity"></canvas></div>
+                    <div class="chart-box chart-box-lg" id="bt-box-dd" hidden><canvas id="bt-chart-drawdown"></canvas></div>
+                    <div class="legend-inline" id="bt-regime-legend" style="display:none;">
+                        <span><i data-state="BULL"></i>BULL</span>
+                        <span><i data-state="CORRECTION"></i>CORRECTION</span>
+                        <span><i data-state="REBOUND"></i>REBOUND</span>
+                        <span><i data-state="BEAR"></i>BEAR</span>
+                        <small>état mensuel du benchmark (12 mois × 1 mois) · échelle logarithmique</small>
                     </div>
                 </div>
 
-                <!-- Optimisation vol_target × max_exposure retirée : la volatilité cible n'est plus utilisée (régime de marché). -->
+                <!-- 4. Année par année -->
+                <div class="dash-grid-2">
+                    <div class="card">
+                        <div class="card-header"><span class="card-title-lg">Année par année</span><span class="card-aside">stratégie vs benchmark</span></div>
+                        <div id="bt-yearly"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title-lg">Pires drawdowns</span><span class="card-aside">durée et récupération</span></div>
+                        <div id="bt-dd-periods"></div>
+                    </div>
+                </div>
 
+                <div class="card">
+                    <div class="card-header"><span class="card-title-lg">Rendements mensuels</span></div>
+                    <div id="bt-container-heatmap"><div class="empty-state">—</div></div>
+                </div>
+
+                <!-- Appels de marge (si ≥ 1) -->
+                <div class="card notice-card" id="bt-card-margin" style="display:none;">
+                    <div class="card-header"><span class="card-title-lg neg">Appels de marge (liquidations forcées)</span></div>
+                    <div id="bt-margin-calls"></div>
+                </div>
+
+                <!-- 5. Le détail, replié -->
+                <details class="card fold" id="bt-row-leverage" style="display:none;">
+                    <summary class="fold-summary"><span class="card-title-lg">Exposition dans le temps</span><span class="card-aside">▲ = appel de marge</span></summary>
+                    <div class="chart-box"><canvas id="bt-chart-leverage"></canvas></div>
+                </details>
+
+                <details class="card fold">
+                    <summary class="fold-summary"><span class="card-title-lg">Coûts et investisseur</span><span class="card-aside">frictions, DCA</span></summary>
+                    <div class="dash-grid-2 inner">
+                        <div><div class="field-group-title">Frictions et coûts réels</div><div id="bt-costs" class="detail-list"></div></div>
+                        <div><div class="field-group-title" id="bt-dca-title">Investisseur (DCA)</div><div id="bt-dca-block" class="detail-list"></div></div>
+                    </div>
+                </details>
+
+                <details class="card fold">
+                    <summary class="fold-summary"><span class="card-title-lg">Statistiques détaillées</span><span class="card-aside">stratégie vs benchmark</span></summary>
+                    <div id="bt-stats-grid" class="stats-cols"></div>
+                </details>
+
+                <details class="card fold" id="bt-mc-section" style="display:none;">
+                    <summary class="fold-summary"><span class="card-title-lg">Monte Carlo</span><span class="card-aside">futurs possibles, rééchantillonnage</span></summary>
+                    <div class="bt-form-row" style="margin-bottom:12px;">
+                        <div class="field">
+                            <label class="field-label">Horizon</label>
+                            <div class="seg" id="mc-horizon" role="group" aria-label="Horizon">
+                                <button class="perf-pill" data-days="126">6 mois</button>
+                                <button class="perf-pill active" data-days="252">1 an</button>
+                                <button class="perf-pill" data-days="504">2 ans</button>
+                                <button class="perf-pill" data-days="756">3 ans</button>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="mc-n-sim">Simulations</label>
+                            <input id="mc-n-sim" class="form-input mono" type="number" value="1000" min="100" max="5000" step="100">
+                        </div>
+                        <button id="mc-run-btn" class="btn btn-ghost bt-run" onclick="runMonteCarlo()">Lancer Monte Carlo</button>
+                    </div>
+                    <div id="mc-status" class="bt-status" style="display:none;"></div>
+                    <div id="mc-results" style="display:none;">
+                        <div id="mc-kpi" class="mc-kpi"></div>
+                        <div class="chart-box"><canvas id="bt-chart-mc"></canvas></div>
+                        <p class="chart-note">Tirage aléatoire des rendements quotidiens historiques. Bandes : p5–p95, p25–p75, ligne : médiane.
+                            Ce n'est pas une prédiction : on suppose que le passé se répète.</p>
+                    </div>
+                </details>
+
+                <details class="card fold">
+                    <summary class="fold-summary"><span class="card-title-lg">Détails et hypothèses</span></summary>
+                    <div id="bt-meta" class="detail-list"></div>
+                </details>
             </div>
         </div>
