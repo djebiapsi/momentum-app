@@ -929,14 +929,28 @@ class IBKRService:
                 return {'success': False,
                         'error': f'Ordre placé par un autre client API (clientId {trade.order.clientId}) '
                                  '— annulable depuis TWS / IBKR Mobile'}
-            self._ib.cancelOrder(trade.order)
-            for _ in range(40):          # ~10 s
-                await asyncio.sleep(0.25)
-                if trade.orderStatus.status in OrderStatus.DoneStates:
-                    break
+            errors, handler = self._error_collector()
+            self._ib.errorEvent += handler
+            try:
+                self._ib.cancelOrder(trade.order)
+                for _ in range(40):          # ~10 s
+                    await asyncio.sleep(0.25)
+                    if trade.orderStatus.status in OrderStatus.DoneStates:
+                        break
+                await asyncio.sleep(0.3)
+            finally:
+                self._ib.errorEvent -= handler
             st = trade.orderStatus.status
-            return {'success': st in OrderStatus.DoneStates or st == OrderStatus.PendingCancel,
-                    'order_status': st, 'order_id': trade.order.orderId}
+            # 10148 = déjà en cours d'annulation (fréquent le week-end : IBKR garde
+            # PendingCancel jusqu'à la reprise des serveurs) ; 10147 = ordre inconnu.
+            msgs = [f'{c} · {m[:160]}' for r, c, m in errors if r == trade.order.orderId]
+            res = {'success': st in OrderStatus.DoneStates or st == OrderStatus.PendingCancel,
+                   'order_status': st, 'order_id': trade.order.orderId}
+            if msgs:
+                res['note'] = ' | '.join(msgs[-2:])
+            if st == OrderStatus.PendingCancel:
+                res['note'] = (res.get('note') or '') + ' Annulation transmise — finalisée par IBKR à la reprise des serveurs.'
+            return res
         return self._submit(fn(), timeout=30)
 
     # ------------------------------------------------------------------
