@@ -156,7 +156,50 @@ def plan_rebalance(positions: list, base_value: float, targets: list,
         entry = _entry(tk, p, action, qty, price, cur_val, target_val, pct, False)
         (sells if action == 'SELL' else buys).append(entry)
 
-    return {'orders': sells + buys, 'skipped': skipped,
+    # 3) Compléments fractionnaires — ce que l'API refuse (10243) et qu'il reste à
+    #    passer à la main (IBKR Mobile / Client Portal acceptent le fractionnaire et
+    #    les montants) pour coller aux cibles : fractions résiduelles des liquidations,
+    #    positions < 1 action, écart restant après les ordres entiers.
+    manual = []
+    if not fractional:
+        planned_value = {}
+        for o in sells + buys:
+            sign = 1 if o['action'] == 'BUY' else -1
+            planned_value[o['ticker']] = planned_value.get(o['ticker'], 0.0) + sign * (o['est_value'] or 0.0)
+        for tk, p in current.items():
+            if targets_pct.get(tk, 0.0) > 0:
+                continue
+            qty = float(p.get('qty') or 0)
+            frac = round(abs(qty) - math.floor(abs(qty) + 1e-9), FRACTIONAL_DECIMALS)
+            if frac <= 0:
+                continue
+            price = _num(p.get('market_price')) or 0.0
+            manual.append({'ticker': tk, 'action': 'SELL' if qty > 0 else 'BUY', 'qty': frac,
+                           'cash': None, 'est_value': round(frac * price, 2),
+                           'reason': 'fraction résiduelle — invendable via l\'API'})
+        for tk, pct in targets_pct.items():
+            if pct <= 0:
+                continue
+            p = current.get(tk, {})
+            cur_val = float(p.get('market_value') or 0)
+            residual = base_value * pct / 100.0 - cur_val - planned_value.get(tk, 0.0)
+            if abs(residual) < min_order_value:
+                continue
+            price = _num(p.get('market_price')) or _num(prices.get(tk))
+            if residual > 0:
+                manual.append({'ticker': tk, 'action': 'BUY', 'cash': round(residual, 2),
+                               'qty': round(residual / price, FRACTIONAL_DECIMALS) if price else None,
+                               'est_value': round(residual, 2), 'reason': 'complément fractionnaire vers la cible'})
+            elif price:
+                held_after = float(p.get('qty') or 0) - sum(
+                    o['qty'] for o in sells if o['ticker'] == tk and o['action'] == 'SELL')
+                sell_qty = min(round(-residual / price, FRACTIONAL_DECIMALS), round(max(held_after, 0), FRACTIONAL_DECIMALS))
+                if sell_qty > 0:
+                    manual.append({'ticker': tk, 'action': 'SELL', 'qty': sell_qty, 'cash': None,
+                                   'est_value': round(sell_qty * price, 2),
+                                   'reason': 'allègement fractionnaire vers la cible'})
+
+    return {'orders': sells + buys, 'skipped': skipped, 'manual_orders': manual,
             'total_target_pct': round(sum(targets_pct.values()), 1)}
 
 
@@ -600,7 +643,9 @@ class IBKRService:
         if con_id:
             return Stock(ticker, 'SMART', currency, conId=int(con_id),
                          primaryExchange=primary_exchange or '')
-        contract = Stock(ticker, 'SMART', currency, primaryExchange=primary_exchange or '')
+        # Classes d'actions : Tiingo/Wikipédia écrivent BRK.B / BRK-B, IBKR « BRK B »
+        ib_symbol = ticker.replace('.', ' ').replace('-', ' ')
+        contract = Stock(ib_symbol, 'SMART', currency, primaryExchange=primary_exchange or '')
         try:
             await asyncio.wait_for(self._ib.qualifyContractsAsync(contract), self.QUALIFY_TIMEOUT)
         except Exception as e:
@@ -798,7 +843,7 @@ class IBKRService:
         timeout = 30 + len(orders) * (self.ORDER_ACK_TIMEOUT + self.QUALIFY_TIMEOUT + 2)
         orders = self._submit(fn(), timeout=timeout)
         return {
-            'orders': orders, 'skipped': plan['skipped'],
+            'orders': orders, 'skipped': plan['skipped'], 'manual_orders': plan['manual_orders'],
             'total_target_pct': plan['total_target_pct'],
             'base_value': round(base_value, 2), 'cash': account.get('total_cash'),
             'market_open': market_open, 'queued_for_open': not market_open,

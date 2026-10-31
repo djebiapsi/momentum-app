@@ -17,7 +17,7 @@ cp env-example.txt .env   # fill in API keys
 flask run                  # or: python app.py
 
 # Run tests
-python -m pytest test_options_service.py test_backtest_service.py test_membership.py test_crash_regime.py test_trend_regime.py test_regime_service.py test_perf_service.py -v
+python -m pytest test_options_service.py test_backtest_service.py test_membership.py test_crash_regime.py test_trend_regime.py test_regime_service.py test_perf_service.py test_ibkr_service.py -v
 
 # Run a single test
 python -m pytest test_options_service.py::TestBlackScholes::test_put_price_atm -v
@@ -28,6 +28,11 @@ python health_check.py https://95.216.198.241 --full # remote, incl. write tests
 
 # Backtest parameter grid search (vol_target × max_exposure)
 python optimize_backtest.py --quick
+
+# IBKR order pipeline check — run INSIDE the prod app container (sees the gateway)
+docker exec momentum-app-app-1 python _ibkr_order_check.py status          # account, positions, open orders
+docker exec momentum-app-app-1 python _ibkr_order_check.py probe F --lmt 1 # whatIf + far-limit order + cancel
+docker exec momentum-app-app-1 python _ibkr_order_check.py buy PLUG --qty 1 --yes   # REAL order
 
 # Production server (local)
 gunicorn app:app --workers 1
@@ -62,6 +67,8 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `scheduler.py` | `create_scheduler(app)` — builds the APScheduler and registers the crons |
 | `cache_utils.py` | `TTLCache` in-memory cache (spares the ~50 req/h Tiingo quota) |
 | `_bt_worker.py` | Backtest worker run as a subprocess by `/api/backtest/run` (own interpreter → gunicorn stays responsive; IBKR disabled, DB cache + Tiingo only) |
+| `ibkr_gateway.py` | **Single source of truth** for the IB Gateway container config (env `READ_ONLY_API=no`, `BYPASS_WARNING=yes`, `ALLOW_BLIND_TRADING=yes`, healthcheck, network alias) used by `routes/ibkr.py`, `jobs.py` and mirrored in `docker-compose.yml`. A divergent SDK recreate had left the API read-only in prod (every order rejected with error 321) |
+| `_ibkr_order_check.py` | End-to-end order validation CLI (status / whatif / probe / buy / sell / orders / cancel) using `IBKRService` directly, to run inside the app container |
 
 **Service classes:**
 
@@ -78,7 +85,7 @@ Single-process Flask app with APScheduler for monthly automation. Serves a vanil
 | `email_service.py` | HTML email via Resend API |
 | `news_service.py` | Fetch RSS feeds + LLM summary (OpenAI-compatible API) for the digests |
 | `market_monitor_service.py` | Real-time market alert monitoring (price alerts, VIX, futures) |
-| `ibkr_service.py` | IBKR TWS API client (asyncio thread); port 4001 paper / 4003 live via socat |
+| `ibkr_service.py` | IBKR TWS API client (asyncio thread, one persistent trading-capable connection, fixed clientId 11). Socat ports: 4003 live / 4004 paper (4001/4002 are internal to the gateway). `plan_rebalance()` is pure and tested: base = NetLiquidation, **whole shares only** — the TWS API rejects fractional quantities (10243) and cash quantities (10244) even to close a fractional position — sells before buys, fractional complements returned as `manual_orders` for IBKR Mobile. `dry_run` = whatIf per order; statuses read from events and re-checked server-side (`reqAllOpenOrders`), since ib_async flags live orders as `ValidationError` on warnings like 399 |
 | `price_data_service.py` | yfinance background collector: SP500 + NDX100 daily (~6 y → `MarketPriceBar`) & monthly (~20 y → `MonthlyPriceBar`); incremental, index composition re-checked monthly via Wikipedia. Treated as a fragile best-effort source |
 | `flex_service.py` | IBKR Flex Web Service (2-step async). Parser keeps EXECUTION-level trades only (ext_id = ibExecID), corporate actions as `ADJ` rows, net dividends (withholding tax), deposits, open positions, statement window |
 | `perf_service.py` | Perf page logic: `import_flex` (replaces the statement window — fixes fills lost by the old date/qty/price dedup), `position_lifecycles` (chronological average-cost lifecycle reconciled with actual positions: IBKR live, else last Flex `OpenPosition`), TWR with cash flows aligned to the next NAV date, CAGR/Sharpe only from 3 months, `run_flex_sync` |
@@ -134,7 +141,7 @@ Vanilla JavaScript (no framework, no build step). The HTML shell `templates/inde
 
 ### Deployment
 
-VPS Hetzner (`root@95.216.198.241`), Docker Compose. Gunicorn 1 worker. **SSH** : `ssh -i ~/.ssh/id_ed25519 root@95.216.198.241`. PostgreSQL dans un conteneur `db`. Variables d'environnement dans `/opt/momentum-app/.env`. IB Gateway dans un conteneur séparé (`ib-gateway`), exposé via socat port 4003 (live) / 4001 (paper).
+VPS Hetzner (`root@95.216.198.241`), Docker Compose. Gunicorn 1 worker. **SSH** : `ssh -i ~/.ssh/id_ed25519 root@95.216.198.241`. PostgreSQL dans un conteneur `db`. Variables d'environnement dans `/opt/momentum-app/.env`. L'app écoute sur `127.0.0.1:8000` derrière un nginx hôte (HTTPS). Déploiement = push sur `main` → GitHub Action (`git pull` + `docker compose up -d app db`) ; le `docker-compose.yml` de prod doit rester identique au dépôt, sinon le pull échoue. IB Gateway dans un conteneur séparé (`ib-gateway`, profil compose `ibkr`), exposé via socat port 4003 (live) / 4004 (paper) ; le recréer avec `docker compose --profile ibkr up -d ib-gateway` (déclenche une 2FA IBKR Mobile) — jamais à la main avec `docker run`.
 
 ### Scheduled Jobs
 

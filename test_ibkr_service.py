@@ -40,8 +40,8 @@ class TestPlanRebalance:
 
     def test_liquidation_sub_share_fraction_is_skipped_in_integer_mode(self):
         plan = plan_rebalance([pos('STX', 0.0012, 648.22), pos('SNDK', 0.3929, 1157.5)], 5000,
-                              [{'ticker': 'MU', 'target_pct': 10}], prices={'MU': 889})
-        assert [o['ticker'] for o in plan['orders']] == ['MU']
+                              [{'ticker': 'MU', 'target_pct': 20}], prices={'MU': 889})
+        assert [(o['ticker'], o['qty']) for o in plan['orders']] == [('MU', 1.0)]   # 1000 $ / 889
         assert sorted(s['ticker'] for s in plan['skipped']) == ['SNDK', 'STX']
         assert all('10243' in s['reason'] for s in plan['skipped'])
 
@@ -112,6 +112,40 @@ class TestPlanRebalance:
         plan = plan_rebalance([pos('X', -2, 50)], 1000, [{'ticker': 'MU', 'target_pct': 10}], prices={'MU': 100})
         cover = plan['orders'][0]
         assert cover['ticker'] == 'X' and cover['action'] == 'BUY' and cover['qty'] == 2.0
+
+    def test_manual_complements_cover_fractions_and_sub_share_targets(self):
+        # Compte réel du 31/10 : WDC hors cibles (3.3539), SNDK et MU < 1 action face à leur cible
+        positions = [pos('WDC', 3.3539, 368.12), pos('SNDK', 0.3929, 1157.5), pos('MU', 0.9968, 889.15)]
+        plan = plan_rebalance(positions, 4750, [{'ticker': 'SNDK', 'target_pct': 13.32},
+                                                {'ticker': 'MU', 'target_pct': 20.55}])
+        assert [(o['ticker'], o['qty']) for o in plan['orders']] == [('WDC', 3.0)]   # seul ordre API possible
+        manual = {m['ticker']: m for m in plan['manual_orders']}
+        assert manual['WDC']['action'] == 'SELL' and manual['WDC']['qty'] == 0.3539
+        assert manual['SNDK']['action'] == 'BUY' and manual['SNDK']['cash'] == round(4750 * 0.1332 - 0.3929 * 1157.5, 2)
+        assert manual['MU']['action'] == 'BUY' and manual['MU']['cash'] == round(4750 * 0.2055 - 0.9968 * 889.15, 2)
+        assert manual['SNDK']['qty'] == round(manual['SNDK']['cash'] / 1157.5, 4)
+
+    def test_manual_complement_after_integer_buy_and_below_threshold(self):
+        # 1000 $ visés à 300 $/action → API achète 3 (900 $), reste 100 $ → complément manuel
+        plan = plan_rebalance([], 10000, [{'ticker': 'A', 'target_pct': 10}], prices={'A': 300})
+        assert plan['orders'][0]['qty'] == 3.0
+        assert plan['manual_orders'] == [{'ticker': 'A', 'action': 'BUY', 'cash': 100.0, 'qty': 0.3333,
+                                          'est_value': 100.0, 'reason': 'complément fractionnaire vers la cible'}]
+        # reste 10 $ → sous le seuil, rien à faire à la main
+        plan = plan_rebalance([], 10000, [{'ticker': 'A', 'target_pct': 10}], prices={'A': 330})
+        assert plan['orders'][0]['qty'] == 3.0 and plan['manual_orders'] == []
+
+    def test_manual_fractional_trim_is_capped_to_remaining_position(self):
+        # 2.6 détenues (780 $), cible 300 $ → API vend 1 (floor 1.6), reste 1.6 → cible 1.0 → manuel SELL 0.6
+        plan = plan_rebalance([pos('A', 2.6, 300)], 1000, [{'ticker': 'A', 'target_pct': 30}])
+        assert plan['orders'][0]['action'] == 'SELL' and plan['orders'][0]['qty'] == 1.0
+        assert plan['manual_orders'] == [{'ticker': 'A', 'action': 'SELL', 'qty': 0.6, 'cash': None,
+                                          'est_value': 180.0, 'reason': 'allègement fractionnaire vers la cible'}]
+
+    def test_no_manual_orders_in_fractional_mode(self):
+        plan = plan_rebalance([pos('WDC', 3.3539, 368.12)], 4750, [{'ticker': 'MU', 'target_pct': 20}],
+                              prices={'MU': 889.15}, fractional=True)
+        assert plan['manual_orders'] == []
 
     def test_entries_carry_routing_metadata(self):
         plan = plan_rebalance([pos('MU', 1, 800, con_id=9939)], 5000, [{'ticker': 'MU', 'target_pct': 32}])

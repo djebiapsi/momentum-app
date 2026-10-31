@@ -357,6 +357,15 @@
             if (ajustements.length)
                 summary += '— Ajustements —\n' + ajustements.map(fmtOrder).join('\n') + '\n';
             summary += skippedTxt;
+            // Fractionnaire refusé par la TWS API (10243) → compléments à passer dans IBKR Mobile
+            const manual = preview.manual_orders || [];
+            const fmtManual = m => m.cash != null
+                ? `${m.action} ≈ ${fmtUsd(m.cash)} de ${m.ticker}${m.qty ? ` (~${m.qty} act.)` : ''}`
+                : `${m.action} ${m.qty} × ${m.ticker} ≈ ${fmtUsd(m.est_value)}`;
+            if (manual.length)
+                summary += '\n— À passer à la main dans IBKR Mobile (fractionnaire, refusé par l\'API) —\n' +
+                    manual.map(fmtManual).join('\n') + '\n';
+            renderManualOrders(manual, fmtManual);
 
             const expo = preview.total_target_pct;
             let warn = '';
@@ -394,6 +403,28 @@
                 if (typeof loadIBKROrders === 'function') loadIBKROrders();
             } else {
                 showToast(result?.error || 'Erreur lors du passage des ordres', 'error');
+            }
+        }
+
+        // Compléments fractionnaires (hors API) affichés sous la décision, avec copie presse-papiers
+        function renderManualOrders(manual, fmtManual) {
+            const box = document.getElementById('ibkr-manual-orders');
+            if (!box) return;
+            if (!manual || !manual.length) { box.hidden = true; box.innerHTML = ''; return; }
+            const lines = manual.map(fmtManual);
+            box.hidden = false;
+            box.innerHTML = `<strong>À passer dans IBKR Mobile</strong> — l'API IBKR refuse le fractionnaire (10243) :` +
+                `<ul style="margin:6px 0 8px 18px;">${lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` +
+                `<button class="btn btn-ghost" style="padding:2px 10px;font-size:12px;" onclick="copyManualOrders()">Copier la liste</button>`;
+            box.dataset.text = lines.join('\n');
+        }
+
+        function copyManualOrders() {
+            const box = document.getElementById('ibkr-manual-orders');
+            const text = box?.dataset.text || '';
+            if (navigator.clipboard && text) {
+                navigator.clipboard.writeText(text).then(() => showToast('Liste copiée', 'success'),
+                                                        () => showToast('Copie impossible', 'error'));
             }
         }
 
