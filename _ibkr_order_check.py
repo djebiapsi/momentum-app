@@ -33,7 +33,11 @@ def dump(label, data):
 
 
 def connect(args) -> IBKRService:
-    svc = IBKRService(host=args.host, port=args.port)
+    # clientId distinct de l'app (11) : sinon 326 « client id already in use » et
+    # repli sur un id aléatoire → ordres impossibles à annuler ensuite. IBKR ne
+    # laisse annuler un ordre que par le clientId qui l'a placé : annuler ici les
+    # ordres placés ici, et ceux de l'app depuis l'app (Réglages → Ordres IBKR).
+    svc = IBKRService(host=args.host, port=args.port, client_id=args.client_id)
     res = svc.connect()
     if not res.get('success'):
         print(f"❌ Connexion impossible : {res.get('error')}")
@@ -116,6 +120,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--host', default=os.environ.get('IB_GATEWAY_HOST', 'ib-gateway'))
     p.add_argument('--port', type=int, default=int(os.environ.get('IB_GATEWAY_PORT', 4003)))
+    p.add_argument('--client-id', type=int, default=12, help="12 par défaut (l'app utilise 11)")
     sub = p.add_subparsers(dest='cmd', required=True)
     sub.add_parser('status')
     sub.add_parser('orders')

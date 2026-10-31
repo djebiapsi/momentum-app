@@ -53,6 +53,11 @@ services:
       TWS_SETTINGS_PATH: /home/ibgateway/Jts
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-changeme}
       TWS_ACCEPT_INCOMING: accept
+      # Une seule session de trading par identifiant IBKR : IBKR Mobile ouvert avec
+      # le même identifiant → « Existing session detected ». manual = le gateway
+      # cède (bloqué jusqu'au redémarrage) ; primary = il reprend la main et éjecte
+      # l'appli. Solution propre : second identifiant dédié à l'API.
+      EXISTING_SESSION_DETECTED_ACTION: ${IB_EXISTING_SESSION_ACTION:-manual}
       # ⚠️ Garder aligné sur ibkr_gateway.gateway_environment() : l'app recrée ce
       # conteneur via le SDK Docker (identifiants, bascule live/paper, auto-restart)
       # et une liste divergente avait laissé l'API en lecture seule en prod.

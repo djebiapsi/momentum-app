@@ -234,6 +234,14 @@ class IBKRService:
     WHATIF_TIMEOUT = 10.0
     ORDER_ACK_TIMEOUT = 15.0    # attente d'un statut décisif après placeOrder
 
+    # Liaison gateway ↔ serveurs IBKR (distincte de la socket app ↔ gateway, qui
+    # reste connectée) : 1100 / 2110 = perdue, 1101 / 1102 = rétablie.
+    LINK_LOST_CODES = frozenset({1100, 2110})
+    LINK_OK_CODES = frozenset({1101, 1102})
+    LINK_DOWN_HINT = ("Le gateway n'a plus de liaison avec le serveur d'ordres IBKR : session reprise "
+                      "par IBKR Mobile / Client Portal avec le même identifiant (« Existing session "
+                      "detected »), ou maintenance IBKR. Fermer l'autre session puis redémarrer le gateway.")
+
     # Statuts après lesquels attendre davantage n'apporte rien
     _DECISIVE_STATUSES = frozenset({
         OrderStatus.PreSubmitted, OrderStatus.Submitted, OrderStatus.Filled,
@@ -253,6 +261,9 @@ class IBKRService:
         self._ib = None
         self._last_hist_call = 0.0   # throttle des requêtes historiques (pacing)
         self.fractional = False      # TWS API : actions entières uniquement (10243)
+        self._link_ok = True         # liaison gateway ↔ serveurs IBKR (voir LINK_*)
+        self._link_msg = None
+        self._link_changed_at = None
 
         # Event loop PERMANENT dans un thread dédié (voir docstring de la classe).
         self._loop = asyncio.new_event_loop()
@@ -273,6 +284,19 @@ class IBKRService:
 
     def _is_connected(self) -> bool:
         return self._ib is not None and self._ib.isConnected()
+
+    def _set_link(self, ok: bool, msg: str | None = None):
+        if ok != self._link_ok:
+            logger.warning('IBKR liaison serveur %s%s', 'RÉTABLIE' if ok else 'PERDUE', f' : {msg}' if msg else '')
+            self._link_changed_at = time.time()
+        self._link_ok, self._link_msg = ok, (None if ok else msg)
+
+    def _on_ib_error(self, reqId, errorCode, errorString, *rest):
+        """Handler permanent : suit la liaison gateway ↔ serveurs IBKR."""
+        if errorCode in self.LINK_LOST_CODES:
+            self._set_link(False, f'{errorCode} · {errorString[:160]}')
+        elif errorCode in self.LINK_OK_CODES:
+            self._set_link(True)
 
     # ------------------------------------------------------------------
     # Connexion / statut
@@ -316,8 +340,10 @@ class IBKRService:
                             self._ib.disconnect()
                         except Exception:
                             pass
+                    ib.errorEvent += self._on_ib_error
                     self._ib = ib
                     self._client_id = cid
+                    self._set_link(True)
                     return cid
                 raise last_exc or RuntimeError('Connexion impossible')
 
@@ -375,6 +401,10 @@ class IBKRService:
             'client_id': self._client_id or None,
             'cooldown_remaining_s': cooldown_remaining,
             'fractional': self.fractional,
+            # socket app ↔ gateway OK mais gateway ↔ IBKR coupé → ordres impossibles
+            'ibkr_link_ok': self._link_ok,
+            'ibkr_link_error': self._link_msg,
+            'ibkr_link_changed_at': self._link_changed_at,
         }
 
     def ensure_connected(self, trading_mode: bool = False) -> bool:
@@ -700,6 +730,11 @@ class IBKRService:
             code, msg = rejects[-1]
             return {'whatif': 'rejected', 'whatif_error': f'{code} · {msg[:200]}'}
         if state is None:
+            # 1106 « Pending to create N what-if orders » : le gateway n'a plus de
+            # liaison avec le serveur d'ordres IBKR et met les requêtes en file.
+            if any(c == 1106 for _, c, _ in errors):
+                self._set_link(False, self.LINK_DOWN_HINT)
+                return {'whatif': 'unavailable', 'whatif_error': self.LINK_DOWN_HINT}
             return {'whatif': 'timeout' if timed_out else 'error'}
         commission = _num(state.commission)
         if commission is None:
@@ -804,6 +839,8 @@ class IBKRService:
             res = self.connect(force=True)
             if not res.get('success'):
                 raise ConnectionError(f"Non connecté à IB Gateway : {res.get('error', '')}")
+        if not dry_run and not self._link_ok:
+            raise ConnectionError(self._link_msg or self.LINK_DOWN_HINT)
 
         stats = self.get_portfolio_stats()
         try:

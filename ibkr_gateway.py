@@ -54,6 +54,12 @@ def gateway_environment(username: str, password: str, trading_mode: str) -> dict
         'TWS_SETTINGS_PATH': '/home/ibgateway/Jts',
         'VNC_SERVER_PASSWORD': os.environ.get('VNC_PASSWORD') or 'changeme',
         'TWS_ACCEPT_INCOMING': 'accept',
+        # IBKR n'autorise qu'UNE session de trading par identifiant : ouvrir IBKR
+        # Mobile / Client Portal avec le même identifiant affiche « Existing session
+        # detected » sur le gateway. manual (défaut) = le gateway cède et reste bloqué
+        # jusqu'au redémarrage ; primary = il reprend la main et éjecte l'appli.
+        # Solution propre : un second identifiant IBKR dédié à l'API.
+        'EXISTING_SESSION_DETECTED_ACTION': os.environ.get('IB_EXISTING_SESSION_ACTION') or 'manual',
         # --- Ordres via API (voir docstring du module) ---
         'READ_ONLY_API': os.environ.get('IB_READ_ONLY_API') or 'no',
         'BYPASS_WARNING': os.environ.get('IB_BYPASS_WARNING') or 'yes',

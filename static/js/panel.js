@@ -376,6 +376,12 @@
             const rejected = preview.orders.filter(o => o.whatif === 'rejected').length;
             if (rejected)
                 warn += `\n⛔ ${rejected} ordre(s) seraient refusés par IBKR (voir détails) — corriger avant d'exécuter.\n`;
+            // Liaison gateway ↔ IBKR coupée (souvent : IBKR Mobile ouvert avec le même identifiant)
+            const down = preview.orders.find(o => o.whatif === 'unavailable');
+            if (down) {
+                alert(`IBKR injoignable — exécution impossible pour l'instant.\n\n${down.whatif_error}`);
+                return;
+            }
             const commTotal = preview.orders.reduce((s, o) => s + (o.commission || 0), 0);
             const head = `Base : ${fmtUsd(preview.base_value)} (valeur nette du compte)` +
                 (preview.cash != null ? ` · cash ${fmtUsd(preview.cash)}` : '') +
