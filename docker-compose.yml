@@ -10,7 +10,8 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
     ports:
-      - "80:8000"
+      # Exposé en local uniquement : nginx (hôte) fait le reverse-proxy HTTPS → :8000
+      - "127.0.0.1:8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/momentum-app/.env:/app/.env.host
@@ -52,10 +53,19 @@ services:
       TWS_SETTINGS_PATH: /home/ibgateway/Jts
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-changeme}
       TWS_ACCEPT_INCOMING: accept
+      # ⚠️ Garder aligné sur ibkr_gateway.gateway_environment() : l'app recrée ce
+      # conteneur via le SDK Docker (identifiants, bascule live/paper, auto-restart)
+      # et une liste divergente avait laissé l'API en lecture seule en prod.
       # CAUSE RACINE des ordres qui échouaient : si la case « Read-Only API » du
-      # gateway est cochée, TOUT ordre est rejeté serveur, quel que soit le
-      # readonly=False du client. On force explicitement l'autorisation des ordres.
+      # gateway est cochée, TOUT ordre est rejeté serveur (erreur 321), quel que
+      # soit le readonly=False du client. On force explicitement l'autorisation.
       READ_ONLY_API: ${IB_READ_ONLY_API:-no}
+      # « Bypass Order Precautions for API Orders » : sinon une précaution (taille,
+      # valeur, % du capital) ouvre un dialogue que personne ne valide → rejet.
+      BYPASS_WARNING: ${IB_BYPASS_WARNING:-yes}
+      # Pas d'abonnement temps réel sur le compte : sans ça, dialogue « blind
+      # trading » bloquant à chaque ordre (défaut de l'image : no).
+      ALLOW_BLIND_TRADING: ${IB_ALLOW_BLIND_TRADING:-yes}
       # Restart quotidien programmé (soft restart IBC : garde la session, PAS de 2FA)
       # Doit tourner AVANT la maintenance forcée IBKR (~minuit ET) pour éviter le crash
       AUTO_RESTART_TIME: "11:30 PM"

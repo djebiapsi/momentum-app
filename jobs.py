@@ -6,6 +6,7 @@ from services import (ibkr_service, get_momentum_service, get_email_service,
                      get_backtest_service, get_price_data_service, get_news_service,
                      get_fundamentals_collector, get_finra_collector,
                      get_edgar_collector)
+from ibkr_gateway import recreate_gateway
 from core import (compute_and_save_momentum, compute_and_save_short_signals,
                   compute_and_save_qv, get_qv_market,
                   run_market_monitor, build_briefing_payload)
@@ -164,42 +165,9 @@ def _auto_restart_gateway():
 
     print(f"[{datetime.now()}] 🔄 Redémarrage IB Gateway (mode={mode})…")
     try:
-        import docker as docker_sdk
-        client = docker_sdk.from_env()
-        net_name = 'momentum-app_internal'
-        for c in client.containers.list(all=True, filters={'name': 'ib-gateway'}):
-            try:
-                c.stop(timeout=10)
-                c.remove()
-            except Exception:
-                pass
-        container = client.containers.create(
-            'ghcr.io/gnzsnz/ib-gateway:stable',
-            name='momentum-app-ib-gateway-1',
-            detach=True,
-            restart_policy={'Name': 'unless-stopped'},
-            labels={'autoheal': 'true'},
-            environment={
-                'TWS_USERID': username, 'TWS_PASSWORD': password,
-                'TRADING_MODE': mode,
-                'TWS_SETTINGS_PATH': '/home/ibgateway/Jts',
-                'VNC_SERVER_PASSWORD': 'changeme',
-                'TWS_ACCEPT_INCOMING': 'accept',
-                'AUTO_RESTART_TIME': '11:30 PM',
-                'TIME_ZONE': 'America/New_York',
-                'RELOGIN_AFTER_TWOFA_TIMEOUT': 'yes',
-                'TWOFA_TIMEOUT_ACTION': 'restart',
-            },
-            ports={'5900/tcp': ('127.0.0.1', 5900)},
-            healthcheck={
-                'test': ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4001' || exit 1"],
-                'interval': 60_000_000_000, 'timeout': 10_000_000_000,
-                'retries': 3, 'start_period': 180_000_000_000,
-            },
-        )
-        network = client.networks.get(net_name)
-        network.connect(container, aliases=['ib-gateway'])
-        container.start()
+        # Même configuration que docker-compose (READ_ONLY_API=no, etc.) :
+        # une recréation divergente laissait l'API en lecture seule.
+        recreate_gateway(username, password, mode)
         print(f"✅ IB Gateway redémarré (mode={mode}) — 2FA requise dans ~90s")
 
         # Notification push du redémarrage

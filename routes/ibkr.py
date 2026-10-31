@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify, request, make_response, current_app
 from models import (db, Settings, PanelAction, RecommendationHistory,
                     RecommendationDetail, ShortPanelAction,
                     ShortRecommendationHistory, ShortRecommendationDetail,
-                    OptionRecommendation, MarketEvent)
+                    OptionRecommendation, MarketEvent, MarketPriceBar)
 from auth import require_admin
 from services import (ibkr_service, get_momentum_service, get_email_service,
                       get_news_service, get_market_monitor, get_screener_service,
@@ -16,6 +16,7 @@ from services import (ibkr_service, get_momentum_service, get_email_service,
 import re
 import flex_service
 from ibkr_service import encrypt_credential, decrypt_credential
+from ibkr_gateway import SOCAT_PORT, recreate_gateway_async
 
 bp = Blueprint('ibkr', __name__)
 
@@ -127,10 +128,8 @@ def ibkr_save_credentials():
     return jsonify({'success': True, 'message': 'Identifiants sauvegardés — IB Gateway en cours de démarrage (~90s)'})
 
 
-# Port SOCAT du gateway (accessible depuis le réseau Docker) selon le mode.
-# Live  : API interne 4001 → socat 4003
-# Paper : API interne 4002 → socat 4004
-IBKR_SOCAT_PORT = {'live': 4003, 'paper': 4004}
+# Port SOCAT par mode — source de vérité : ibkr_gateway.SOCAT_PORT
+IBKR_SOCAT_PORT = SOCAT_PORT
 
 
 def _ibkr_set_env_vars(updates: dict):
@@ -178,61 +177,6 @@ def _ibkr_set_env_vars(updates: dict):
         return False
 
 
-def _recreate_gateway(username: str, password: str, trading_mode: str):
-    """
-    Recrée le conteneur IB Gateway via le SDK Docker, en répliquant fidèlement
-    les options du docker-compose.yml (healthcheck, auto-restart, autoheal, etc.).
-    Lancé en thread car le gateway met ~90s à démarrer + 2FA.
-    """
-    import threading
-
-    def _restart():
-        try:
-            import docker as docker_sdk
-            client = docker_sdk.from_env()
-            net_name = 'momentum-app_internal'
-            for c in client.containers.list(all=True, filters={'name': 'ib-gateway'}):
-                c.stop()
-                c.remove()
-            # Créer sans démarrer, puis connecter au réseau avec l'alias DNS
-            # 'ib-gateway' (sinon seul le nom du conteneur est résolvable, et l'app
-            # qui cherche 'ib-gateway' échoue avec "name resolution"). docker-compose
-            # crée cet alias automatiquement, mais le SDK doit le faire explicitement.
-            container = client.containers.create(
-                'ghcr.io/gnzsnz/ib-gateway:stable',
-                name='momentum-app-ib-gateway-1',
-                detach=True,
-                restart_policy={'Name': 'unless-stopped'},
-                labels={'autoheal': 'true'},
-                environment={
-                    'TWS_USERID': username,
-                    'TWS_PASSWORD': password,
-                    'TRADING_MODE': trading_mode,
-                    'TWS_SETTINGS_PATH': '/home/ibgateway/Jts',
-                    'VNC_SERVER_PASSWORD': 'changeme',
-                    'TWS_ACCEPT_INCOMING': 'accept',
-                    'AUTO_RESTART_TIME': '11:30 PM',
-                    'TIME_ZONE': 'America/New_York',
-                    'RELOGIN_AFTER_TWOFA_TIMEOUT': 'yes',
-                    'TWOFA_TIMEOUT_ACTION': 'restart',
-                },
-                ports={'5900/tcp': ('127.0.0.1', 5900)},
-                healthcheck={
-                    'test': ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4001' || exit 1"],
-                    'interval': 60_000_000_000, 'timeout': 10_000_000_000,
-                    'retries': 3, 'start_period': 180_000_000_000,
-                },
-            )
-            network = client.networks.get(net_name)
-            network.connect(container, aliases=['ib-gateway'])
-            container.start()
-            current_app.logger.info('IB Gateway recréé (mode=%s, alias=ib-gateway)', trading_mode)
-        except Exception as e:
-            current_app.logger.warning('_recreate_gateway: %s', e)
-
-    threading.Thread(target=_restart, daemon=True).start()
-
-
 def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str):
     """Met à jour le .env (credentials + mode + port socat) et recrée le gateway."""
     port = IBKR_SOCAT_PORT.get(trading_mode, 4003)
@@ -245,7 +189,8 @@ def _ibkr_update_env_and_restart(username: str, password: str, trading_mode: str
     # Pointer l'app sur le bon port socat et forcer la reconnexion
     ibkr_service.port = port
     ibkr_service.disconnect()
-    _recreate_gateway(username, password, trading_mode)
+    # Recréation via ibkr_gateway (même env que le compose : READ_ONLY_API=no…)
+    recreate_gateway_async(username, password, trading_mode)
 
 
 @bp.route('/api/ibkr/positions', methods=['GET'])
@@ -835,14 +780,31 @@ def flex_sync():
     return jsonify(payload), code
 
 
+def _latest_db_prices(tickers) -> dict:
+    """
+    Dernier cours connu en base (MarketPriceBar) pour dimensionner l'achat d'un titre
+    pas encore détenu : évite de dépendre des données de marché IBKR (compte sans
+    abonnement temps réel → reqTickers souvent vide).
+    """
+    prices = {}
+    for tk in {(t or '').upper() for t in tickers if t}:
+        bar = (MarketPriceBar.query.filter_by(ticker=tk)
+               .order_by(MarketPriceBar.bar_date.desc()).first())
+        if bar and (bar.close or bar.adj_close):
+            prices[tk] = float(bar.close or bar.adj_close)
+    return prices
+
+
 @bp.route('/api/ibkr/rebalance', methods=['POST'])
 @require_admin
 def ibkr_rebalance():
     """
     Rééquilibrage via IB Gateway.
-    Body JSON: { targets: [{ticker, target_pct, currency?}], dry_run: bool }
-    dry_run=true (défaut) → aperçu sans exécution.
-    Utilise totalQuantity (actions calculées) — plus fiable que cashQty.
+    Body JSON: { targets: [{ticker, target_pct, currency?}], dry_run: bool, allow_cash: bool }
+    dry_run=true (défaut) → plan + simulation whatIf par ordre (commission, rejet
+    éventuel) sans rien exécuter. Les pourcentages s'appliquent à la valeur nette du
+    compte ; quantités fractionnaires ; ventes avant achats ; hors séance les ordres
+    MKT DAY sont acceptés et exécutés à l'ouverture (queued_for_open).
     """
     data = request.get_json() or {}
     targets = data.get('targets', [])
@@ -853,22 +815,62 @@ def ibkr_rebalance():
     if not targets and not go_cash:
         return jsonify({'success': False, 'error': 'targets requis'}), 400
     try:
-        needed = not dry_run
-        if not ibkr_service.ensure_connected(trading_mode=needed):
+        if not ibkr_service.ensure_connected():
             return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
-        result = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run)
+        hints = _latest_db_prices([t.get('ticker') for t in targets])
+        result = ibkr_service.place_rebalance_orders(targets, dry_run=dry_run, price_hints=hints)
         orders = result['orders']
-        placed = [o for o in orders if o.get('status') == 'placed']
+        placed = [o for o in orders if o.get('status') in ('placed', 'filled')]
         failed = [o for o in orders if o.get('status') == 'failed']
         return jsonify({
-            'success': True, 'dry_run': dry_run, 'orders': orders,
+            'success': True, **result,
             'count': len(orders), 'placed_count': len(placed), 'failed_count': len(failed),
-            'total_target_pct': result.get('total_target_pct'),
         })
     except ConnectionError as e:
         return jsonify({'success': False, 'error': str(e)}), 503
     except Exception as e:
         current_app.logger.exception('Erreur rebalance')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/ibkr/orders', methods=['GET'])
+@require_admin
+def ibkr_orders():
+    """Ordres ouverts (tous clients API) + exécutions du jour + résumé du compte."""
+    try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
+        payload = {'success': True, 'open_orders': ibkr_service.get_open_orders()}
+        try:
+            payload['executions'] = ibkr_service.get_executions_today()
+        except Exception as e:
+            payload['executions'] = []
+            payload['executions_error'] = str(e)
+        try:
+            payload['account'] = ibkr_service.get_account_summary()
+        except Exception:
+            payload['account'] = {}
+        return jsonify(payload)
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        current_app.logger.exception('Erreur ordres IBKR')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/ibkr/orders/<int:order_id>/cancel', methods=['POST'])
+@require_admin
+def ibkr_cancel_order(order_id):
+    """Annule un ordre ouvert placé par l'app (orderId ou permId)."""
+    try:
+        if not ibkr_service.ensure_connected():
+            return jsonify({'success': False, 'error': 'Reconnexion IBKR impossible'}), 503
+        result = ibkr_service.cancel_order(order_id)
+        return jsonify(result), 200 if result.get('success') else 409
+    except ConnectionError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    except Exception as e:
+        current_app.logger.exception('Erreur annulation ordre IBKR')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

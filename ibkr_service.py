@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import base64
+import concurrent.futures
 import hashlib
 import logging
+import math
 import random
 import threading
 import time
@@ -11,6 +13,8 @@ from zoneinfo import ZoneInfo
 
 from cryptography.fernet import Fernet
 from ib_async import IB, Stock, Index, Order
+from ib_async.order import OrderStatus
+from ib_async.util import UNSET_DOUBLE
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,120 @@ def _us_market_open() -> bool:
     return 9 * 60 + 30 <= t < 16 * 60
 
 
+def _num(x):
+    """float propre ou None (ib_async renvoie nan / UNSET_DOUBLE quand absent)."""
+    try:
+        if x is None or x == '':
+            return None
+        f = float(x)
+        if f != f or f >= UNSET_DOUBLE / 2:
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Plan de rééquilibrage — logique PURE (sans IBKR), couverte par test_ibkr_service.py
+# ---------------------------------------------------------------------------
+
+# En dessous de cet écart on ne corrige pas : la commission IBKR Pro (0,35–1 $ min)
+# mangerait plusieurs % du mouvement.
+MIN_ORDER_VALUE_USD = 25.0
+# IBKR accepte 4 décimales sur les quantités fractionnaires (compte avec la
+# permission « Fractional Shares » — c'est le cas : positions 1.1941, 0.3929…).
+FRACTIONAL_DECIMALS = 4
+
+
+def _floor_qty(qty: float, fractional: bool) -> float:
+    """Arrondi vers le bas (ne jamais acheter plus que l'écart visé)."""
+    if fractional:
+        scale = 10 ** FRACTIONAL_DECIMALS
+        return math.floor(qty * scale + 1e-9) / scale
+    return float(math.floor(qty + 1e-9))
+
+
+def plan_rebalance(positions: list, base_value: float, targets: list,
+                   prices: dict | None = None, fractional: bool = True,
+                   min_order_value: float = MIN_ORDER_VALUE_USD) -> dict:
+    """
+    Construit la liste d'ordres pour amener le compte sur les cibles.
+
+    positions  : sortie de IBKRService.get_positions() (ticker, qty, market_value,
+                 market_price, currency, con_id, primary_exchange)
+    base_value : valeur de référence des pourcentages — la valeur nette du compte
+                 (NetLiquidation, cash inclus), pas la somme des positions
+    targets    : [{'ticker', 'target_pct', 'currency'?}] ; liste vide → tout vendre
+    prices     : {ticker: prix indicatif} pour les titres pas encore détenus
+
+    Ordre d'exécution : liquidations (hors cibles), allègements, puis achats — le
+    produit des ventes finance les achats. Retour :
+      {'orders': [...], 'skipped': [{'ticker','reason'}], 'total_target_pct': float}
+    """
+    prices = prices or {}
+    targets_pct = {}
+    for t in targets:
+        tk = (t.get('ticker') or '').upper().strip()
+        if tk:
+            targets_pct[tk] = targets_pct.get(tk, 0.0) + float(t.get('target_pct') or 0)
+    current = {(p.get('ticker') or '').upper(): p for p in positions}
+
+    def _entry(tk, p, action, qty, price, cur_val, target_val, target_pct, liquidation):
+        return {
+            'ticker': tk, 'action': action,
+            'qty': round(qty, FRACTIONAL_DECIMALS),
+            'est_price': round(price, 2) if price else None,
+            'est_value': round(qty * price, 2) if price else None,
+            'current_value': round(cur_val, 2), 'target_value': round(target_val, 2),
+            'target_pct': round(target_pct, 2), 'liquidation': liquidation,
+            'currency': p.get('currency') or 'USD',
+            'con_id': p.get('con_id'), 'primary_exchange': p.get('primary_exchange'),
+            'status': 'preview',
+        }
+
+    sells, buys, skipped = [], [], []
+
+    # 1) Liquidations — positions hors cibles : on solde la quantité EXACTE
+    #    (une position fractionnaire arrondie laisserait une poussière invendable).
+    for tk, p in current.items():
+        qty = float(p.get('qty') or 0)
+        if targets_pct.get(tk, 0.0) > 0 or abs(qty) < 1e-9:
+            continue
+        mv = float(p.get('market_value') or 0)
+        price = _num(p.get('market_price')) or (abs(mv / qty) if qty else None)
+        action = 'SELL' if qty > 0 else 'BUY'      # BUY = couvrir un short résiduel
+        sells.append(_entry(tk, p, action, abs(qty), price or 0.0, mv, 0.0, 0.0, True))
+
+    # 2) Cibles — écart entre valeur actuelle et valeur visée
+    for tk, pct in targets_pct.items():
+        if pct <= 0:
+            continue
+        p = current.get(tk, {})
+        cur_val = float(p.get('market_value') or 0)
+        cur_qty = float(p.get('qty') or 0)
+        target_val = base_value * pct / 100.0
+        diff = target_val - cur_val
+        if abs(diff) < min_order_value:
+            skipped.append({'ticker': tk, 'reason': f'écart {diff:+.0f} $ sous le seuil de {min_order_value:.0f} $'})
+            continue
+        price = _num(p.get('market_price')) or _num(prices.get(tk))
+        if not price or price <= 0:
+            skipped.append({'ticker': tk, 'reason': 'prix indisponible pour dimensionner l\'ordre'})
+            continue
+        action = 'BUY' if diff > 0 else 'SELL'
+        qty = _floor_qty(abs(diff) / price, fractional)
+        if action == 'SELL':
+            qty = min(qty, round(abs(cur_qty), FRACTIONAL_DECIMALS))
+        if qty <= 0:
+            skipped.append({'ticker': tk, 'reason': 'quantité nulle après arrondi (écart inférieur à une action)'})
+            continue
+        entry = _entry(tk, p, action, qty, price, cur_val, target_val, pct, False)
+        (sells if action == 'SELL' else buys).append(entry)
+
+    return {'orders': sells + buys, 'skipped': skipped,
+            'total_target_pct': round(sum(targets_pct.values()), 1)}
+
+
 class IBKRService:
     """
     Connexion à IB Gateway via ib_async.
@@ -36,50 +154,63 @@ class IBKRService:
     unique auquel on soumet les coroutines, et créer l'objet IB() À L'INTÉRIEUR de ce
     loop. Les opérations sont sérialisées par self._lock (une seule à la fois).
 
-    - clientId aléatoire (100→99999) à chaque (re)connexion : évite l'erreur 326
-      "client id already in use" si une ancienne socket traîne côté gateway. Comme
-      la connexion est persistante et fermée proprement, un seul clientId est actif
-      à la fois — on reste loin de la limite de 32 connexions simultanées d'IBKR.
-    - readonly=True par défaut (lecture seule, sécurité). La connexion bascule en
-      mode trading (readonly=False) uniquement pour exécuter des ordres réels.
-    - cooldown après échec pour ne pas marteler le gateway (51 tickers d'un calcul).
+    Ordres — ce qui protège réellement le compte :
+      - côté gateway : READ_ONLY_API=no / BYPASS_WARNING / ALLOW_BLIND_TRADING
+        (ibkr_gateway.py) ; avec l'API en lecture seule IBKR rejette tout ordre
+        par l'erreur 321 « API interface is currently in Read-Only mode » ;
+      - côté app : `dry_run` (aperçu + whatIf) puis confirmation explicite, routes
+        protégées par @require_admin.
+      Le paramètre `readonly` d'ib_async n'a AUCUN effet serveur (il saute juste la
+      synchro des ordres au démarrage) : l'ancienne bascule readonly→trading avant
+      chaque ordre n'apportait rien et déstabilisait la session (reconnexions,
+      timeouts de synchro). On se connecte une fois, en mode trading.
+      clientId fixe (PREFERRED_CLIENT_ID) pour retrouver et annuler nos ordres après
+      une reconnexion ; repli sur un id aléatoire si l'id est encore pris (326).
     """
 
-    CONNECT_COOLDOWN = 60  # secondes avant de retenter après un échec
+    CONNECT_COOLDOWN = 60       # secondes avant de retenter après un échec
+    HIST_MIN_INTERVAL = 0.4     # pacing IBKR : ~60 requêtes historiques / 10 min
+    PREFERRED_CLIENT_ID = 11
+    QUALIFY_TIMEOUT = 6.0       # qualification d'un contrat (secdef) — lent le week-end
+    WHATIF_TIMEOUT = 10.0
+    ORDER_ACK_TIMEOUT = 15.0    # attente d'un statut décisif après placeOrder
 
-    # Throttle pacing IBKR : ~60 requêtes historiques / 10 min → on espace de 0.4s
-    HIST_MIN_INTERVAL = 0.4
+    # Statuts après lesquels attendre davantage n'apporte rien
+    _DECISIVE_STATUSES = frozenset({
+        OrderStatus.PreSubmitted, OrderStatus.Submitted, OrderStatus.Filled,
+        OrderStatus.Cancelled, OrderStatus.ApiCancelled, OrderStatus.Inactive,
+        OrderStatus.ValidationError,
+    })
 
-    def __init__(self, host='ib-gateway', port=4003, client_id=1):
+    def __init__(self, host='ib-gateway', port=4003, client_id=PREFERRED_CLIENT_ID):
         self.host = host
         self.port = port
+        self.preferred_client_id = int(client_id)
         self._client_id = 0
         self._lock = threading.Lock()
         self._connected_at = None
         self._last_error = None
         self._last_failed_at = None  # horodatage du dernier échec de connexion
         self._ib = None
-        self._readonly = True        # mode de la connexion courante
         self._last_hist_call = 0.0   # throttle des requêtes historiques (pacing)
+        self.fractional = True       # quantités fractionnaires (permission du compte)
 
-        # Event loop PERMANENT dans un thread dédié. ib_async ne fonctionne pas
-        # avec asyncio.run() dans un thread secondaire (gunicorn gthread) : il faut
-        # un loop run_forever() unique auquel on soumet les coroutines, et créer
-        # l'objet IB() À L'INTÉRIEUR de ce loop.
+        # Event loop PERMANENT dans un thread dédié (voir docstring de la classe).
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True).start()
 
-    def _next_cid(self):
-        # clientId aléatoire dans une grande plage : évite les collisions avec
-        # d'éventuelles connexions zombies (erreur 326). Le loop permanent +
-        # disconnect propre évite d'en créer de nouvelles.
-        self._client_id = random.randint(100, 99999)
-        return self._client_id
-
     def _submit(self, coro, timeout=45):
-        """Soumet une coroutine au loop permanent et attend le résultat."""
+        """
+        Soumet une coroutine au loop permanent et attend le résultat. En cas de
+        timeout la coroutine est ANNULÉE : sinon elle continuerait en arrière-plan
+        (ordres placés après que l'appelant a reçu une erreur, loop bouché).
+        """
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise
 
     def _is_connected(self) -> bool:
         return self._ib is not None and self._ib.isConnected()
@@ -88,56 +219,56 @@ class IBKRService:
     # Connexion / statut
     # ------------------------------------------------------------------
 
-    def connect(self, force: bool = True, readonly: bool = True) -> dict:
+    def connect(self, force: bool = True) -> dict:
         with self._lock:
             if not force and self._is_connected():
-                # Mode identique : rien à faire
-                if self._readonly == readonly:
-                    return {'success': True}
-                # Trading mode (readonly=False) satisfait aussi les requêtes readonly :
-                # ne pas reconnecter et casser une session de trading en cours.
-                if readonly and not self._readonly:
-                    return {'success': True}
+                return {'success': True}
 
             async def _connect():
-                # IB() créé DANS le loop permanent → apiStart lié au bon loop
-                ib = IB()
-                cid = self._next_cid()
-                try:
-                    await ib.connectAsync(
-                        self.host, self.port,
-                        clientId=cid, readonly=readonly, timeout=15,
-                    )
-                except Exception as e:
-                    # connectAsync lance reqPositions/reqExecutions/reqAccountUpdates
-                    # qui peuvent timeout sur ce gateway SANS empêcher la connexion
-                    # socket. Si la socket est connectée, on garde — portfolio()
-                    # fonctionne malgré ces warnings.
-                    if not ib.isConnected():
-                        raise
-                    logger.info('connectAsync : warnings de sync ignorés (%s)', e)
-                await asyncio.sleep(1.5)  # laisser arriver les données initiales
-                if not ib.isConnected():
-                    raise RuntimeError('Connexion non établie')
-                # Déconnecter l'ancienne instance APRÈS que la nouvelle est prête.
-                # Ne jamais mettre self._ib = None avant : d'autres coroutines sur le
-                # même loop l'utilisent et obtiendraient NoneType AttributeError.
-                if self._ib is not None:
+                # clientId fixe d'abord (retrouve nos ordres après reconnexion), puis
+                # aléatoire si le gateway garde encore une socket zombie avec cet id.
+                candidates = [self.preferred_client_id, random.randint(100, 99999)]
+                last_exc = None
+                for attempt, cid in enumerate(candidates):
+                    ib = IB()   # créé DANS le loop permanent → apiStart lié au bon loop
                     try:
-                        self._ib.disconnect()
-                    except Exception:
-                        pass
-                self._ib = ib
-                self._readonly = readonly
-                return cid
+                        await ib.connectAsync(self.host, self.port, clientId=cid,
+                                              readonly=False, timeout=15)
+                    except Exception as e:
+                        # connectAsync lance reqPositions/reqOpenOrders/reqAccountUpdates
+                        # qui peuvent timeout sur ce gateway SANS empêcher la connexion
+                        # socket. Si la socket est connectée, on garde — portfolio()
+                        # fonctionne malgré ces warnings.
+                        if not ib.isConnected():
+                            last_exc = e
+                            if attempt == 0:
+                                logger.warning('IBKR clientId %s indisponible (%s) — essai id aléatoire', cid, e)
+                                continue
+                            raise
+                        logger.info('connectAsync : warnings de sync ignorés (%s)', e)
+                    await asyncio.sleep(1.5)  # laisser arriver les données initiales
+                    if not ib.isConnected():
+                        raise RuntimeError('Connexion non établie')
+                    # Déconnecter l'ancienne instance APRÈS que la nouvelle est prête.
+                    # Ne jamais mettre self._ib = None avant : d'autres coroutines sur le
+                    # même loop l'utilisent et obtiendraient NoneType AttributeError.
+                    if self._ib is not None:
+                        try:
+                            self._ib.disconnect()
+                        except Exception:
+                            pass
+                    self._ib = ib
+                    self._client_id = cid
+                    return cid
+                raise last_exc or RuntimeError('Connexion impossible')
 
             try:
-                cid = self._submit(_connect(), timeout=40)
+                cid = self._submit(_connect(), timeout=60)
                 self._connected_at = time.time()
                 self._last_error = None
                 self._last_failed_at = None  # reset cooldown après succès
                 logger.info('IBKR connecté (%s:%s, clientId=%s)', self.host, self.port, cid)
-                return {'success': True}
+                return {'success': True, 'client_id': cid}
             except Exception as e:
                 raw = str(e)
                 # DNS / réseau : le conteneur Docker n'est pas démarré ou pas accessible
@@ -182,27 +313,25 @@ class IBKRService:
             'last_error': self._last_error,
             'host': self.host,
             'port': self.port,
+            'client_id': self._client_id or None,
             'cooldown_remaining_s': cooldown_remaining,
+            'fractional': self.fractional,
         }
 
     def ensure_connected(self, trading_mode: bool = False) -> bool:
         """
-        Reconnecte automatiquement si la session est tombée.
-        trading_mode=True → connecte directement en readonly=False (évite la bascule ultérieure).
-        Respecte un cooldown après un échec.
+        Reconnecte automatiquement si la session est tombée. Respecte un cooldown
+        après un échec. `trading_mode` est conservé pour les appelants : la
+        connexion autorise toujours les ordres (voir docstring de la classe).
         """
         if self._is_connected():
-            # Si on demande le trading mode et qu'on est encore en readonly → bascule
-            if trading_mode and self._readonly:
-                self._ensure_trading()
             return True
         if self._last_failed_at and (time.time() - self._last_failed_at) < self.CONNECT_COOLDOWN:
             remaining = self.CONNECT_COOLDOWN - (time.time() - self._last_failed_at)
             logger.debug('ensure_connected: cooldown actif (%.0fs restants) — dernière erreur : %s',
                          remaining, self._last_error)
             return False
-        readonly = not trading_mode
-        return self.connect(force=False, readonly=readonly).get('success', False)
+        return self.connect(force=False).get('success', False)
 
     # ------------------------------------------------------------------
     # Données portfolio
@@ -243,6 +372,35 @@ class IBKRService:
             'winning_count':        len(winners),
         }
 
+    def get_account_summary(self) -> dict:
+        """
+        Valeurs de compte synchronisées à la connexion (accountValues) :
+        net_liquidation, total_cash, buying_power, available_funds, account_type.
+        Devise USD/BASE privilégiée. Clés absentes si non disponibles.
+        """
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        async def fn():
+            return list(self._ib.accountValues())
+        vals = self._submit(fn(), timeout=10)
+        wanted = {'NetLiquidation': 'net_liquidation', 'TotalCashValue': 'total_cash',
+                  'BuyingPower': 'buying_power', 'AvailableFunds': 'available_funds'}
+        out = {}
+        for v in vals:
+            if v.tag == 'AccountType':
+                out['account_type'] = v.value
+                continue
+            key = wanted.get(v.tag)
+            if not key:
+                continue
+            f = _num(v.value)
+            if f is None:
+                continue
+            if v.currency in ('USD', 'BASE') or key not in out:
+                out[key] = round(f, 2)
+        return out
+
     def get_cash_balance(self) -> float | None:
         """
         Retourne le cash disponible (TotalCashValue BASE) depuis le compte IBKR.
@@ -252,16 +410,7 @@ class IBKRService:
         if not self._is_connected():
             return None
         try:
-            async def fn():
-                return self._ib.accountValues()
-            vals = self._submit(fn(), timeout=10)
-            for v in vals:
-                if v.tag == 'TotalCashValue' and v.currency in ('USD', 'BASE'):
-                    return round(float(v.value), 2)
-            # Fallback : première occurrence de TotalCashValue sans filtre devise
-            for v in vals:
-                if v.tag == 'TotalCashValue':
-                    return round(float(v.value), 2)
+            return self.get_account_summary().get('total_cash')
         except Exception as e:
             logger.warning('get_cash_balance: %s', e)
         return None
@@ -347,7 +496,6 @@ class IBKRService:
         symbols = [t.upper() for t in tickers if t]
 
         async def fn():
-            import asyncio as _asyncio
             contracts = {}
             for sym in symbols:
                 contracts[sym] = Stock(sym, 'SMART', 'USD')
@@ -358,9 +506,9 @@ class IBKRService:
             valid = {}
             for sym, c in contracts.items():
                 try:
-                    await _asyncio.wait_for(self._ib.qualifyContractsAsync(c), timeout=5.0)
+                    await asyncio.wait_for(self._ib.qualifyContractsAsync(c), timeout=5.0)
                     valid[sym] = c
-                except (_asyncio.TimeoutError, Exception) as e:
+                except Exception as e:
                     logger.warning('get_quotes: contrat non qualifié %s (%s)', sym, e)
 
             if not valid:
@@ -370,24 +518,13 @@ class IBKRService:
             # laisse le différé prendre le relais si pas d'abonnement.
             self._ib.reqMarketDataType(3)
             # asyncio.wait_for garantit l'annulation propre de la coroutine si timeout
-            # (contrairement à _submit timeout qui abandonne sans annuler → loop bouché)
-            tickers_data = await _asyncio.wait_for(
+            tickers_data = await asyncio.wait_for(
                 self._ib.reqTickersAsync(*valid.values()),
                 timeout=8.0,
             )
             return {c.symbol: t for c, t in zip(valid.values(), tickers_data)}
 
         raw = self._submit(fn(), timeout=15)
-
-        def _num(x):
-            try:
-                if x is None:
-                    return None
-                xf = float(x)
-                # ib_async renvoie nan quand la donnée est absente
-                return None if xf != xf else xf
-            except (TypeError, ValueError):
-                return None
 
         result = {}
         for sym, t in (raw or {}).items():
@@ -410,97 +547,6 @@ class IBKRService:
             result[sym] = {'last': last, 'prev_close': prev_close, 'pct': pct}
         return result
 
-    def _ensure_trading(self) -> None:
-        """
-        Garantit une connexion en mode trading (readonly=False).
-        Stratégie : si déjà en trading mode → rien à faire.
-        Si en readonly → déconnexion + reconnexion en trading.
-        Retry 1× avec délai si la reconnexion échoue (gateway instable).
-        """
-        if not self._is_connected():
-            raise ConnectionError('Non connecté à IB Gateway')
-        if not self._readonly:
-            return  # déjà en trading mode, rien à faire
-
-        # 1ère tentative
-        res = self.connect(force=True, readonly=False)
-        if res.get('success'):
-            return
-
-        # Retry après 3s (le gateway peut mettre un moment à libérer la socket)
-        logger.warning('_ensure_trading: 1ère tentative échouée (%s) — retry dans 3s', res.get('error'))
-        time.sleep(3)
-        res = self.connect(force=True, readonly=False)
-        if not res.get('success'):
-            raise ConnectionError(
-                f"Impossible de passer en mode trading après 2 tentatives : {res.get('error')}"
-            )
-
-    def _await_ready(self, timeout: float = 20.0) -> bool:
-        """
-        Attend que la session IB réponde RÉELLEMENT (reqCurrentTime aboutit), plutôt
-        qu'un sleep arbitraire. Une session fraîchement (re)connectée mais pas encore
-        prête laisse reqCurrentTime timeout : on sonde jusqu'à succès ou timeout.
-        """
-        async def _probe():
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                try:
-                    await asyncio.wait_for(self._ib.reqCurrentTimeAsync(), timeout=4.0)
-                    return True
-                except Exception:
-                    await asyncio.sleep(1.0)
-            return False
-        try:
-            return bool(self._submit(_probe(), timeout=timeout + 6))
-        except Exception:
-            return False
-
-    async def _qualify_and_place(self, contract, order, dry_run: bool) -> dict:
-        """Place l'ordre. Retourne {'status', 'order_id'?, 'error'?}.
-        On ne qualifie pas ici : qualifyContractsAsync ne se cancelle pas proprement sur
-        ce gateway et fait bloquer fn(). Les contrats Stock(ticker,'SMART','USD') sont
-        routés sans qualification par IBKR ; les rejets sont détectés via order_status.
-        """
-        if dry_run:
-            return {'status': 'preview'}
-        try:
-            trade = self._ib.placeOrder(contract, order)
-            order_id = getattr(trade.order, 'orderId', None)
-
-            # Attendre le VRAI statut via les événements du loop (ib_async met à jour
-            # le Trade au fil des messages). On sonde jusqu'à un état significatif —
-            # bien plus fiable qu'un sleep fixe qui lit un statut vide/périmé.
-            ACCEPTED = ('PreSubmitted', 'Submitted', 'Filled')
-            TERMINAL_BAD = ('Cancelled', 'ApiCancelled', 'Inactive')
-            status = ''
-            for _ in range(25):                 # ~10s max (25 × 0.4s)
-                await asyncio.sleep(0.4)
-                status = getattr(trade.orderStatus, 'status', '') or ''
-                if status in ACCEPTED or status in TERMINAL_BAD:
-                    break
-
-            # Raison de rejet éventuelle depuis le journal du trade
-            reason = ''
-            try:
-                msgs = [e.message for e in getattr(trade, 'log', []) if getattr(e, 'message', '')]
-                reason = ' | '.join(msgs[-2:])
-            except Exception:
-                pass
-
-            if status in TERMINAL_BAD:
-                return {'status': 'failed', 'order_id': order_id, 'order_status': status,
-                        'error': f'Ordre rejeté/annulé par IBKR ({status}) {("· " + reason) if reason else ""}'.strip()}
-            if status == '':
-                return {'status': 'failed', 'order_id': order_id, 'order_status': 'unknown',
-                        'error': f'Aucun statut reçu (session non prête ?) {("· " + reason) if reason else ""}'.strip()}
-
-            filled = getattr(trade.orderStatus, 'filled', 0)
-            return {'status': 'placed', 'order_id': order_id, 'order_status': status,
-                    'filled': filled, 'note': reason or None}
-        except Exception as e:
-            return {'status': 'failed', 'error': str(e)[:200]}
-
     async def _get_market_price(self, ticker: str, currency: str = 'USD',
                                timeout: float = 12.0) -> float | None:
         """Prix marché en temps réel (ou différé) pour calculer la quantité en actions."""
@@ -513,153 +559,318 @@ class IBKRService:
                 return None
             t = tickers[0]
             for attr in ('last', 'close', 'bid', 'ask'):
-                v = getattr(t, attr, None)
-                try:
-                    f = float(v) if v is not None else None
-                    if f and f == f and f > 0:
-                        return f
-                except (TypeError, ValueError):
-                    pass
+                f = _num(getattr(t, attr, None))
+                if f and f > 0:
+                    return f
             return None
         except Exception as e:
             logger.warning('_get_market_price %s : %s', ticker, e)
             return None
 
-    def place_rebalance_orders(self, targets: list, dry_run: bool = True) -> dict:
+    # ------------------------------------------------------------------
+    # Ordres
+    # ------------------------------------------------------------------
+
+    async def _resolve_contract(self, ticker: str, currency: str = 'USD',
+                                con_id=None, primary_exchange: str | None = None):
         """
-        Rééquilibrage vers les cibles (ticker + target_pct du portefeuille).
-        Utilise totalQuantity (actions calculées depuis le prix live) — plus fiable
-        que cashQty qui n'est pas supporté sur tous les comptes/instruments IBKR.
+        Contrat routé SMART. Les contrats renvoyés par portfolio() ont exchange=''
+        (ordre invalide tel quel) : on repart toujours de Stock(..., 'SMART').
+        Avec un conId connu (position détenue) IBKR identifie le titre sans
+        ambiguïté ; sinon on qualifie (secdef), et à défaut on laisse IBKR router
+        le symbole SMART/USD (+ primaryExchange si connu).
         """
-        # Auto-reconnexion si la connexion s'est interrompue (jobs background peuvent
-        # provoquer des timeouts qui déconnectent le client ib_async).
+        ticker = ticker.upper()
+        if con_id:
+            return Stock(ticker, 'SMART', currency, conId=int(con_id),
+                         primaryExchange=primary_exchange or '')
+        contract = Stock(ticker, 'SMART', currency, primaryExchange=primary_exchange or '')
+        try:
+            await asyncio.wait_for(self._ib.qualifyContractsAsync(contract), self.QUALIFY_TIMEOUT)
+        except Exception as e:
+            logger.warning('qualification %s impossible (%s) — contrat SMART non qualifié', ticker, e)
+        return contract
+
+    @staticmethod
+    def _build_order(action: str, qty: float | None = None, order_type: str = 'MKT',
+                     limit_price: float | None = None, tif: str = 'DAY',
+                     cash: float | None = None) -> Order:
+        """
+        MKT DAY par défaut : exécution immédiate en séance, sinon file d'attente
+        pour la prochaine ouverture (IBKR accepte un MKT hors séance, PreSubmitted).
+        `cash` → ordre en montant (cashQty) : IBKR calcule la quantité.
+        """
+        order = Order(action=action, orderType=order_type, tif=tif, outsideRth=False,
+                      totalQuantity=round(float(qty or 0), FRACTIONAL_DECIMALS))
+        if order_type == 'LMT' and limit_price is not None:
+            order.lmtPrice = float(limit_price)
+        if cash is not None:
+            order.cashQty = round(float(cash), 2)
+        return order
+
+    def _error_collector(self):
+        """(liste, handler) pour capturer les erreurs IBKR émises pendant un appel."""
+        errors = []
+
+        def handler(reqId, errorCode, errorString, *rest):
+            errors.append((reqId, errorCode, errorString))
+        return errors, handler
+
+    async def _whatif(self, contract, order) -> dict:
+        """
+        Simulation serveur (commission, marge) SANS placer l'ordre. Remonte aussi la
+        raison d'un rejet (ex. 321 API en lecture seule, précautions, titre non
+        fractionnable) : c'est la pré-validation du dry_run.
+        """
+        errors, handler = self._error_collector()
+        self._ib.errorEvent += handler
+        state, timed_out = None, False
+        try:
+            state = await asyncio.wait_for(self._ib.whatIfOrderAsync(contract, order), self.WHATIF_TIMEOUT)
+        except asyncio.TimeoutError:
+            timed_out = True
+        except Exception as e:
+            return {'whatif': 'error', 'whatif_error': str(e)[:200]}
+        finally:
+            self._ib.errorEvent -= handler
+        await asyncio.sleep(0)   # laisser passer un éventuel message d'erreur tardif
+        rejects = [(c, m) for r, c, m in errors if r != -1 and not (2100 <= c < 2200)]
+        if rejects:
+            code, msg = rejects[-1]
+            return {'whatif': 'rejected', 'whatif_error': f'{code} · {msg[:200]}'}
+        if state is None:
+            return {'whatif': 'timeout' if timed_out else 'error'}
+        commission = _num(state.commission)
+        if commission is None:
+            commission = _num(state.maxCommission)
+        return {
+            'whatif': 'ok',
+            'commission': round(commission, 2) if commission is not None else None,
+            'commission_currency': state.commissionCurrency or None,
+            'margin_change': _num(state.initMarginChange),
+            'whatif_warning': (state.warningText or '')[:200] or None,
+        }
+
+    async def _place_and_wait(self, contract, order, timeout: float | None = None) -> dict:
+        """
+        Place l'ordre et attend un statut DÉCISIF via les événements du loop
+        (ib_async met à jour le Trade au fil des messages). Les codes d'erreur IBKR
+        liés à l'orderId sont capturés pour remonter la vraie raison d'un rejet.
+        """
+        timeout = timeout or self.ORDER_ACK_TIMEOUT
+        errors, handler = self._error_collector()
+        self._ib.errorEvent += handler
+        try:
+            trade = self._ib.placeOrder(contract, order)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if trade.orderStatus.status in self._DECISIVE_STATUSES:
+                    break
+                await asyncio.sleep(0.25)
+            await asyncio.sleep(0.3)   # message d'erreur qui suit parfois le statut
+        except Exception as e:
+            return {'status': 'failed', 'order_status': 'exception', 'error': str(e)[:200]}
+        finally:
+            self._ib.errorEvent -= handler
+        return self._trade_result(trade, errors)
+
+    @staticmethod
+    def _trade_result(trade, errors) -> dict:
+        oid = trade.order.orderId
+        st = trade.orderStatus.status or ''
+        msgs = [f'{c} · {m}' for r, c, m in errors if r == oid]
+        if not msgs:
+            msgs = [e.message for e in trade.log if e.message and e.message != 'Modify']
+        detail = ' | '.join(m[:220] for m in msgs[-2:])
+        res = {
+            'order_id': oid, 'perm_id': trade.order.permId or None,
+            'client_id': trade.order.clientId, 'order_status': st or 'unknown',
+            'filled': _num(trade.orderStatus.filled) or 0.0,
+            'remaining': _num(trade.orderStatus.remaining),
+            'avg_fill_price': _num(trade.orderStatus.avgFillPrice) or None,
+            'why_held': trade.orderStatus.whyHeld or None,
+        }
+        if st == OrderStatus.Filled:
+            res.update(status='filled')
+        elif st in (OrderStatus.PreSubmitted, OrderStatus.Submitted):
+            res.update(status='placed', note=detail or None)
+        elif st == OrderStatus.ValidationError:
+            res.update(status='failed', error=f'Rejeté par IBKR : {detail or "erreur de validation"}')
+        elif st in OrderStatus.DoneStates:
+            res.update(status='failed', error=f'Ordre {st} : {detail or "annulé par IBKR"}')
+        else:
+            res.update(status='pending',
+                       note=f'Statut « {st or "inconnu"} » après délai — à vérifier dans les ordres IBKR'
+                            + (f' · {detail}' if detail else ''))
+        return res
+
+    def place_rebalance_orders(self, targets: list, dry_run: bool = True,
+                               price_hints: dict | None = None) -> dict:
+        """
+        Rééquilibrage vers les cibles (ticker + target_pct de la valeur nette du compte).
+
+        dry_run=True  : plan + simulation whatIf par ordre (commission, rejet éventuel).
+        dry_run=False : ventes puis achats, MKT DAY. Hors séance les ordres sont
+                        acceptés et exécutés à la prochaine ouverture (queued_for_open).
+                        Si une vente échoue, les achats sont suspendus (l'exposition
+                        visée suppose le produit des ventes).
+        """
         if not self._is_connected():
-            res = self.connect(force=True, readonly=True)
+            res = self.connect(force=True)
             if not res.get('success'):
-                raise ConnectionError(f"Non connecté à IB Gateway : {res.get('error','')}")
-            time.sleep(3)  # laisser la connexion se stabiliser
+                raise ConnectionError(f"Non connecté à IB Gateway : {res.get('error', '')}")
 
-        # Récupérer le portfolio AVANT de basculer en trading mode : la connexion est
-        # encore stable (readonly), ce qui évite les timeouts post-reconnexion.
         stats = self.get_portfolio_stats()
-
-        # Ordres au marché fiables uniquement en séance US. Hors séance, on refuse
-        # proprement l'exécution réelle (les MKT/OPG hors séance étaient rejetés en
-        # ValidationError). Le dry_run reste possible pour prévisualiser à tout moment.
+        try:
+            account = self.get_account_summary()
+        except Exception as e:
+            logger.warning('place_rebalance_orders: account summary indisponible (%s)', e)
+            account = {}
+        base_value = account.get('net_liquidation') or stats['total_value']
         market_open = _us_market_open()
-        if not dry_run and not market_open:
-            return {'orders': [], 'blocked': True,
-                    'error': "Marché US fermé — relance le rééquilibrage en séance "
-                             "(15h30–22h00 Paris) pour des ordres au marché fiables.",
-                    'total_target_pct': round(sum(float(t.get('target_pct', 0)) for t in targets), 1)}
 
-        if not dry_run:
-            was_readonly = self._readonly
-            self._ensure_trading()
-            if was_readonly:
-                # Attendre que la session trading réponde vraiment (au lieu d'un
-                # sleep(10) arbitraire) : la connexion est stable dès que reqCurrentTime OK.
-                self._await_ready(timeout=20)
-        total_value    = stats['total_value']
-        current        = {p['ticker']: p for p in stats['positions']}
-        target_tickers = {t['ticker'].upper() for t in targets}
-        total_target_pct = sum(float(t.get('target_pct', 0)) for t in targets)
-
-        # En séance : ordre au marché valable la journée (exécution immédiate).
-        tif = 'DAY'
-        logger.info('place_rebalance_orders: marché %s → tif=%s',
-                    'OUVERT' if market_open else 'FERMÉ', tif)
+        plan = plan_rebalance(stats['positions'], base_value, targets,
+                              prices=price_hints, fractional=self.fractional)
+        orders = plan['orders']
+        logger.info('place_rebalance_orders: %d ordre(s), base=%.0f, marché %s, dry_run=%s',
+                    len(orders), base_value, 'OUVERT' if market_open else 'FERMÉ', dry_run)
 
         async def fn():
-            orders = []
-            # Contrats réels du portfolio (pour ventes exactes)
-            real_contracts = {}
-            for item in self._ib.portfolio():
-                c = item.contract
-                real_contracts[c.localSymbol or c.symbol] = c
-
-            # 1) Positions cibles — calcul en nb d'actions depuis le prix live
-            for t in targets:
-                ticker       = t['ticker'].upper()
-                target_pct   = float(t.get('target_pct', 0))
-                currency     = t.get('currency', 'USD')
-                target_value = total_value * target_pct / 100
-                cur_value    = current.get(ticker, {}).get('market_value', 0) or 0
-                cur_qty      = current.get(ticker, {}).get('qty', 0) or 0
-                diff_usd     = target_value - cur_value
-
-                if abs(diff_usd) < 10:   # mouvement < $10 → on ignore
+            sells_failed = False
+            for entry in orders:
+                if not dry_run and entry['action'] == 'BUY' and not entry['liquidation'] and sells_failed:
+                    entry.update(status='skipped',
+                                 error='Achat suspendu : une vente a échoué (relancer après correction)')
                     continue
-
-                action = 'BUY' if diff_usd > 0 else 'SELL'
-                contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', currency)
-
-                # Récupérer le prix pour calculer la quantité en actions.
-                # Hors séance (OPG) : IBKR ne répond pas aux demandes de prix, on saute.
-                price = None
-                if not dry_run and market_open:
-                    price = await self._get_market_price(ticker, currency)
-                if price is None:
-                    # En dry_run ou si prix indisponible : estimer depuis market_value/qty
-                    cur_price = current.get(ticker, {}).get('market_price')
-                    price = cur_price if cur_price else (abs(cur_value / cur_qty) if cur_qty else 100)
-
-                qty = max(1, int(abs(diff_usd) / price))
-                if action == 'SELL':
-                    qty = min(qty, int(abs(cur_qty)))   # ne pas vendre plus qu'on a
-
-                if qty < 1:
+                contract = await self._resolve_contract(
+                    entry['ticker'], entry.get('currency') or 'USD',
+                    entry.get('con_id'), entry.get('primary_exchange'))
+                order = self._build_order(entry['action'], entry['qty'])
+                entry.update(order_type=order.orderType, tif=order.tif)
+                if dry_run:
+                    entry.update(await self._whatif(contract, order))
                     continue
+                entry.update(await self._place_and_wait(contract, order))
+                if entry['action'] == 'SELL' and entry['status'] == 'failed':
+                    sells_failed = True
+            return orders
 
-                entry = {
-                    'ticker': ticker, 'action': action, 'qty': qty,
-                    'est_price': round(price, 2), 'est_value': round(qty * price, 2),
-                    'current_value': round(cur_value, 2), 'target_value': round(target_value, 2),
-                    'liquidation': False, 'status': 'preview', 'tif': tif,
-                }
-                orders.append(entry)
-                order = Order(action=action, orderType='MKT', totalQuantity=qty,
-                              tif=tif, outsideRth=False)
-                result = await self._qualify_and_place(contract, order, dry_run)
-                entry.update(result)
+        timeout = 30 + len(orders) * (self.ORDER_ACK_TIMEOUT + self.QUALIFY_TIMEOUT + 2)
+        orders = self._submit(fn(), timeout=timeout)
+        return {
+            'orders': orders, 'skipped': plan['skipped'],
+            'total_target_pct': plan['total_target_pct'],
+            'base_value': round(base_value, 2), 'cash': account.get('total_cash'),
+            'market_open': market_open, 'queued_for_open': not market_open,
+            'fractional': self.fractional, 'dry_run': dry_run,
+        }
 
-            # 2) Liquidations — positions hors cibles, vente totalité
-            for ticker, p in current.items():
-                if ticker in target_tickers:
-                    continue
-                qty = p.get('qty') or 0
-                if abs(qty) < 1e-6:
-                    continue
-                mv       = p.get('market_value') or 0
-                action   = 'SELL' if qty > 0 else 'BUY'
-                entry = {
-                    'ticker': ticker, 'action': action, 'qty': abs(qty),
-                    'est_price': round(abs(mv / qty), 2) if qty else 0,
-                    'est_value': round(abs(mv), 2),
-                    'current_value': round(mv, 2), 'target_value': 0.0,
-                    'liquidation': True, 'status': 'preview', 'tif': tif,
-                }
-                orders.append(entry)
-                contract = real_contracts.get(ticker) or Stock(ticker, 'SMART', p.get('currency', 'USD'))
-                order = Order(action=action, orderType='MKT', totalQuantity=abs(qty),
-                              tif=tif, outsideRth=False)
-                result = await self._qualify_and_place(contract, order, dry_run)
-                entry.update(result)
+    def place_single_order(self, ticker: str, action: str, qty: float | None = None,
+                           cash: float | None = None, order_type: str = 'MKT',
+                           limit_price: float | None = None, tif: str = 'DAY',
+                           dry_run: bool = False, currency: str = 'USD') -> dict:
+        """
+        Un ordre isolé (tests de bout en bout, dépannage). dry_run → whatIf seulement.
+        Réutilise le contrat réel (conId) si le titre est en portefeuille.
+        """
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+        action = action.upper()
+        held = {p['ticker']: p for p in self.get_positions()}.get(ticker.upper(), {})
 
-            return {'orders': orders, 'total_target_pct': round(total_target_pct, 1)}
+        async def fn():
+            contract = await self._resolve_contract(ticker, currency, held.get('con_id'),
+                                                    held.get('primary_exchange'))
+            order = self._build_order(action, qty, order_type, limit_price, tif, cash)
+            base = {'ticker': ticker.upper(), 'action': action, 'qty': order.totalQuantity,
+                    'cash': cash, 'order_type': order_type, 'limit_price': limit_price, 'tif': tif,
+                    'contract': f'{contract.symbol} conId={contract.conId or "?"} {contract.exchange}'}
+            if dry_run:
+                base.update(await self._whatif(contract, order))
+            else:
+                base.update(await self._place_and_wait(contract, order))
+            return base
+        return self._submit(fn(), timeout=self.ORDER_ACK_TIMEOUT + self.QUALIFY_TIMEOUT + 15)
 
-        try:
-            return self._submit(fn(), timeout=120)
-        finally:
-            if not dry_run and not self._readonly:
-                try:
-                    self.connect(force=True, readonly=True)
-                except Exception:
-                    pass
+    def get_open_orders(self) -> list:
+        """Ordres ouverts de TOUS les clients API (reqAllOpenOrders)."""
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        async def fn():
+            trades = await asyncio.wait_for(self._ib.reqAllOpenOrdersAsync(), 10)
+            return [self._format_trade(t) for t in trades]
+        return self._submit(fn(), timeout=20)
+
+    def get_executions_today(self) -> list:
+        """Exécutions du jour (reqExecutions, filtre vide)."""
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        async def fn():
+            fills = await asyncio.wait_for(self._ib.reqExecutionsAsync(), 10)
+            out = []
+            for f in fills:
+                ex, cr = f.execution, f.commissionReport
+                out.append({
+                    'time': f.time.isoformat() if hasattr(f.time, 'isoformat') else str(f.time),
+                    'ticker': f.contract.localSymbol or f.contract.symbol,
+                    'side': 'BUY' if ex.side == 'BOT' else 'SELL' if ex.side == 'SLD' else ex.side,
+                    'shares': _num(ex.shares), 'price': _num(ex.price),
+                    'order_id': ex.orderId, 'perm_id': ex.permId, 'exec_id': ex.execId,
+                    'commission': _num(cr.commission), 'commission_currency': cr.currency or None,
+                    'realized_pnl': _num(cr.realizedPNL),
+                })
+            out.sort(key=lambda r: r['time'])
+            return out
+        return self._submit(fn(), timeout=20)
+
+    def cancel_order(self, order_id: int) -> dict:
+        """Annule un ordre ouvert placé par cette app (orderId ou permId)."""
+        if not self._is_connected():
+            raise ConnectionError('Non connecté à IB Gateway')
+
+        async def fn():
+            trades = list(self._ib.openTrades())
+            trade = next((t for t in trades if t.order.orderId == order_id or t.order.permId == order_id), None)
+            if trade is None:
+                trades = await asyncio.wait_for(self._ib.reqAllOpenOrdersAsync(), 10)
+                trade = next((t for t in trades if t.order.orderId == order_id or t.order.permId == order_id), None)
+            if trade is None:
+                return {'success': False, 'error': 'Ordre introuvable parmi les ordres ouverts'}
+            # IBKR n'autorise l'annulation que depuis le client qui a placé l'ordre
+            # (ou le client maître 0) → clientId fixe (PREFERRED_CLIENT_ID).
+            if trade.order.clientId not in (self._client_id, 0):
+                return {'success': False,
+                        'error': f'Ordre placé par un autre client API (clientId {trade.order.clientId}) '
+                                 '— annulable depuis TWS / IBKR Mobile'}
+            self._ib.cancelOrder(trade.order)
+            for _ in range(40):          # ~10 s
+                await asyncio.sleep(0.25)
+                if trade.orderStatus.status in OrderStatus.DoneStates:
+                    break
+            st = trade.orderStatus.status
+            return {'success': st in OrderStatus.DoneStates or st == OrderStatus.PendingCancel,
+                    'order_status': st, 'order_id': trade.order.orderId}
+        return self._submit(fn(), timeout=30)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_trade(t) -> dict:
+        c, o, s = t.contract, t.order, t.orderStatus
+        last_msg = next((e.message for e in reversed(t.log) if e.message), None)
+        return {
+            'order_id': o.orderId or None, 'perm_id': o.permId or None, 'client_id': o.clientId,
+            'ticker': c.localSymbol or c.symbol, 'action': o.action,
+            'qty': _num(o.totalQuantity), 'cash_qty': _num(o.cashQty),
+            'order_type': o.orderType, 'limit_price': _num(o.lmtPrice), 'tif': o.tif,
+            'status': s.status, 'filled': _num(s.filled) or 0.0, 'remaining': _num(s.remaining),
+            'avg_fill_price': _num(s.avgFillPrice) or None, 'why_held': s.whyHeld or None,
+            'message': last_msg,
+        }
 
     @staticmethod
     def _format_portfolio(portfolio) -> list:
@@ -667,14 +878,16 @@ class IBKRService:
         for item in portfolio:
             c = item.contract
             result.append({
-                'ticker':         c.localSymbol or c.symbol,
-                'qty':            item.position,
-                'avg_cost':       item.averageCost,
-                'market_price':   item.marketPrice,
-                'market_value':   item.marketValue,
-                'unrealized_pnl': item.unrealizedPNL,
-                'realized_pnl':   item.realizedPNL,
-                'currency':       c.currency,
+                'ticker':           c.localSymbol or c.symbol,
+                'qty':              item.position,
+                'avg_cost':         item.averageCost,
+                'market_price':     item.marketPrice,
+                'market_value':     item.marketValue,
+                'unrealized_pnl':   item.unrealizedPNL,
+                'realized_pnl':     item.realizedPNL,
+                'currency':         c.currency,
+                'con_id':           c.conId or None,
+                'primary_exchange': c.primaryExchange or None,
             })
         return result
 

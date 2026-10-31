@@ -330,27 +330,48 @@
                 body: JSON.stringify({ targets, dry_run: true, allow_cash: goCash }) });
             if (!preview || !preview.success) { showToast(preview?.error || 'Erreur IBKR', 'error'); return; }
 
-            if (!preview.orders.length) { showToast('Aucun ordre nécessaire (portefeuille déjà équilibré)', 'success'); return; }
+            const skippedTxt = (preview.skipped || []).length
+                ? '\n— Ignorés —\n' + preview.skipped.map(s => `${s.ticker} : ${s.reason}`).join('\n') + '\n' : '';
+            if (!preview.orders.length) {
+                showToast('Aucun ordre nécessaire (portefeuille déjà équilibré)', 'success');
+                if (skippedTxt) alert(`Aucun ordre à passer.${skippedTxt}`);
+                return;
+            }
 
             const ajustements = preview.orders.filter(o => !o.liquidation);
             const liquidations = preview.orders.filter(o => o.liquidation);
-
+            const fmtQty = q => (Number.isInteger(q) ? q : q.toFixed(4));
+            const fmtUsd = v => v == null ? '?' : '$' + Number(v).toFixed(2);
+            // whatIf = simulation serveur : commission estimée ou raison du refus
+            const fmtWhatIf = o => o.whatif === 'rejected' ? `\n  ⛔ IBKR refuserait : ${o.whatif_error}`
+                : o.commission != null ? ` · comm. ~${fmtUsd(o.commission)}` : '';
             const fmtOrder = o =>
-                `${o.action} ${o.qty} action(s) ${o.ticker} @ ~$${o.est_price} ≈ $${o.est_value}` +
-                `\n  (actuel $${o.current_value} → cible $${o.target_value})`;
+                `${o.action} ${fmtQty(o.qty)} × ${o.ticker} @ ~${fmtUsd(o.est_price)} ≈ ${fmtUsd(o.est_value)}${fmtWhatIf(o)}` +
+                `\n  (actuel ${fmtUsd(o.current_value)} → cible ${fmtUsd(o.target_value)})`;
 
             let summary = '';
+            if (liquidations.length)
+                summary += '— Liquidations (hors stratégie) —\n' +
+                    liquidations.map(o => `VENDRE TOUT ${fmtQty(o.qty)} × ${o.ticker} ≈ ${fmtUsd(o.est_value)}${fmtWhatIf(o)}`).join('\n') + '\n\n';
             if (ajustements.length)
                 summary += '— Ajustements —\n' + ajustements.map(fmtOrder).join('\n') + '\n';
-            if (liquidations.length)
-                summary += '\n— Liquidations (hors stratégie) —\n' +
-                    liquidations.map(o => `VENDRE TOUT ${o.qty} × ${o.ticker} ≈ $${o.est_value}`).join('\n') + '\n';
+            summary += skippedTxt;
 
             const expo = preview.total_target_pct;
-            let warn = expo != null && expo > 100
-                ? `\n⚠️ EXPOSITION CIBLE : ${expo}% (levier ${(expo/100).toFixed(2)}×)\nNécessite de la marge.\n` : '';
+            let warn = '';
+            if (expo != null && expo > 100)
+                warn += `\n⚠️ EXPOSITION CIBLE : ${expo}% (levier ${(expo/100).toFixed(2)}×)\nNécessite de la marge.\n`;
+            if (preview.queued_for_open)
+                warn += '\n🕒 Marché US fermé : les ordres seront acceptés maintenant et exécutés au marché à la prochaine ouverture.\n';
+            const rejected = preview.orders.filter(o => o.whatif === 'rejected').length;
+            if (rejected)
+                warn += `\n⛔ ${rejected} ordre(s) seraient refusés par IBKR (voir détails) — corriger avant d'exécuter.\n`;
+            const commTotal = preview.orders.reduce((s, o) => s + (o.commission || 0), 0);
+            const head = `Base : ${fmtUsd(preview.base_value)} (valeur nette du compte)` +
+                (preview.cash != null ? ` · cash ${fmtUsd(preview.cash)}` : '') +
+                (commTotal ? ` · commissions ≈ ${fmtUsd(commTotal)}` : '');
 
-            if (!confirm(`${preview.count} ordre(s) à passer :\n${warn}\n${summary}\nConfirmer l'exécution ?`)) return;
+            if (!confirm(`${preview.count} ordre(s) à passer — ${head}\n${warn}\n${summary}\nConfirmer l'exécution ?`)) return;
 
             showToast('Passage des ordres...', 'info');
             const result = await api('/ibkr/rebalance', { method: 'POST',
@@ -358,15 +379,18 @@
             if (result && result.success) {
                 const placed = result.placed_count || 0;
                 const failed = result.failed_count || 0;
-                if (failed > 0) {
-                    const fails = result.orders.filter(o => o.status === 'failed')
-                        .map(o => `${o.ticker}: ${o.error || 'échec'}`).join('\n');
-                    showToast(`${placed} ordre(s) passé(s), ${failed} échec(s)`, failed >= placed ? 'error' : 'success');
-                    alert(`Ordres en échec :\n\n${fails}`);
+                const other = result.orders.filter(o => !['placed', 'filled', 'failed'].includes(o.status));
+                const line = o => `${o.ticker} ${o.action} ${fmtQty(o.qty)} → ${o.order_status || o.status}` +
+                    (o.error ? ` : ${o.error}` : o.note ? ` : ${o.note}` : '');
+                if (failed > 0 || other.length) {
+                    const details = result.orders.map(line).join('\n');
+                    showToast(`${placed} ordre(s) accepté(s), ${failed} échec(s)`, failed >= placed ? 'error' : 'success');
+                    alert(`Résultat des ordres :\n\n${details}`);
                 } else {
-                    showToast(`${placed} ordre(s) passé(s) avec succès`, 'success');
+                    showToast(`${placed} ordre(s) accepté(s) par IBKR${result.queued_for_open ? ' (exécution à l\'ouverture)' : ''}`, 'success');
                 }
                 loadPerfData();  // rafraîchir les positions
+                if (typeof loadIBKROrders === 'function') loadIBKROrders();
             } else {
                 showToast(result?.error || 'Erreur lors du passage des ordres', 'error');
             }
@@ -605,6 +629,68 @@
             if (!data) return;
             showToast(data.success ? 'Identifiants sauvegardés' : data.error, data.success ? 'success' : 'error');
             if (data.success) document.getElementById('ibkr-password').value = '';
+        }
+
+        // ---- Ordres IBKR (ouverts + exécutions du jour) ----
+        async function loadIBKROrders() {
+            const container = document.getElementById('ibkr-orders-content');
+            if (!container) return;
+            container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px;">Chargement...</p>';
+            const data = await api('/ibkr/orders');
+            if (!data || !data.success) {
+                container.innerHTML = `<p style="color:#f87171;font-size:13px;text-align:center;padding:16px;">${esc(data?.error || 'Erreur de connexion')}</p>`;
+                return;
+            }
+            const td = 'padding:6px 10px;border-bottom:1px solid var(--border-subtle);';
+            const th = 'padding:6px 10px;text-align:left;font-size:10px;color:var(--text-muted);text-transform:uppercase';
+            const n = (v, d = 2) => v == null ? '—' : Number(v).toFixed(d);
+            const acc = data.account || {};
+            let html = `<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+                Valeur nette ${acc.net_liquidation != null ? '$' + n(acc.net_liquidation) : '—'} · cash ${acc.total_cash != null ? '$' + n(acc.total_cash) : '—'}
+                · ${new Date().toLocaleTimeString('fr-FR')}</p>`;
+            html += `<div style="font-size:12px;font-weight:600;margin:8px 0 4px;">Ordres ouverts (${data.open_orders.length})</div>`;
+            if (!data.open_orders.length) {
+                html += '<p style="color:var(--text-muted);font-size:13px;">Aucun ordre ouvert</p>';
+            } else {
+                html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead><tr style="background:var(--bg-hover);"><th style="${th}">Ticker</th><th style="${th}">Ordre</th><th style="${th}">Statut</th><th style="${th}">Exécuté</th><th style="${th}"></th></tr></thead><tbody>` +
+                    data.open_orders.map(o => `<tr>
+                        <td style="${td}font-family:monospace;font-weight:600">${esc(o.ticker)}</td>
+                        <td style="${td}">${esc(o.action)} ${o.cash_qty ? '$' + n(o.cash_qty) : n(o.qty, 4)} ${esc(o.order_type)}${o.limit_price ? ' @ $' + n(o.limit_price) : ''} ${esc(o.tif || '')}</td>
+                        <td style="${td}">${esc(o.status)}${o.why_held ? ' <span style="color:var(--text-muted)">(' + esc(o.why_held) + ')</span>' : ''}${o.message ? '<div style="font-size:11px;color:var(--text-muted)">' + esc(o.message) + '</div>' : ''}</td>
+                        <td style="${td}text-align:right">${n(o.filled, 4)}${o.avg_fill_price ? ' @ $' + n(o.avg_fill_price) : ''}</td>
+                        <td style="${td}text-align:right">${o.order_id ? `<button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="cancelIBKROrder(${o.order_id})">Annuler</button>` : ''}</td>
+                    </tr>`).join('') + '</tbody></table></div>';
+            }
+            html += `<div style="font-size:12px;font-weight:600;margin:12px 0 4px;">Exécutions du jour (${data.executions.length})</div>`;
+            if (data.executions_error) html += `<p style="color:#f87171;font-size:12px;">${esc(data.executions_error)}</p>`;
+            if (!data.executions.length) {
+                html += '<p style="color:var(--text-muted);font-size:13px;">Aucune exécution aujourd\'hui</p>';
+            } else {
+                html += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead><tr style="background:var(--bg-hover);"><th style="${th}">Heure</th><th style="${th}">Ticker</th><th style="${th}">Sens</th><th style="${th}">Qté</th><th style="${th}">Prix</th><th style="${th}">Comm.</th></tr></thead><tbody>` +
+                    data.executions.map(x => `<tr>
+                        <td style="${td}">${esc(String(x.time).replace('T', ' ').slice(0, 19))}</td>
+                        <td style="${td}font-family:monospace;font-weight:600">${esc(x.ticker)}</td>
+                        <td style="${td}">${esc(x.side)}</td>
+                        <td style="${td}text-align:right">${n(x.shares, 4)}</td>
+                        <td style="${td}text-align:right">$${n(x.price)}</td>
+                        <td style="${td}text-align:right">${x.commission != null ? '$' + n(x.commission) : '—'}</td>
+                    </tr>`).join('') + '</tbody></table></div>';
+            }
+            container.innerHTML = html;
+        }
+
+        async function cancelIBKROrder(orderId) {
+            if (!confirm(`Annuler l'ordre ${orderId} ?`)) return;
+            const res = await api(`/ibkr/orders/${orderId}/cancel`, { method: 'POST' });
+            showToast(res?.success ? `Ordre ${orderId} annulé (${res.order_status})` : (res?.error || 'Annulation impossible'),
+                      res?.success ? 'success' : 'error');
+            loadIBKROrders();
+        }
+
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
 
         async function loadIBKRPositions() {
