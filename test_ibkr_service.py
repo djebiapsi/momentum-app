@@ -29,22 +29,38 @@ class TestPlanRebalance:
         seq = [(o['ticker'], o['action'], o['liquidation']) for o in plan['orders']]
         assert seq == [('OLD', 'SELL', True), ('BIG', 'SELL', False), ('NEW', 'BUY', False)]
 
-    def test_liquidation_keeps_exact_fractional_qty_even_in_integer_mode(self):
-        plan = plan_rebalance([pos('STX', 0.0012, 648.22)], 5000, [{'ticker': 'MU', 'target_pct': 10}],
-                              prices={'MU': 889}, fractional=False)
+    def test_liquidation_integer_mode_sells_whole_part_and_reports_residual(self):
+        # TWS API : 10243 sur toute quantité fractionnaire → on vend 3, il reste 0.3539
+        plan = plan_rebalance([pos('WDC', 3.3539, 368.12)], 5000, [{'ticker': 'MU', 'target_pct': 10}],
+                              prices={'MU': 889})
         liq = plan['orders'][0]
-        assert liq['ticker'] == 'STX' and liq['action'] == 'SELL' and liq['qty'] == 0.0012
+        assert liq['ticker'] == 'WDC' and liq['action'] == 'SELL' and liq['qty'] == 3.0
+        assert liq['residual_qty'] == 0.3539 and 'IBKR Mobile' in liq['note']
+        assert liq['est_value'] == round(3 * 368.12, 2)
+
+    def test_liquidation_sub_share_fraction_is_skipped_in_integer_mode(self):
+        plan = plan_rebalance([pos('STX', 0.0012, 648.22), pos('SNDK', 0.3929, 1157.5)], 5000,
+                              [{'ticker': 'MU', 'target_pct': 10}], prices={'MU': 889})
+        assert [o['ticker'] for o in plan['orders']] == ['MU']
+        assert sorted(s['ticker'] for s in plan['skipped']) == ['SNDK', 'STX']
+        assert all('10243' in s['reason'] for s in plan['skipped'])
+
+    def test_liquidation_exact_qty_in_fractional_mode(self):
+        plan = plan_rebalance([pos('STX', 0.0012, 648.22)], 5000, [{'ticker': 'MU', 'target_pct': 10}],
+                              prices={'MU': 889}, fractional=True)
+        liq = plan['orders'][0]
+        assert liq['qty'] == 0.0012 and 'residual_qty' not in liq
 
     def test_buy_quantity_is_fractional_floor(self):
-        plan = plan_rebalance([], 10000, [{'ticker': 'LITE', 'target_pct': 10}], prices={'LITE': 845})
+        plan = plan_rebalance([], 10000, [{'ticker': 'LITE', 'target_pct': 10}], prices={'LITE': 845},
+                              fractional=True)
         o = plan['orders'][0]
         assert o['action'] == 'BUY'
         assert o['qty'] == 1.1834           # 1000 / 845 = 1.18343…
         assert o['est_value'] == round(1.1834 * 845, 2)
 
-    def test_integer_mode_skips_sub_share_amounts(self):
-        plan = plan_rebalance([], 1000, [{'ticker': 'MU', 'target_pct': 50}], prices={'MU': 889},
-                              fractional=False)
+    def test_integer_mode_is_default_and_skips_sub_share_amounts(self):
+        plan = plan_rebalance([], 1000, [{'ticker': 'MU', 'target_pct': 50}], prices={'MU': 889})
         assert plan['orders'] == []
         assert plan['skipped'][0]['ticker'] == 'MU'
         assert 'arrondi' in plan['skipped'][0]['reason']
@@ -75,7 +91,8 @@ class TestPlanRebalance:
     def test_empty_targets_liquidates_everything(self):
         plan = plan_rebalance([pos('A', 1, 10), pos('B', 2.5, 20)], 100, [])
         assert [(o['ticker'], o['qty'], o['liquidation']) for o in plan['orders']] == \
-            [('A', 1.0, True), ('B', 2.5, True)]
+            [('A', 1.0, True), ('B', 2.0, True)]
+        assert plan['orders'][1]['residual_qty'] == 0.5
         assert plan['total_target_pct'] == 0
 
     def test_base_value_is_account_value_not_positions_sum(self):

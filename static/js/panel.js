@@ -345,14 +345,15 @@
             // whatIf = simulation serveur : commission estimée ou raison du refus
             const fmtWhatIf = o => o.whatif === 'rejected' ? `\n  ⛔ IBKR refuserait : ${o.whatif_error}`
                 : o.commission != null ? ` · comm. ~${fmtUsd(o.commission)}` : '';
+            const fmtNote = o => o.note ? `\n  ℹ️ ${o.note}` : '';
             const fmtOrder = o =>
                 `${o.action} ${fmtQty(o.qty)} × ${o.ticker} @ ~${fmtUsd(o.est_price)} ≈ ${fmtUsd(o.est_value)}${fmtWhatIf(o)}` +
-                `\n  (actuel ${fmtUsd(o.current_value)} → cible ${fmtUsd(o.target_value)})`;
+                `\n  (actuel ${fmtUsd(o.current_value)} → cible ${fmtUsd(o.target_value)})${fmtNote(o)}`;
 
             let summary = '';
             if (liquidations.length)
                 summary += '— Liquidations (hors stratégie) —\n' +
-                    liquidations.map(o => `VENDRE TOUT ${fmtQty(o.qty)} × ${o.ticker} ≈ ${fmtUsd(o.est_value)}${fmtWhatIf(o)}`).join('\n') + '\n\n';
+                    liquidations.map(o => `VENDRE ${fmtQty(o.qty)} × ${o.ticker} ≈ ${fmtUsd(o.est_value)}${fmtWhatIf(o)}${fmtNote(o)}`).join('\n') + '\n\n';
             if (ajustements.length)
                 summary += '— Ajustements —\n' + ajustements.map(fmtOrder).join('\n') + '\n';
             summary += skippedTxt;

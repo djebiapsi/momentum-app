@@ -50,8 +50,13 @@ def _num(x):
 # En dessous de cet écart on ne corrige pas : la commission IBKR Pro (0,35–1 $ min)
 # mangerait plusieurs % du mouvement.
 MIN_ORDER_VALUE_USD = 25.0
-# IBKR accepte 4 décimales sur les quantités fractionnaires (compte avec la
-# permission « Fractional Shares » — c'est le cas : positions 1.1941, 0.3929…).
+# Précision des quantités IBKR (positions fractionnaires tenues à 4 décimales).
+# Vérifié en prod le 31/10/2026 : la TWS API REFUSE toute quantité fractionnaire sur
+# actions (erreur 10243 « Fractional-sized order cannot be placed via API »), y
+# compris pour clôturer une position, et refuse les ordres en montant (10244
+# « Cash Quantity cannot be used for this order »). Le fractionnaire n'existe que
+# dans IBKR Mobile / TWS / Client Portal → par défaut on raisonne en actions entières
+# (`fractional=False`) et on signale les fractions résiduelles.
 FRACTIONAL_DECIMALS = 4
 
 
@@ -64,7 +69,7 @@ def _floor_qty(qty: float, fractional: bool) -> float:
 
 
 def plan_rebalance(positions: list, base_value: float, targets: list,
-                   prices: dict | None = None, fractional: bool = True,
+                   prices: dict | None = None, fractional: bool = False,
                    min_order_value: float = MIN_ORDER_VALUE_USD) -> dict:
     """
     Construit la liste d'ordres pour amener le compte sur les cibles.
@@ -103,8 +108,9 @@ def plan_rebalance(positions: list, base_value: float, targets: list,
 
     sells, buys, skipped = [], [], []
 
-    # 1) Liquidations — positions hors cibles : on solde la quantité EXACTE
-    #    (une position fractionnaire arrondie laisserait une poussière invendable).
+    # 1) Liquidations — positions hors cibles. En mode entier (TWS API) on vend la
+    #    partie entière ; la fraction restante — achetée via IBKR Mobile — est
+    #    signalée car l'API ne peut pas la clôturer (10243).
     for tk, p in current.items():
         qty = float(p.get('qty') or 0)
         if targets_pct.get(tk, 0.0) > 0 or abs(qty) < 1e-9:
@@ -112,7 +118,17 @@ def plan_rebalance(positions: list, base_value: float, targets: list,
         mv = float(p.get('market_value') or 0)
         price = _num(p.get('market_price')) or (abs(mv / qty) if qty else None)
         action = 'SELL' if qty > 0 else 'BUY'      # BUY = couvrir un short résiduel
-        sells.append(_entry(tk, p, action, abs(qty), price or 0.0, mv, 0.0, 0.0, True))
+        sell_qty = round(abs(qty), FRACTIONAL_DECIMALS) if fractional else _floor_qty(abs(qty), False)
+        residual = round(abs(qty) - sell_qty, FRACTIONAL_DECIMALS)
+        if sell_qty <= 0:
+            skipped.append({'ticker': tk, 'reason': f'position fractionnaire ({abs(qty):.4f}) invendable via '
+                                                     'l\'API IBKR (10243) — à clôturer dans IBKR Mobile / TWS'})
+            continue
+        entry = _entry(tk, p, action, sell_qty, price or 0.0, mv, 0.0, 0.0, True)
+        if residual > 0:
+            entry['residual_qty'] = residual
+            entry['note'] = f'reste {residual:.4f} (fraction invendable via l\'API) — à clôturer dans IBKR Mobile / TWS'
+        sells.append(entry)
 
     # 2) Cibles — écart entre valeur actuelle et valeur visée
     for tk, pct in targets_pct.items():
@@ -193,7 +209,7 @@ class IBKRService:
         self._last_failed_at = None  # horodatage du dernier échec de connexion
         self._ib = None
         self._last_hist_call = 0.0   # throttle des requêtes historiques (pacing)
-        self.fractional = True       # quantités fractionnaires (permission du compte)
+        self.fractional = False      # TWS API : actions entières uniquement (10243)
 
         # Event loop PERMANENT dans un thread dédié (voir docstring de la classe).
         self._loop = asyncio.new_event_loop()
@@ -668,16 +684,40 @@ class IBKRService:
                     break
                 await asyncio.sleep(0.25)
             await asyncio.sleep(0.3)   # message d'erreur qui suit parfois le statut
+            # ib_async bascule le Trade en ValidationError sur un simple avertissement
+            # (399 « will not be placed at the exchange until … », 404, 10349 préréglage
+            # TIF…) alors que l'ordre est bien vivant côté IBKR. Pour tout statut autre
+            # qu'une acceptation franche, on se réaligne sur le serveur : si l'ordre
+            # figure encore dans les ordres ouverts, c'est lui qui a raison.
+            server_status = None
+            if trade.orderStatus.status not in (OrderStatus.PreSubmitted, OrderStatus.Submitted, OrderStatus.Filled):
+                server_status = await self._server_order_status(trade)
         except Exception as e:
             return {'status': 'failed', 'order_status': 'exception', 'error': str(e)[:200]}
         finally:
             self._ib.errorEvent -= handler
-        return self._trade_result(trade, errors)
+        return self._trade_result(trade, errors, server_status)
+
+    async def _server_order_status(self, trade) -> str | None:
+        """Statut côté serveur via reqAllOpenOrders (None si absent des ordres ouverts)."""
+        try:
+            trades = await asyncio.wait_for(self._ib.reqAllOpenOrdersAsync(), 8)
+        except Exception as e:
+            logger.warning('_server_order_status: %s', e)
+            return None
+        for t in trades:
+            same_perm = trade.order.permId and t.order.permId == trade.order.permId
+            same_id = t.order.orderId == trade.order.orderId and t.order.clientId == trade.order.clientId
+            if same_perm or same_id:
+                return t.orderStatus.status
+        return None
 
     @staticmethod
-    def _trade_result(trade, errors) -> dict:
+    def _trade_result(trade, errors, server_status: str | None = None) -> dict:
         oid = trade.order.orderId
         st = trade.orderStatus.status or ''
+        if server_status in (OrderStatus.PreSubmitted, OrderStatus.Submitted, OrderStatus.Filled):
+            st = server_status
         msgs = [f'{c} · {m}' for r, c, m in errors if r == oid]
         if not msgs:
             msgs = [e.message for e in trade.log if e.message and e.message != 'Modify']
