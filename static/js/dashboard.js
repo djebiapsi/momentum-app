@@ -271,7 +271,7 @@
                 alert('Aucune position "Investir" à exporter.');
                 return;
             }
-            const CASH_BUFFER_PCT = 1.0; // 1% de marge par ticker gardé en cash
+            const CASH_BUFFER_PCT = 0.10; // 0.1% de marge par ticker gardé en cash
             const investTickers = new Set(invest.map(r => r.ticker));
             const lines = invest.map(r => {
                 const pct = Math.max(0, r.allocation - CASH_BUFFER_PCT);
